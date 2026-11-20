@@ -67,6 +67,8 @@ interface AgentSession {
      *
      * The bridge logs your message itself, so an adapter never emits a user message for a prompt on
      * [updates]. It reports the thread as working, then the agent's output.
+     *
+     * @throws TurnInProgressException when [threadId] has not finished its previous turn.
      */
     suspend fun prompt(
         threadId: String,
@@ -95,3 +97,11 @@ class AgentUnavailableException(
     message: String,
     cause: Throwable? = null,
 ) : Exception(message, cause)
+
+/**
+ * [AgentSession.prompt] was called while [threadId] is still in a turn. Agents take one prompt per
+ * turn, so the caller waits for the thread to stop working, or cancels it, and then prompts again.
+ */
+class TurnInProgressException(
+    val threadId: String,
+) : Exception("Thread $threadId is still working on the previous prompt.")

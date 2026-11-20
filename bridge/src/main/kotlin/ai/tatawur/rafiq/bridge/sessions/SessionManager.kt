@@ -117,8 +117,9 @@ class SessionManager(
     }
 
     /**
-     * Sends [text] to [threadId], or to the session's main thread when it is null. The adapter reports the
-     * message back as an event. A session that is not live is resumed first.
+     * Sends [text] to [threadId], or to the session's main thread when it is null. The message is logged
+     * as yours, on the target thread, before the agent sees it. The adapter must not echo it. A session
+     * that is not live is resumed first.
      *
      * @throws SessionException.NotFound when the session or thread does not exist.
      * @throws SessionException.Conflict when the agent cannot resume the session.
@@ -131,6 +132,15 @@ class SessionManager(
         if (text.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
         val target = resolveThread(sessionId, threadId)
         val agentSession = liveSession(sessionId).agentSession
+        log.append(
+            sessionId,
+            EventPayload.Message(
+                id = "user:" + UUID.randomUUID(),
+                threadId = target,
+                role = MessageRole.USER,
+                content = listOf(ContentBlock.Text(text)),
+            ),
+        )
         agentSession.prompt(target, text)
     }
 

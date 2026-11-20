@@ -95,7 +95,7 @@ class RoutesTest {
             }
             emitter.join()
 
-            // Initial events, echoed prompt, reply start and finish, deltas and end marker:
+            // Initial events, logged prompt, reply start and finish, deltas and end marker:
             // no gap, no repeat, same bytes as the log.
             assertEquals((1L..(total + 7).toLong()).toList(), received.map { it.seq })
             assertEquals(fixture.log.after(session.id, 0, 10_000), received)
@@ -149,6 +149,7 @@ class RoutesTest {
                 postJson("/sessions/$sessionId/prompt", """{"text":"hello"}""").status,
             )
             assertEquals(listOf("main" to "hello"), agent.prompts)
+            assertPromptLoggedAsUser(fixture, sessionId)
 
             assertEquals(HttpStatusCode.Accepted, postJson("/sessions/$sessionId/threads/main/cancel", "{}").status)
             assertEquals(listOf("main"), agent.cancels)
@@ -211,6 +212,20 @@ class RoutesTest {
             )
             fixture.close()
         }
+
+    private suspend fun assertPromptLoggedAsUser(
+        fixture: BridgeFixture,
+        sessionId: String,
+    ) {
+        val logged =
+            fixture.log
+                .after(sessionId, 0, 100)
+                .map { it.payload }
+                .filterIsInstance<EventPayload.Message>()
+        assertEquals(listOf("main"), logged.map { it.threadId })
+        assertEquals(MessageRole.USER, logged.single().role)
+        assertTrue(logged.single().id.startsWith("user:"))
+    }
 
     private fun decode(frame: Frame): Event =
         protocolJson.decodeFromString(Event.serializer(), (frame as Frame.Text).readText())

@@ -8,14 +8,17 @@ import ai.tatawur.rafiq.protocol.Session
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.fail
 
 class EventStreamerTest {
     @TempDir
@@ -87,8 +90,20 @@ class EventStreamerTest {
 
             assertEquals((2L..6L).toList(), List(5) { healthy.events.receive().seq })
             release.complete(Unit)
-            assertFailsWith<SlowConsumerException> { slow.await()?.let { throw it } }
+            val outcome =
+                try {
+                    withTimeout(SLOW_CLIENT_WAIT_MS) { slow.await() }
+                } catch (_: TimeoutCancellationException) {
+                    slow.cancel()
+                    fail("The stalled reader was never cut off, so a slow client can hold a stream open.")
+                }
+            assertFailsWith<SlowConsumerException> { outcome?.let { throw it } }
             healthy.close()
             log.close()
         }
+
+    private companion object {
+        // Generous for a loaded machine. It only bounds the failure case, where the reader is never cut off.
+        const val SLOW_CLIENT_WAIT_MS = 10_000L
+    }
 }

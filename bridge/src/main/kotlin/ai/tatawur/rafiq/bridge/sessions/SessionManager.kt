@@ -141,7 +141,11 @@ class SessionManager(
                 content = listOf(ContentBlock.Text(text)),
             ),
         )
-        agentSession.prompt(target, text)
+        try {
+            agentSession.prompt(target, text)
+        } catch (refused: IllegalArgumentException) {
+            throw SessionException.Invalid("invalid_thread", "That thread does not accept prompts.", refused)
+        }
     }
 
     /**
@@ -158,7 +162,11 @@ class SessionManager(
         val agentSession =
             live[sessionId]?.agentSession
                 ?: throw SessionException.Conflict("session_not_running", "The session is not running.")
-        agentSession.cancel(threadId)
+        try {
+            agentSession.cancel(threadId)
+        } catch (unsupported: UnsupportedOperationException) {
+            throw SessionException.Conflict("not_supported", "That thread cannot be cancelled on its own.", unsupported)
+        }
     }
 
     /**

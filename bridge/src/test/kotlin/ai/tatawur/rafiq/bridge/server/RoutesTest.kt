@@ -182,6 +182,7 @@ class RoutesTest {
             assertEquals("invalid_body", parse(postJson("/sessions", "{not json").bodyAsText()).code())
             assertEquals("invalid_body", parse(postJson("/sessions", """{"agent":"fake"}""").bodyAsText()).code())
             assertEquals("not_found", parse(client.get("/nothing-here").bodyAsText()).code())
+            assertAdapterRefusalsKeepTheErrorShape(fixture)
             fixture.close()
         }
 
@@ -212,6 +213,27 @@ class RoutesTest {
             )
             fixture.close()
         }
+
+    private suspend fun ApplicationTestBuilder.assertAdapterRefusalsKeepTheErrorShape(fixture: BridgeFixture) {
+        val sessionId = fixture.sessions.create("fake", project, null).id
+        val agent = fixture.adapter.started.single()
+
+        agent.failure = UnsupportedOperationException("grouped helper")
+        val cancel = postJson("/sessions/$sessionId/threads/main/cancel", "{}")
+        assertEquals(HttpStatusCode.Conflict, cancel.status)
+        assertEquals("not_supported", parse(cancel.bodyAsText()).code())
+
+        agent.failure = IllegalArgumentException("ACP forbids prompting a helper")
+        val prompt = postJson("/sessions/$sessionId/prompt", """{"text":"hi"}""")
+        assertEquals(HttpStatusCode.BadRequest, prompt.status)
+        assertEquals("invalid_thread", parse(prompt.bodyAsText()).code())
+
+        agent.failure = IllegalStateException("adapter bug with secret detail")
+        val unexpected = postJson("/sessions/$sessionId/prompt", """{"text":"hi"}""")
+        assertEquals(HttpStatusCode.InternalServerError, unexpected.status)
+        assertEquals("internal_error", parse(unexpected.bodyAsText()).code())
+        assertTrue("secret detail" !in unexpected.bodyAsText())
+    }
 
     private suspend fun assertPromptLoggedAsUser(
         fixture: BridgeFixture,

@@ -52,6 +52,9 @@ internal class SessionActor(
             val reply: CompletableDeferred<String>,
         ) : Item
 
+        /** The prompt request could not be written, so the turn it started is over. */
+        data object PromptNotSent : Item
+
         /** You chose an option on [threadId]'s approval. */
         data class Answered(
             val threadId: String,
@@ -92,9 +95,36 @@ internal class SessionActor(
     /** Queues [item]. Returns false once the session has finished. */
     fun offer(item: Item): Boolean = items.trySend(item).isSuccess
 
-    /** Handles items until [Item.Finish]. Run it once, in the session's scope. */
+    /**
+     * Handles items until [Item.Finish]. Run it once, in the session's scope.
+     *
+     * One item that fails, for example agent JSON the mapper did not expect, is logged and reported
+     * as a system message, and the next item is handled as usual. However the loop ends, the
+     * `finally` settles everything that waits on it, so no prompt, approval or close can hang.
+     */
+    @Suppress("TooGenericExceptionCaught") // Any failure in one item must not stop the session.
     suspend fun run() {
-        for (item in items) handle(item)
+        try {
+            for (item in items) {
+                try {
+                    handle(item)
+                } catch (e: Exception) {
+                    logger.error("could not handle {}", item::class.simpleName, e)
+                    val refused = AgentUnavailableException("The agent session could not handle the request.", e)
+                    (item as? Item.Prompt)?.reply?.completeExceptionally(refused)
+                    (item as? Item.Cancel)?.reply?.completeExceptionally(refused)
+                    events.sendAll(listOf(systemMessage(newId(), UNREADABLE_UPDATE)))
+                }
+            }
+        } finally {
+            val ended = AgentUnavailableException("The agent session has ended.")
+            events.close()
+            items.close()
+            failQueued(items, ended)
+            approvals.closeAll(ended)
+            outputDrained.complete(Unit)
+            finished.complete(Unit)
+        }
     }
 
     private fun handle(item: Item) {
@@ -117,6 +147,11 @@ internal class SessionActor(
 
             is Item.Cancel -> {
                 item.reply.answer { onCancel(item.threadId) }
+            }
+
+            Item.PromptNotSent -> {
+                turnInFlight = false
+                events.sendAll(mapper.turnEnded(MAIN_THREAD_ID, stopReason = null, failure = TURN_FAILED))
             }
 
             is Item.Answered -> {
@@ -246,22 +281,28 @@ internal class SessionActor(
             val code = item.exitCode?.toString() ?: "unknown"
             events.sendAll(listOf(EventPayload.StatusChanged(state = AgentState.ERROR, detail = "$EXITED $code.")))
         }
+        // Closing the queue ends the loop in run. What is already queued is refused, not handled.
         events.close()
         items.close()
-        while (true) {
-            val left = items.tryReceive().getOrNull() ?: break
-            val ended = AgentUnavailableException("The agent session has ended.")
-            when (left) {
-                is Item.Prompt -> left.reply.completeExceptionally(ended)
-                is Item.Cancel -> left.reply.completeExceptionally(ended)
-                else -> Unit
-            }
-        }
-        finished.complete(Unit)
+        failQueued(items, AgentUnavailableException("The agent session has ended."))
     }
 
     private companion object {
         val logger = LoggerFactory.getLogger(SessionActor::class.java)
+    }
+}
+
+/** Refuses every reply still queued in [items], so no caller waits on a consumer that has stopped. */
+private fun failQueued(
+    items: Channel<SessionActor.Item>,
+    reason: Exception,
+) {
+    while (true) {
+        when (val left = items.tryReceive().getOrNull() ?: break) {
+            is SessionActor.Item.Prompt -> left.reply.completeExceptionally(reason)
+            is SessionActor.Item.Cancel -> left.reply.completeExceptionally(reason)
+            else -> Unit
+        }
     }
 }
 
@@ -297,6 +338,7 @@ private inline fun <T> CompletableDeferred<T>.answer(block: () -> T) {
 /** The start of the status detail when the agent process exits on its own. */
 internal const val EXITED = "The agent process exited with code"
 
+private const val UNREADABLE_UPDATE = "Rafiq could not read an update from the agent."
 private const val TURN_FAILED = "The agent could not finish the turn."
 private const val LINE_TOO_LONG = "The agent sent a line too long to read. It was left out."
 private const val CHILD_NOT_CANCELLABLE = "This helper cannot be stopped on its own."

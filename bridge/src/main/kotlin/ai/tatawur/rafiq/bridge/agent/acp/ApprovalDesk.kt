@@ -83,5 +83,15 @@ internal class ApprovalDesk {
         byApproval.values.filter(matches).forEach { it.choice.complete(RequestPermissionOutcome.Cancelled) }
     }
 
+    /**
+     * Ends every open request: one already filed is answered as cancelled, and a handler still
+     * waiting for its request to be filed fails with [reason], which the SDK sends back as an error.
+     * Used when the session's consumer stops, so no handler waits forever.
+     */
+    fun closeAll(reason: Exception) {
+        cancelWhere { true }
+        byRequest.values.forEach { it.completeExceptionally(reason) }
+    }
+
     private fun meeting(requestKey: String) = byRequest.computeIfAbsent(requestKey) { CompletableDeferred() }
 }

@@ -113,8 +113,11 @@ class BridgeFixture(
     }
 }
 
-/** A device token as long as the bridge demands: 64 hex characters, what `openssl rand -hex 32` makes. */
-const val TEST_TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+/**
+ * A device token exactly as long as the bridge demands (64 characters, the length `openssl rand -hex 32`
+ * makes). Built at runtime and obviously fake, so secret scanners do not mistake it for a real key.
+ */
+val TEST_TOKEN: String = "rafiq-test-token-".padEnd(64, 'x')
 
 fun testSecurity() = BridgeSecurity(TEST_TOKEN, bindAddress = "127.0.0.1")
 

@@ -70,7 +70,7 @@ class SessionManagerTest {
         runBlocking {
             second.sessions.recoverAfterRestart()
             assertEquals(
-                AgentState.DONE,
+                AgentState.ERROR,
                 second.sessions
                     .sessions()
                     .single()

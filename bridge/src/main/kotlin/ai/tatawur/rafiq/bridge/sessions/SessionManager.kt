@@ -183,11 +183,11 @@ class SessionManager(
 
     /**
      * Run once at start-up. Agent processes do not survive a bridge restart, so any session or thread
-     * still marked as working or waiting is set back to done, and says why in its log.
+     * still marked as working or waiting becomes errored, and says why in its log.
      */
     suspend fun recoverAfterRestart() {
         for (session in log.sessions()) {
-            settleRunningWork(session, AgentState.DONE, "The bridge restarted. Send a prompt to resume.")
+            settleRunningWork(session, AgentState.ERROR, "Interrupted by a bridge restart. Send a message to resume.")
         }
     }
 

@@ -7,6 +7,7 @@ import ai.tatawur.rafiq.bridge.agent.TurnInProgressException
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
@@ -20,6 +21,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.catch
@@ -251,10 +253,12 @@ class SessionManager(
 
     /**
      * Run once at start-up. Agent processes do not survive a bridge restart, so any session or thread
-     * still marked as working or waiting becomes errored, and says why in its log.
+     * still marked as working or waiting becomes errored, and says why in its log. Approvals still open
+     * are cancelled, so a client that replays the log sees no card it can no longer answer.
      */
     suspend fun recoverAfterRestart() {
         for (session in log.sessions()) {
+            cancelOpenApprovals(session.id)
             settleRunningWork(session, AgentState.ERROR, "Interrupted by a bridge restart. Send a message to resume.")
         }
     }
@@ -264,7 +268,7 @@ class SessionManager(
      * Their logs stay, and they resume on the next prompt after a restart.
      */
     suspend fun shutdown() {
-        val sessions = live.values.toList()
+        val sessions = live.entries.map { it.key to it.value }
         live.clear()
         approvals.clear()
         turnsInFlight.clear()
@@ -272,10 +276,12 @@ class SessionManager(
             withTimeoutOrNull(SHUTDOWN_BUDGET) {
                 coroutineScope {
                     sessions
-                        .map {
+                        .map { (sessionId, liveSession) ->
                             async {
-                                it.job.cancel()
-                                it.stop()
+                                // Joined, so nothing is logged for the session after this point.
+                                liveSession.job.cancelAndJoin()
+                                liveSession.stop()
+                                cancelOpenApprovals(sessionId)
                             }
                         }.awaitAll()
                 }
@@ -496,6 +502,13 @@ class SessionManager(
                 SessionException.Conflict("session_not_running", "The session is not running.", closed)
             }
         throw refusal
+    }
+
+    /** Closes every approval request the log still shows as open, exactly once, as cancelled. */
+    private suspend fun cancelOpenApprovals(sessionId: String) {
+        for (approvalId in log.unresolvedApprovals(sessionId)) {
+            record(sessionId, null, EventPayload.ApprovalResolved(approvalId, ApprovalOutcome.CANCELLED))
+        }
     }
 
     private fun forget(sessionId: String) {

@@ -5,6 +5,9 @@ import ai.tatawur.rafiq.bridge.FakeAdapter
 import ai.tatawur.rafiq.bridge.eventAfter
 import ai.tatawur.rafiq.bridge.status
 import ai.tatawur.rafiq.protocol.AgentState
+import ai.tatawur.rafiq.protocol.ApprovalOption
+import ai.tatawur.rafiq.protocol.ApprovalOptionKind
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.EventPayload
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
@@ -26,10 +29,12 @@ class SessionManagerTest {
     @AfterEach
     fun closeFixtures() = opened.forEach(BridgeFixture::close)
 
-    private fun fixture(adapter: FakeAdapter = FakeAdapter()) =
-        BridgeFixture(dir.resolve("data"), adapter).also(opened::add)
+    private fun fixture(
+        data: Path = dir.resolve("data"),
+        adapter: FakeAdapter = FakeAdapter(),
+    ) = BridgeFixture(data, adapter).also(opened::add)
 
-    private fun project(): String = Files.createDirectory(dir.resolve("weather-app")).toString()
+    private fun project(name: String = "weather-app"): String = Files.createDirectory(dir.resolve(name)).toString()
 
     @Test
     fun the_session_shows_working_while_its_main_thread_does_and_a_logging_failure_marks_it_errored() {
@@ -109,6 +114,40 @@ class SessionManagerTest {
     }
 
     @Test
+    fun an_approval_open_when_the_bridge_goes_down_is_cancelled_exactly_once() {
+        for (cleanShutdown in listOf(true, false)) {
+            val data = dir.resolve("data-$cleanShutdown")
+            val first = fixture(data)
+            val session = runBlocking { first.sessions.create("fake", project("p-$cleanShutdown"), null) }
+            val agent = first.adapter.started.single()
+            val options = listOf(ApprovalOption("allow", ApprovalOptionKind.ALLOW_ONCE, "Allow"))
+            runBlocking {
+                first.log.eventAfter(
+                    session.id,
+                    trigger = { agent.emit(EventPayload.ApprovalRequest("apr_1", "tool_1", "Run tests", options)) },
+                ) { it.payload is EventPayload.ApprovalRequest }
+                // A crash leaves the log as it is. A clean shutdown gets to settle it first.
+                if (cleanShutdown) first.sessions.shutdown()
+            }
+            first.close()
+            opened.remove(first)
+
+            val second = fixture(data, FakeAdapter())
+            val resolved =
+                runBlocking {
+                    second.sessions.recoverAfterRestart()
+                    second.log
+                        .after(session.id, 0, 1000)
+                        .map { it.payload }
+                        .filterIsInstance<EventPayload.ApprovalResolved>()
+                }
+
+            val expected = listOf(EventPayload.ApprovalResolved("apr_1", ApprovalOutcome.CANCELLED))
+            assertEquals(expected, resolved, "clean shutdown: $cleanShutdown")
+        }
+    }
+
+    @Test
     fun after_a_restart_work_shows_as_errored_and_a_prompt_resumes_with_the_stored_agent_handle() {
         val first = fixture()
         val session = runBlocking { first.sessions.create("fake", project(), null) }
@@ -126,7 +165,7 @@ class SessionManagerTest {
         first.close()
         opened.remove(first)
 
-        val second = fixture(FakeAdapter())
+        val second = fixture(adapter = FakeAdapter())
         runBlocking {
             second.sessions.recoverAfterRestart()
             assertEquals(

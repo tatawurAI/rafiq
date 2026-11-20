@@ -173,6 +173,24 @@ class EventLog(
             subscription
         }
 
+    /** The ids of the session's approval requests that have no [EventPayload.ApprovalResolved] in its log. */
+    suspend fun unresolvedApprovals(sessionId: String): List<String> =
+        onDispatcher {
+            connection
+                .prepareStatement(
+                    "SELECT json_extract(payload, '\$.id') FROM events WHERE session_id = ? " +
+                        "AND json_extract(payload, '\$.type') = 'approval_request' " +
+                        "AND json_extract(payload, '\$.id') NOT IN (SELECT json_extract(payload, '\$.id') " +
+                        "FROM events WHERE session_id = ? " +
+                        "AND json_extract(payload, '\$.type') = 'approval_resolved') " +
+                        "ORDER BY seq",
+                ).use {
+                    it.setString(1, sessionId)
+                    it.setString(2, sessionId)
+                    it.executeQuery().use { rows -> rows.collect { row -> row.getString(1) } }
+                }
+        }
+
     /** The session and its agent handle, or null when no such session exists. */
     suspend fun session(sessionId: String): StoredSession? =
         onDispatcher {

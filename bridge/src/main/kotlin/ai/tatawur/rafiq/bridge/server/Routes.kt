@@ -29,6 +29,7 @@ import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerializationException
+import kotlin.coroutines.cancellation.CancellationException
 
 /** Turns every failure into the one [ApiError] shape, so clients parse a single error format. */
 internal fun io.ktor.server.application.Application.installErrorShape() {
@@ -62,6 +63,10 @@ internal fun io.ktor.server.application.Application.installErrorShape() {
         }
         exception<BadRequestException> { call, _ -> call.respondInvalidBody() }
         exception<SerializationException> { call, _ -> call.respondInvalidBody() }
+        // A cancelled call is a closed socket or a stopping bridge, not a failure.
+        exception<CancellationException> { call, _ ->
+            call.application.log.debug("Request cancelled: {}", call.request.local.uri)
+        }
         // Anything unexpected, including a failing adapter, gets the standard body and no stack trace.
         exception<Throwable> { call, failure ->
             call.application.log.error("Request failed: ${call.request.local.uri}", failure)

@@ -253,14 +253,27 @@ class SessionManager(
 
     /**
      * Run once at start-up. Agent processes do not survive a bridge restart, so any session or thread
-     * still marked as working or waiting becomes errored, and says why in its log. Approvals still open
-     * are cancelled, so a client that replays the log sees no card it can no longer answer.
+     * still marked as working, or as waiting on an open approval, becomes errored and says why in its
+     * log. Approvals still open are cancelled, so a client that replays the log sees no card it can no
+     * longer answer. A session idle after a finished turn is left as it is.
      */
     suspend fun recoverAfterRestart() {
         for (session in log.sessions()) {
-            cancelOpenApprovals(session.id)
-            settleRunningWork(session, AgentState.ERROR, "Interrupted by a bridge restart. Send a message to resume.")
+            interrupt(session, "Interrupted by a bridge restart. Send a message to resume.")
         }
+    }
+
+    /**
+     * Ends the work a stopped agent left behind. Open approvals are cancelled. A thread waiting on you
+     * with no open approval finished its turn and is only idle, so it stays. One that was working, or
+     * waiting on an approval, is errored.
+     */
+    private suspend fun interrupt(
+        session: Session,
+        detail: String,
+    ) {
+        val interrupted = if (cancelOpenApprovals(session.id).isEmpty()) WORKING_ONLY else RUNNING_STATES
+        settleRunningWork(session, AgentState.ERROR, detail, settling = interrupted)
     }
 
     /**
@@ -281,7 +294,9 @@ class SessionManager(
                                 // Joined, so nothing is logged for the session after this point.
                                 liveSession.job.cancelAndJoin()
                                 liveSession.stop()
-                                cancelOpenApprovals(sessionId)
+                                log.session(sessionId)?.let {
+                                    interrupt(it.session, "Interrupted by a bridge shutdown. Send a message to resume.")
+                                }
                             }
                         }.awaitAll()
                 }
@@ -465,17 +480,18 @@ class SessionManager(
         }
     }
 
-    /** Sets the session, when [alsoSession] or it is running, and each running thread, to [state]. */
+    /** Sets the session, when [alsoSession] or its status is in [settling], and each such thread, to [state]. */
     private suspend fun settleRunningWork(
         session: Session,
         state: AgentState,
         detail: String,
         alsoSession: Boolean = false,
+        settling: Set<AgentState> = RUNNING_STATES,
     ) {
-        if (alsoSession || session.status.isRunning()) {
+        if (alsoSession || session.status in settling) {
             record(session.id, null, EventPayload.StatusChanged(threadId = null, state = state, detail = detail))
         }
-        for (thread in log.threads(session.id).filter { it.status.isRunning() }) {
+        for (thread in log.threads(session.id).filter { it.status in settling }) {
             record(session.id, null, EventPayload.StatusChanged(threadId = thread.id, state = state, detail = detail))
         }
     }
@@ -505,10 +521,12 @@ class SessionManager(
     }
 
     /** Closes every approval request the log still shows as open, exactly once, as cancelled. */
-    private suspend fun cancelOpenApprovals(sessionId: String) {
-        for (approvalId in log.unresolvedApprovals(sessionId)) {
+    private suspend fun cancelOpenApprovals(sessionId: String): List<String> {
+        val open = log.unresolvedApprovals(sessionId)
+        for (approvalId in open) {
             record(sessionId, null, EventPayload.ApprovalResolved(approvalId, ApprovalOutcome.CANCELLED))
         }
+        return open
     }
 
     private fun forget(sessionId: String) {
@@ -646,6 +664,8 @@ class SessionManager(
     private companion object {
         val SHUTDOWN_BUDGET = 10.seconds
         const val MAX_RESOLVED_APPROVALS = 1000
+        val WORKING_ONLY = setOf(AgentState.WORKING)
+        val RUNNING_STATES = setOf(AgentState.WORKING, AgentState.WAITING_ON_YOU)
         val logger = LoggerFactory.getLogger(SessionManager::class.java)
     }
 }

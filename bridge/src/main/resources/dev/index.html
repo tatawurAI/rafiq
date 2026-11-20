@@ -67,7 +67,7 @@
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const state = { token: "", sessionId: null, lastSeq: 0, socket: null, threads: new Map(), active: null, messages: new Map(), tools: new Map() };
+const state = { token: "", sessionId: null, lastSeq: 0, socket: null, threads: new Map(), active: null, messages: new Map(), tools: new Map(), approvals: new Map(), refreshTimer: null };
 
 function setStatus(text, isError) {
   $("status").textContent = text;
@@ -124,7 +124,9 @@ function renderTabs() {
 }
 
 function blockText(block) {
-  return block.type === "text" || block.type === "markdown" ? block.text : JSON.stringify(block);
+  if (block.type === "markdown") return block.markdown;
+  if (block.type === "text") return block.text;
+  return JSON.stringify(block);
 }
 
 function addApproval(payload) {
@@ -143,6 +145,7 @@ function addApproval(payload) {
     row.appendChild(button);
   }
   card.appendChild(row);
+  state.approvals.set(payload.id, { card, row });
   return card;
 }
 
@@ -161,6 +164,14 @@ function apply(event) {
     case "status_changed": {
       if (payload.thread_id) threadPane(payload.thread_id).status = payload.state;
       else setStatus("Session " + payload.state + (payload.detail ? ": " + payload.detail : ""));
+      scheduleRefresh();
+      break;
+    }
+    case "approval_resolved": {
+      const known = state.approvals.get(payload.id);
+      if (!known) break;
+      known.row.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+      known.card.appendChild(el("div", "label", "Resolved: " + payload.outcome));
       break;
     }
     case "message": {
@@ -232,14 +243,26 @@ function openSession(id) {
   state.threads.clear();
   state.messages.clear();
   state.tools.clear();
+  state.approvals.clear();
   $("stream").replaceChildren();
   $("tabs").replaceChildren();
   connect();
 }
 
 async function refreshSessions() {
+  const keep = $("sessions").value;
   const list = await api("GET", "/sessions");
   $("sessions").replaceChildren(...list.map((s) => option(s.id, s.title + " [" + s.agent + ", " + s.status + "]")));
+  if (keep) $("sessions").value = keep;
+}
+
+// Status changes arrive in bursts, especially on replay, so the list is refreshed once after they settle.
+function scheduleRefresh() {
+  if (state.refreshTimer || !state.token) return;
+  state.refreshTimer = setTimeout(() => {
+    state.refreshTimer = null;
+    refreshSessions().catch(() => {});
+  }, 300);
 }
 
 $("create").addEventListener("click", async () => {

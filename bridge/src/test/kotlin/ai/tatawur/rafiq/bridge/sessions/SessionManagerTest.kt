@@ -124,7 +124,10 @@ class SessionManagerTest {
             runBlocking {
                 first.log.eventAfter(
                     session.id,
-                    trigger = { agent.emit(EventPayload.ApprovalRequest("apr_1", "tool_1", "Run tests", options)) },
+                    trigger = {
+                        agent.emit(status(AgentState.WAITING_ON_YOU, "main"))
+                        agent.emit(EventPayload.ApprovalRequest("apr_1", "tool_1", "Run tests", options))
+                    },
                 ) { it.payload is EventPayload.ApprovalRequest }
                 // A crash leaves the log as it is. A clean shutdown gets to settle it first.
                 if (cleanShutdown) {
@@ -146,9 +149,60 @@ class SessionManagerTest {
                         .filterIsInstance<EventPayload.ApprovalResolved>()
                 }
 
+            // Waiting on an approval is work the restart cut off.
+            assertEquals(
+                AgentState.ERROR,
+                runBlocking {
+                    second.sessions
+                        .sessions()
+                        .single()
+                        .status
+                },
+            )
             val expected = listOf(EventPayload.ApprovalResolved("apr_1", ApprovalOutcome.CANCELLED))
             assertEquals(expected, resolved, "clean shutdown: $cleanShutdown")
         }
+    }
+
+    @Test
+    fun a_restart_leaves_a_session_idle_after_a_finished_turn_as_it_is() {
+        val first = fixture()
+        val session = runBlocking { first.sessions.create("fake", project(), null) }
+        runBlocking {
+            val agent = first.adapter.started.single()
+            first.log.eventAfter(session.id, trigger = { agent.emit(status(AgentState.WAITING_ON_YOU, "main")) }) {
+                (it.payload as? EventPayload.StatusChanged)?.state == AgentState.WAITING_ON_YOU
+            }
+        }
+        first.close()
+        opened.remove(first)
+
+        val second = fixture(adapter = FakeAdapter())
+        runBlocking {
+            second.sessions.recoverAfterRestart()
+
+            assertEquals(
+                AgentState.WAITING_ON_YOU,
+                second.sessions
+                    .sessions()
+                    .single()
+                    .status,
+            )
+            assertEquals(
+                AgentState.WAITING_ON_YOU,
+                second.sessions
+                    .threads(session.id)
+                    .single()
+                    .status,
+            )
+            second.sessions.prompt(session.id, threadId = null, text = "carry on")
+        }
+        assertEquals(
+            listOf("main" to "carry on"),
+            second.adapter.started
+                .single()
+                .prompts,
+        )
     }
 
     @Test

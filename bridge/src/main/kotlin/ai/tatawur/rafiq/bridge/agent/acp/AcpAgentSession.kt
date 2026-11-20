@@ -26,9 +26,11 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
@@ -123,10 +125,16 @@ internal class AcpAgentSession(
         actor.offer(SessionActor.Item.OpenedRoot(acpSessionId, replay))
     }
 
+    /**
+     * Sends [text] as a prompt. The consumer accepts it first, which marks the turn as running, so the
+     * accept and the write must not be split: a caller cancelled in between would leave a turn that
+     * never ends and refuse every later prompt. Both run as one non-cancellable step, and a write that
+     * fails ends the turn again.
+     */
     override suspend fun prompt(
         threadId: String,
         text: String,
-    ) {
+    ) = withContext(NonCancellable) {
         val acpSessionId = ask { SessionActor.Item.Prompt(threadId, it) }
         val request = PromptRequest(SessionId(acpSessionId), listOf(ContentBlock.Text(text)))
         val params = ACPJson.encodeToJsonElement(PromptRequest.serializer(), request)
@@ -138,9 +146,11 @@ internal class AcpAgentSession(
             } catch (_: JsonRpcException) {
                 // An error answer: the consumer reports it as the turn failing.
             } catch (_: IllegalStateException) {
-                // The connection closed under the request. The process exit is reported instead.
+                // The request could not be written, for example because the connection closed.
+                actor.offer(SessionActor.Item.PromptNotSent)
             }
         }
+        Unit
     }
 
     override suspend fun cancel(threadId: String) {

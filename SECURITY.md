@@ -28,14 +28,15 @@ Only the latest release receives security fixes. Rafiq is pre-alpha, so expect t
 
 ## Threat surface
 
-Rafiq is pre-alpha. What exists today is small: the bridge answers `GET /health` and nothing else, and it binds to `127.0.0.1` unless you set `RAFIQ_BIND_ADDRESS`. It reads no files, starts no agents and relays no approvals yet.
+Rafiq is pre-alpha. The bridge starts agent processes and relays your prompts and approvals to them, so reaching its port is as good as running commands in your project folders. It binds to `127.0.0.1` unless you set `RAFIQ_BIND_ADDRESS`. Every route except `GET /health` requires the device token, and the bridge refuses to start with agents configured and no token of at least 32 characters. It reads no project files yet.
 
-The finished bridge will be able to read files in your project folders, start agent processes and relay approvals from your phone to them. Access to it will be access to your project. The protections below are the design, and each lands with the milestone shown.
+The finished bridge will also read files in your project folders. The protections below are the design, and each lands with the milestone shown.
 
 | Protection | Intent | Planned in |
 |---|---|---|
 | Tailscale-only bind | You bind the bridge to your Tailscale address and use Tailscale ACLs to limit which of your devices reach it. This is deployment guidance. Nothing exposes a public port. | Deployment guidance, available now through `RAFIQ_BIND_ADDRESS` |
-| Device token | Each phone presents a per-device token kept in the Android Keystore, and the bridge rejects requests without a valid one. | M3 |
+| Shared device token | Every route except `GET /health` needs `Authorization: Bearer <token>`, compared in constant time. The `Host` header must be the bind address, `localhost` or a name in `RAFIQ_ALLOWED_HOSTS`, and a request with a foreign `Origin` is refused. This blocks DNS rebinding and cross-site requests. | Available now |
+| Per-device tokens | Each phone gets its own token, kept in the Android Keystore, with pairing and revocation. | M3 |
 | Biometric approvals | The app asks for a fresh biometric check before it sends an approval. | M3 |
 | Push payloads | Notifications carry ids and short status only, never file contents or command output. | M3 |
 | Path scoping | The file API refuses paths outside the session's project root. | M5 |

@@ -21,7 +21,7 @@ class HealthRouteTest {
         testApplication {
             val version = bridgeVersion()
             val fixture = BridgeFixture(dir)
-            application { bridgeModule(version, fixture.log, fixture.sessions) }
+            application { bridgeModule(version, fixture.log, fixture.sessions, testSecurity()) }
 
             val response = client.get("/health")
 

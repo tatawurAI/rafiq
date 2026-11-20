@@ -12,6 +12,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.ResultSet
@@ -53,33 +54,47 @@ class EventLog(
         connection.createStatement().use { statement ->
             statement.execute("PRAGMA foreign_keys = ON")
             statement.execute("PRAGMA journal_mode = WAL")
+            // With WAL, NORMAL can lose the last few commits in a power cut but never corrupts the log,
+            // and it saves an fsync on every event.
+            statement.execute("PRAGMA synchronous = NORMAL")
             SCHEMA.forEach(statement::execute)
         }
     }
 
-    /** Creates the row for a new session. The session starts with an empty log. */
+    /**
+     * Creates a session with its first two events, [EventPayload.SessionUpdated] and
+     * [EventPayload.ThreadUpdated] for its main thread, in one transaction, so a session never exists
+     * without its main thread.
+     */
     suspend fun createSession(
         session: Session,
         agentSessionRef: String,
+        mainThread: AgentThread,
     ) {
         onDispatcher {
-            transaction {
-                connection
-                    .prepareStatement(
-                        "INSERT INTO sessions(id, agent, project_path, title, status, agent_session_ref, " +
-                            "created_at_ms, updated_at_ms, last_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                    ).use {
-                        it.setString(1, session.id)
-                        it.setString(2, session.agent)
-                        it.setString(3, session.projectPath)
-                        it.setString(4, session.title)
-                        it.setString(5, wireName(session.status))
-                        it.setString(6, agentSessionRef)
-                        it.setLong(7, session.createdAtMs)
-                        it.setLong(8, session.updatedAtMs)
-                        it.executeUpdate()
-                    }
-            }
+            val events =
+                transaction {
+                    connection
+                        .prepareStatement(
+                            "INSERT INTO sessions(id, agent, project_path, title, status, agent_session_ref, " +
+                                "created_at_ms, updated_at_ms, last_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                        ).use {
+                            it.setString(1, session.id)
+                            it.setString(2, session.agent)
+                            it.setString(3, session.projectPath)
+                            it.setString(4, session.title)
+                            it.setString(5, wireName(session.status))
+                            it.setString(6, agentSessionRef)
+                            it.setLong(7, session.createdAtMs)
+                            it.setLong(8, session.updatedAtMs)
+                            it.executeUpdate()
+                        }
+                    listOf(
+                        insertEvent(session.id, EventPayload.SessionUpdated(session)),
+                        insertEvent(session.id, EventPayload.ThreadUpdated(mainThread)),
+                    )
+                }
+            events.forEach(::publish)
         }
     }
 
@@ -149,7 +164,10 @@ class EventLog(
         onDispatcher {
             val subscription =
                 Subscription(Channel(capacity)) { closed ->
-                    subscribers[sessionId]?.remove(closed)
+                    subscribers.computeIfPresent(sessionId) { _, list ->
+                        list.remove(closed)
+                        list.takeIf { it.isNotEmpty() }
+                    }
                 }
             subscribers.computeIfAbsent(sessionId) { CopyOnWriteArrayList() }.add(subscription)
             subscription
@@ -282,6 +300,27 @@ class EventLog(
             if (threadId != null) it.setString(3, threadId)
             it.executeUpdate()
         }
+        if (threadId != null) mirrorMainThreadStatus(sessionId, threadId, state)
+    }
+
+    /** The session's status is its main thread's status, because real agents report thread-level status only. */
+    private fun mirrorMainThreadStatus(
+        sessionId: String,
+        threadId: String,
+        state: AgentState,
+    ) {
+        connection
+            .prepareStatement(
+                "UPDATE sessions SET status = ? WHERE id = ? AND EXISTS " +
+                    "(SELECT 1 FROM threads WHERE session_id = ? AND id = ? AND kind = ?)",
+            ).use {
+                it.setString(1, wireName(state))
+                it.setString(2, sessionId)
+                it.setString(3, sessionId)
+                it.setString(4, threadId)
+                it.setString(5, wireName(ThreadKind.MAIN))
+                it.executeUpdate()
+            }
     }
 
     private fun upsertThread(
@@ -303,6 +342,7 @@ class EventLog(
                 it.setString(6, wireName(thread.status))
                 it.executeUpdate()
             }
+        mirrorMainThreadStatus(sessionId, thread.id, thread.status)
     }
 
     /** Hands [event] to each subscriber without ever waiting: one that has no room is closed as too slow. */
@@ -391,12 +431,33 @@ class EventLog(
                 if (dataDir == null) {
                     "jdbc:sqlite::memory:"
                 } else {
-                    Files.createDirectories(dataDir)
-                    "jdbc:sqlite:${dataDir.resolve("rafiq.db")}"
+                    val file = dataDir.resolve("rafiq.db")
+                    createPrivate(dataDir, file)
+                    "jdbc:sqlite:$file"
                 }
             return EventLog(url, dispatcher, clock)
         }
     }
+}
+
+/**
+ * Makes [dir] readable by this user only and creates [file] the same way. SQLite gives its `-wal` and
+ * `-shm` files the database's mode.
+ */
+private fun createPrivate(
+    dir: Path,
+    file: Path,
+) {
+    if ("posix" !in dir.fileSystem.supportedFileAttributeViews()) {
+        Files.createDirectories(dir)
+        return
+    }
+    val folderMode = PosixFilePermissions.fromString("rwx------")
+    val fileMode = PosixFilePermissions.fromString("rw-------")
+    if (!Files.isDirectory(dir)) Files.createDirectories(dir, PosixFilePermissions.asFileAttribute(folderMode))
+    Files.setPosixFilePermissions(dir, folderMode)
+    if (!Files.exists(file)) Files.createFile(file, PosixFilePermissions.asFileAttribute(fileMode))
+    Files.setPosixFilePermissions(file, fileMode)
 }
 
 private fun <T> ResultSet.collect(read: (ResultSet) -> T): List<T> {

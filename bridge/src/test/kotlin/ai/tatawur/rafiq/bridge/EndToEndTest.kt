@@ -13,13 +13,16 @@ import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.protocolJson
+import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
@@ -62,11 +65,15 @@ class EndToEndTest {
                     clientVersion = "test",
                 )
             val sessions = SessionManager(log, listOf(adapter), scope)
-            application { bridgeModule("test", log, sessions) }
-            val sockets = createClient { install(WebSockets) }
+            application { bridgeModule("test", log, sessions, testSecurity()) }
+            val http =
+                createClient {
+                    install(WebSockets)
+                    defaultRequest { header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN") }
+                }
 
             val created =
-                client.post("/sessions") {
+                http.post("/sessions") {
                     contentType(ContentType.Application.Json)
                     setBody("""{"agent":"claude-code","project_path":"$project"}""")
                 }
@@ -74,7 +81,7 @@ class EndToEndTest {
             val session = protocolJson.decodeFromString(Session.serializer(), created.bodyAsText())
             val prompt = "Launch two helpers in parallel."
             val accepted =
-                client.post("/sessions/${session.id}/prompt") {
+                http.post("/sessions/${session.id}/prompt") {
                     contentType(ContentType.Application.Json)
                     setBody("""{"text":"$prompt"}""")
                 }
@@ -82,7 +89,7 @@ class EndToEndTest {
 
             // The fixture ends with the agent exiting, which the bridge reports for the whole session.
             val events = mutableListOf<Event>()
-            sockets.webSocket("/events?session=${session.id}&after=0") {
+            http.webSocket("/events?session=${session.id}&after=0") {
                 do {
                     val frame = incoming.receive() as Frame.Text
                     val event = protocolJson.decodeFromString(Event.serializer(), frame.readText())
@@ -96,7 +103,7 @@ class EndToEndTest {
             assertHelperThreads(
                 protocolJson.decodeFromString(
                     ListSerializer(AgentThread.serializer()),
-                    client.get("/sessions/${session.id}/threads").bodyAsText(),
+                    http.get("/sessions/${session.id}/threads").bodyAsText(),
                 ),
             )
             assertLateWorkStreams(payloads)

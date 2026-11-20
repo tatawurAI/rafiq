@@ -1,72 +1,102 @@
 package ai.tatawur.rafiq.bridge.store
 
+import ai.tatawur.rafiq.bridge.TEST_SESSION
+import ai.tatawur.rafiq.bridge.seed
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
 import ai.tatawur.rafiq.protocol.EventPayload
-import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+@Timeout(60)
 class EventLogTest {
     @TempDir
     lateinit var dir: Path
 
-    private val session =
-        Session("ses_1", "fake", "/work/weather-app", "weather-app", AgentState.DONE, createdAtMs = 1, updatedAtMs = 1)
+    private val opened = mutableListOf<EventLog>()
+
+    @AfterEach
+    fun closeLogs() = opened.forEach(EventLog::close)
+
+    private fun open() = EventLog.open(dir.resolve("data"), Dispatchers.IO.limitedParallelism(1)).also(opened::add)
 
     private fun delta(n: Int) = EventPayload.MessageDelta(messageId = "m", threadId = "main", text = "d$n")
 
     @Test
-    fun concurrent_appends_get_every_seq_from_one_to_n_once() =
+    fun concurrent_appends_get_every_seq_once_and_the_log_reads_back_in_order() =
         runBlocking {
-            val log = EventLog.open(dir, Dispatchers.IO.limitedParallelism(1))
-            log.createSession(session, "ref")
+            val log = open()
+            log.seed()
 
             val returned =
-                (1..20)
+                (1..4)
                     .map { writer ->
-                        async(Dispatchers.Default) {
-                            (1..25).map {
-                                log
-                                    .append(
-                                        "ses_1",
-                                        delta(writer * 100 + it),
-                                    ).seq
-                            }
-                        }
+                        async(Dispatchers.Default) { (1..25).map { log.append("ses_1", delta(writer * 100 + it)).seq } }
                     }.awaitAll()
                     .flatten()
 
-            assertEquals((1L..500L).toList(), returned.sorted())
-            assertEquals((1L..500L).toList(), log.after("ses_1", 0, 1000).map { it.seq })
-            log.close()
+            // Seq 1 and 2 are the session and its main thread.
+            assertEquals((3L..102L).toList(), returned.sorted())
+            assertEquals((1L..102L).toList(), log.after("ses_1", 0, 1000).map { it.seq })
         }
 
     @Test
     fun events_sessions_and_threads_survive_a_restart_and_seq_carries_on() =
         runBlocking {
-            val first = EventLog.open(dir, Dispatchers.IO.limitedParallelism(1))
-            first.createSession(session, "ref")
+            val first = open()
+            first.seed()
             val helper = AgentThread("sub-1", "ses_1", "main", ThreadKind.SUBAGENT, "Explore", AgentState.WORKING)
             first.append("ses_1", EventPayload.ThreadUpdated(helper))
             first.append("ses_1", delta(1))
             val written = first.after("ses_1", 0, 10)
             first.close()
 
-            val second = EventLog.open(dir, Dispatchers.IO.limitedParallelism(1))
+            val second = open()
 
             assertEquals(written, second.after("ses_1", 0, 10))
-            assertEquals(listOf(helper), second.threads("ses_1"))
+            assertEquals(listOf("main", "sub-1"), second.threads("ses_1").map { it.id })
             assertEquals("ref", second.session("ses_1")?.agentSessionRef)
-            assertEquals(3L, second.append("ses_1", delta(2)).seq)
-            assertEquals(listOf(3L), second.after("ses_1", 2, 10).map { it.seq })
-            second.close()
+            assertEquals(5L, second.append("ses_1", delta(2)).seq)
+            assertEquals(listOf(5L), second.after("ses_1", 4, 10).map { it.seq })
         }
+
+    @Test
+    fun a_working_main_thread_makes_the_session_working_and_a_helper_does_not() =
+        runBlocking {
+            val log = open()
+            log.seed()
+            val helper = AgentThread("sub-1", "ses_1", "main", ThreadKind.SUBAGENT, "Explore", AgentState.DONE)
+            log.append("ses_1", EventPayload.ThreadUpdated(helper))
+
+            log.append("ses_1", EventPayload.StatusChanged("sub-1", AgentState.WORKING))
+            assertEquals(AgentState.DONE, log.sessions().single().status)
+            log.append("ses_1", EventPayload.StatusChanged("main", AgentState.WORKING))
+
+            assertEquals(AgentState.WORKING, log.sessions().single().status)
+            assertEquals(TEST_SESSION.id, log.sessions().single().id)
+        }
+
+    @Test
+    fun the_data_folder_and_database_are_private_to_the_bridge_user() {
+        val log = open()
+        if ("posix" !in dir.fileSystem.supportedFileAttributeViews()) return
+
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.resolve("data"))))
+        assertEquals(
+            "rw-------",
+            PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.resolve("data/rafiq.db"))),
+        )
+        log.close()
+    }
 }

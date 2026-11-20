@@ -7,30 +7,55 @@ import ai.tatawur.rafiq.bridge.status
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.EventPayload
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
+@Timeout(60)
 class SessionManagerTest {
     @TempDir
     lateinit var dir: Path
 
+    private val opened = mutableListOf<BridgeFixture>()
+
+    @AfterEach
+    fun closeFixtures() = opened.forEach(BridgeFixture::close)
+
+    private fun fixture(adapter: FakeAdapter = FakeAdapter()) =
+        BridgeFixture(dir.resolve("data"), adapter).also(opened::add)
+
     private fun project(): String = Files.createDirectory(dir.resolve("weather-app")).toString()
 
     @Test
-    fun a_session_whose_agent_process_exits_is_marked_errored() {
-        val fixture = BridgeFixture(dir.resolve("data"))
+    fun the_session_shows_working_while_its_main_thread_does_and_a_logging_failure_marks_it_errored() {
+        val fixture = fixture()
         val session = runBlocking { fixture.sessions.create("fake", project(), null) }
         val agent = fixture.adapter.started.single()
-        agent.emit(status(AgentState.WORKING, threadId = "main"))
 
         runBlocking {
-            fixture.log.eventAfter(session.id, trigger = { agent.exit() }) {
-                val change = it.payload as? EventPayload.StatusChanged
-                change?.state == AgentState.ERROR && change.threadId == "main"
+            // Like real ACP, the agent reports thread-level status only.
+            fixture.log.eventAfter(session.id, trigger = { agent.emit(status(AgentState.WORKING, "main")) }) {
+                (it.payload as? EventPayload.StatusChanged)?.state == AgentState.WORKING
             }
+            assertEquals(
+                AgentState.WORKING,
+                fixture.sessions
+                    .sessions()
+                    .single()
+                    .status,
+            )
+
+            val died =
+                fixture.log.eventAfter(session.id, trigger = { agent.breakWith(IllegalStateException("boom")) }) {
+                    val change = it.payload as? EventPayload.StatusChanged
+                    change?.state == AgentState.ERROR && change.threadId == null
+                }
+
             assertEquals(
                 AgentState.ERROR,
                 fixture.sessions
@@ -45,13 +70,14 @@ class SessionManagerTest {
                     .single()
                     .status,
             )
+            // The cause is logged on the server, never stored in the public event log.
+            assertFalse("boom" in (died.payload as EventPayload.StatusChanged).detail.orEmpty())
         }
-        fixture.close()
     }
 
     @Test
-    fun after_a_restart_work_shows_as_not_running_and_a_prompt_resumes_with_the_stored_agent_handle() {
-        val first = BridgeFixture(dir.resolve("data"))
+    fun after_a_restart_work_shows_as_errored_and_a_prompt_resumes_with_the_stored_agent_handle() {
+        val first = fixture()
         val session = runBlocking { first.sessions.create("fake", project(), null) }
         val agentRef =
             first.adapter.started
@@ -59,14 +85,15 @@ class SessionManagerTest {
                 .agentSessionRef
         runBlocking {
             val agent = first.adapter.started.single()
-            first.log.eventAfter(session.id, trigger = { agent.emit(status(AgentState.WORKING)) }) {
+            first.log.eventAfter(session.id, trigger = { agent.emit(status(AgentState.WORKING, "main")) }) {
                 (it.payload as? EventPayload.StatusChanged)?.state == AgentState.WORKING
             }
             first.sessions.shutdown()
         }
         first.close()
+        opened.remove(first)
 
-        val second = BridgeFixture(dir.resolve("data"), FakeAdapter())
+        val second = fixture(FakeAdapter())
         runBlocking {
             second.sessions.recoverAfterRestart()
             assertEquals(
@@ -87,6 +114,5 @@ class SessionManagerTest {
                 .single()
                 .prompts,
         )
-        second.close()
     }
 }

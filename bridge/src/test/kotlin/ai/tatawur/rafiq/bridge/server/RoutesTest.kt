@@ -341,6 +341,47 @@ class RoutesTest {
         }
 
     @Test
+    fun a_prompt_after_a_finished_turn_is_accepted() =
+        testApplication {
+            val (fixture, http) = start()
+            val sessionId = fixture.sessions.create("fake", project, null).id
+            val prompt = "/sessions/$sessionId/prompt"
+
+            assertEquals(HttpStatusCode.Accepted, http.postJson(prompt, """{"text":"first"}""").status)
+            // A normal turn ends by waiting on you again.
+            fixture.report(sessionId, status(AgentState.WAITING_ON_YOU, "main"))
+
+            assertEquals(HttpStatusCode.Accepted, http.postJson(prompt, """{"text":"second"}""").status)
+            assertEquals(2, fixture.userMessages(sessionId))
+        }
+
+    @Test
+    fun an_open_approval_blocks_prompts_until_it_is_answered_and_the_turn_ends() =
+        testApplication {
+            val (fixture, http) = start()
+            val sessionId = fixture.sessions.create("fake", project, null).id
+            val prompt = "/sessions/$sessionId/prompt"
+            val options = listOf(ApprovalOption("allow", ApprovalOptionKind.ALLOW_ONCE, "Allow"))
+            http.postJson(prompt, """{"text":"first"}""")
+            fixture.report(
+                sessionId,
+                EventPayload.ApprovalRequest("apr_1", "tool_1", "Run tests", options),
+                status(AgentState.WAITING_ON_YOU, "main"),
+            )
+
+            val blocked = http.postJson(prompt, """{"text":"too soon"}""")
+            assertEquals(HttpStatusCode.Conflict, blocked.status)
+            assertEquals("turn_in_progress", blocked.code())
+            assertEquals(1, fixture.userMessages(sessionId))
+
+            assertEquals(HttpStatusCode.Accepted, http.postJson("/approvals/apr_1", """{"option_id":"allow"}""").status)
+            fixture.report(sessionId, status(AgentState.WORKING, "main"), status(AgentState.WAITING_ON_YOU, "main"))
+
+            assertEquals(HttpStatusCode.Accepted, http.postJson(prompt, """{"text":"after"}""").status)
+            assertEquals(2, fixture.userMessages(sessionId))
+        }
+
+    @Test
     fun approvals_reject_unknown_ids_bad_options_and_answers_the_agent_no_longer_waits_for() =
         testApplication {
             val (fixture, http) = start()
@@ -409,6 +450,18 @@ class RoutesTest {
             )
         }
     }
+
+    /** Has the fake agent report [payloads] and waits until the last one is in the log. */
+    private suspend fun BridgeFixture.report(
+        sessionId: String,
+        vararg payloads: EventPayload,
+    ) {
+        val agent = adapter.started.single()
+        log.eventAfter(sessionId, trigger = { payloads.forEach(agent::emit) }) { it.payload == payloads.last() }
+    }
+
+    private suspend fun BridgeFixture.userMessages(sessionId: String) =
+        log.after(sessionId, 0, 1000).count { (it.payload as? EventPayload.Message)?.role == MessageRole.USER }
 
     private suspend fun send(
         http: HttpClient,

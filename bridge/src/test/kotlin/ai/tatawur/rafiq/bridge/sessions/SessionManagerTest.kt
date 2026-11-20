@@ -76,6 +76,39 @@ class SessionManagerTest {
     }
 
     @Test
+    fun threads_still_working_when_the_agent_exits_are_settled() {
+        val fixture = fixture()
+        val session = runBlocking { fixture.sessions.create("fake", project(), null) }
+        val agent = fixture.adapter.started.single()
+
+        runBlocking {
+            fixture.log.eventAfter(session.id, trigger = { agent.emit(status(AgentState.WORKING, "main")) }) {
+                (it.payload as? EventPayload.StatusChanged)?.state == AgentState.WORKING
+            }
+            val settled =
+                fixture.log.eventAfter(session.id, trigger = { agent.exit() }) {
+                    (it.payload as? EventPayload.StatusChanged)?.detail == "The agent exited."
+                }
+
+            assertEquals(AgentState.DONE, (settled.payload as EventPayload.StatusChanged).state)
+            assertEquals(
+                AgentState.DONE,
+                fixture.sessions
+                    .threads(session.id)
+                    .single()
+                    .status,
+            )
+            assertEquals(
+                AgentState.DONE,
+                fixture.sessions
+                    .sessions()
+                    .single()
+                    .status,
+            )
+        }
+    }
+
+    @Test
     fun after_a_restart_work_shows_as_errored_and_a_prompt_resumes_with_the_stored_agent_handle() {
         val first = fixture()
         val session = runBlocking { first.sessions.create("fake", project(), null) }

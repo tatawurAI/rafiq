@@ -146,7 +146,7 @@ class SessionManager(
         promptLocks.computeIfAbsent(sessionId) { Mutex() }.withLock {
             val target = resolvePromptTarget(sessionId, threadId)
             val turn = sessionId to target.id
-            if (!turnsInFlight.add(turn)) {
+            if (hasOpenApproval(sessionId, target.id) || !turnsInFlight.add(turn)) {
                 throw SessionException.Conflict("turn_in_progress", "That thread is still working on a turn.")
             }
             var accepted = false
@@ -168,7 +168,7 @@ class SessionManager(
                 }
                 accepted = true
             } finally {
-                // Cleared when the thread's status leaves working, or here if the prompt never got in.
+                // Cleared when the thread reports its turn over, or here if the prompt never got in.
                 if (!accepted) turnsInFlight.remove(turn)
             }
         }
@@ -222,6 +222,8 @@ class SessionManager(
             agentSession.respondToApproval(approvalId, optionId)
         }
         approvals.remove(approvalId)
+        // The agent carries on with the turn until it reports otherwise.
+        pending.threadId?.let { turnsInFlight.add(pending.sessionId to it) }
     }
 
     /**
@@ -305,9 +307,10 @@ class SessionManager(
                     val failure = drain(sessionId, liveSession, buffer)
                     if (live.remove(sessionId, liveSession)) {
                         forget(sessionId)
-                        // A clean exit is reported by the adapter itself, with the exit code. Only a
-                        // failure of the bridge's own logging needs a status written here.
-                        if (failure != null) markDied(sessionId, failure)
+                        // The adapter reports the exit itself, with the code. The bridge only has to
+                        // stop showing threads as working, and writes a session-level error only when
+                        // its own logging failed.
+                        if (failure != null) markDied(sessionId, failure) else settleThreadsAfterExit(sessionId)
                     }
                 } finally {
                     withContext(NonCancellable) { liveSession.stop() }
@@ -338,18 +341,14 @@ class SessionManager(
         liveSession: LiveSession?,
         payload: EventPayload,
     ) {
-        log.append(sessionId, payload)
+        // Bookkeeping first, so anyone who sees the event in the log also sees its effect here.
         when (payload) {
             is EventPayload.StatusChanged -> {
-                payload.threadId?.takeUnless { payload.state.isRunning() }?.let {
-                    turnsInFlight.remove(sessionId to it)
-                }
+                payload.threadId?.let { trackTurn(sessionId, it, payload.state) }
             }
 
             is EventPayload.ThreadUpdated -> {
-                if (!payload.thread.status.isRunning()) {
-                    turnsInFlight.remove(sessionId to payload.thread.id)
-                }
+                trackTurn(sessionId, payload.thread.id, payload.thread.status)
             }
 
             is EventPayload.ToolCall -> {
@@ -369,7 +368,30 @@ class SessionManager(
                 Unit
             }
         }
+        log.append(sessionId, payload)
     }
+
+    /**
+     * A turn is in flight from an accepted prompt until the thread reports something other than working.
+     * Waiting on you ends the turn too, unless an approval is still open, which [hasOpenApproval] covers.
+     */
+    private fun trackTurn(
+        sessionId: String,
+        threadId: String,
+        state: AgentState,
+    ) {
+        if (state == AgentState.WORKING) {
+            turnsInFlight.add(sessionId to threadId)
+        } else {
+            turnsInFlight.remove(sessionId to threadId)
+        }
+    }
+
+    /** An approval whose thread is unknown could belong to any thread, and prompts only go to the main one. */
+    private fun hasOpenApproval(
+        sessionId: String,
+        threadId: String,
+    ): Boolean = approvals.values.any { it.sessionId == sessionId && (it.threadId == null || it.threadId == threadId) }
 
     /** Writes the error status for a session whose logging failed. The failure's detail goes to the server log only. */
     @Suppress("TooGenericExceptionCaught") // The log may be what failed. Nothing more can be done but say so.
@@ -388,6 +410,20 @@ class SessionManager(
             )
         } catch (secondary: Exception) {
             logger.error("Could not record the error status for session {}.", sessionId, secondary)
+        }
+    }
+
+    /** Threads still working when the agent ends become done, or errored if the adapter marked the session so. */
+    @Suppress("TooGenericExceptionCaught") // The log may be what failed, and there is nobody left to tell.
+    private suspend fun settleThreadsAfterExit(sessionId: String) {
+        try {
+            val session = log.session(sessionId)?.session ?: return
+            val state = if (session.status == AgentState.ERROR) AgentState.ERROR else AgentState.DONE
+            for (thread in log.threads(sessionId).filter { it.status.isRunning() }) {
+                record(sessionId, null, EventPayload.StatusChanged(thread.id, state, "The agent exited."))
+            }
+        } catch (failure: Exception) {
+            logger.error("Could not settle the threads of session {}.", sessionId, failure)
         }
     }
 
@@ -433,7 +469,8 @@ class SessionManager(
     private fun forget(sessionId: String) {
         approvals.values.removeIf { it.sessionId == sessionId }
         turnsInFlight.removeIf { it.first == sessionId }
-        promptLocks.remove(sessionId)
+        // A holder or waiter may still be using the lock. It is dropped only when nobody is.
+        promptLocks.computeIfPresent(sessionId) { _, lock -> lock.takeIf { it.isLocked } }
     }
 
     private fun runningSession(sessionId: String): AgentSession =
@@ -500,7 +537,7 @@ class SessionManager(
     private suspend fun requireSession(sessionId: String) =
         log.session(sessionId) ?: throw SessionException.NotFound("session_not_found", "No session '$sessionId'.")
 
-    /** Checks everything a prompt can be refused for before anything is logged. */
+    /** Checks the target of a prompt before anything is logged. The turn check is in [prompt], under its lock. */
     private suspend fun resolvePromptTarget(
         sessionId: String,
         threadId: String?,
@@ -508,10 +545,6 @@ class SessionManager(
         val target = resolveThread(sessionId, threadId)
         if (target.kind != ThreadKind.MAIN) {
             throw SessionException.Invalid("invalid_thread", "Prompts go to the main thread, not a helper thread.")
-        }
-        // A thread that is not live has no turn to wait for, whatever its stored status says.
-        if (live.containsKey(sessionId) && target.status.isRunning()) {
-            throw SessionException.Conflict("turn_in_progress", "That thread is still working on a turn.")
         }
         return target
     }

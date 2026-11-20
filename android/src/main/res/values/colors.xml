@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Only for what Android draws outside Compose: the window, splash screen and launcher icon.
+       Compose reads its colours from RafiqTheme. -->
+  <color name="rafiq_ground">#FF15191B</color>
+  <color name="rafiq_accent">#FF3FD9BC</color>
+</resources>

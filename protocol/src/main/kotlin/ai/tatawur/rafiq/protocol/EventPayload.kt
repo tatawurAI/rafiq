@@ -3,12 +3,13 @@ package ai.tatawur.rafiq.protocol
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * What an [Event] reports. On the wire it is a JSON object whose `type` field names the kind.
  *
- * Every kind this build knows is a [Known] subtype. Anything else decodes to [Unknown], so a newer
- * bridge never crashes an older app. New kinds are added, never renamed or removed, without an ADR.
+ * Every kind this build knows is a [Known] subtype. Anything it cannot decode becomes [Unknown], so a
+ * newer bridge never crashes an older app. New kinds are added, never renamed or removed, without an ADR.
  */
 @Serializable(with = EventPayloadSerializer::class)
 sealed interface EventPayload {
@@ -17,15 +18,19 @@ sealed interface EventPayload {
     sealed interface Known : EventPayload
 
     /**
-     * A payload whose type this build does not recognise. The app shows it as a plain message.
+     * A payload this build cannot decode: its type is unknown, absent or not a string, or it is a
+     * known type with a missing or malformed field. The app shows it as a plain message.
      *
-     * @property type the wire type name as received, or an empty string if the payload had none.
-     * @property fields every other field of the payload, unchanged.
+     * @property raw the JSON object exactly as received, including its `type` field. It is what
+     *   gets re-encoded, so storing and forwarding the payload loses nothing.
      */
     data class Unknown(
-        val type: String,
-        val fields: JsonObject,
-    ) : EventPayload
+        val raw: JsonObject,
+    ) : EventPayload {
+        /** The `type` field as received, or null when it was absent or not a string. */
+        val type: String?
+            get() = (raw["type"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+    }
 
     /** A session was created or one of its fields changed. Carries the whole session. */
     @Serializable
@@ -38,7 +43,7 @@ sealed interface EventPayload {
     @Serializable
     @SerialName("thread_updated")
     data class ThreadUpdated(
-        @SerialName("thread") val thread: Thread,
+        @SerialName("thread") val thread: AgentThread,
     ) : Known
 
     /** A complete message, or the first snapshot of one that is still streaming. */
@@ -156,14 +161,11 @@ internal object EventPayloadSerializer :
     ) {
     override fun asKnown(value: EventPayload): EventPayload.Known? = value as? EventPayload.Known
 
-    override fun unknown(
-        type: String,
-        fields: JsonObject,
-    ): EventPayload = EventPayload.Unknown(type, fields)
+    override fun unknown(raw: JsonObject): EventPayload = EventPayload.Unknown(raw)
 
-    override fun unknownParts(value: EventPayload): Pair<String, JsonObject> =
+    override fun rawOf(value: EventPayload): JsonObject =
         when (value) {
-            is EventPayload.Unknown -> value.type to value.fields
+            is EventPayload.Unknown -> value.raw
             is EventPayload.Known -> error("${value::class.simpleName} is a known payload.")
         }
 }

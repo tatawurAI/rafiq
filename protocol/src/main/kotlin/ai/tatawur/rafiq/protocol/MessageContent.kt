@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.protocol
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /** Who wrote a message. */
 @Serializable
@@ -34,15 +35,19 @@ sealed interface ContentBlock {
     sealed interface Known : ContentBlock
 
     /**
-     * A content block whose type this build does not recognise.
+     * A content block this build cannot decode: its type is unknown, absent or not a string, or it is a
+     * known type with a missing or malformed field.
      *
-     * @property type the wire type name as received, or an empty string if the block had none.
-     * @property fields every other field of the block, unchanged.
+     * @property raw the JSON object exactly as received, including its `type` field. It is what
+     *   gets re-encoded, so storing and forwarding the content block loses nothing.
      */
     data class Unknown(
-        val type: String,
-        val fields: JsonObject,
-    ) : ContentBlock
+        val raw: JsonObject,
+    ) : ContentBlock {
+        /** The `type` field as received, or null when it was absent or not a string. */
+        val type: String?
+            get() = (raw["type"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+    }
 
     /** Plain text, shown as is. */
     @Serializable
@@ -79,14 +84,11 @@ internal object ContentBlockSerializer :
     ) {
     override fun asKnown(value: ContentBlock): ContentBlock.Known? = value as? ContentBlock.Known
 
-    override fun unknown(
-        type: String,
-        fields: JsonObject,
-    ): ContentBlock = ContentBlock.Unknown(type, fields)
+    override fun unknown(raw: JsonObject): ContentBlock = ContentBlock.Unknown(raw)
 
-    override fun unknownParts(value: ContentBlock): Pair<String, JsonObject> =
+    override fun rawOf(value: ContentBlock): JsonObject =
         when (value) {
-            is ContentBlock.Unknown -> value.type to value.fields
+            is ContentBlock.Unknown -> value.raw
             is ContentBlock.Known -> error("${value::class.simpleName} is a known content block.")
         }
 }

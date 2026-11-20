@@ -15,12 +15,12 @@ import kotlinx.serialization.Serializable
  *   Epoch milliseconds rather than an ISO-8601 string because both ends compare and sort timestamps,
  *   and a number needs no parsing, has no time-zone or precision variants, and stays compact over a
  *   slow link. Formatting for display happens in the app.
- * @property payload what happened. An unrecognised type decodes to [EventPayload.Unknown].
+ * @property payload what happened. A payload this build cannot decode becomes [EventPayload.Unknown].
  */
 @Serializable
 data class Event(
     @SerialName("session_id") val sessionId: String,
     @SerialName("seq") val seq: Long,
-    @SerialName("ts") val timestampMs: Long,
+    @SerialName("ts_ms") val timestampMs: Long,
     @SerialName("payload") val payload: EventPayload,
 )

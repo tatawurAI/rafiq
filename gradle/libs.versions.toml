@@ -24,7 +24,7 @@ logback = "1.6.8"
 # JDBC driver for the event log. It bundles the native SQLite library for every platform.
 sqlite-jdbc = "3.50.3.0"
 
-# The Agent Client Protocol (ACP) Kotlin SDK. The bridge starts using it in M1.
+# The Agent Client Protocol (ACP) Kotlin SDK.
 acp = "0.34.0"
 
 junit = "5.14.4"

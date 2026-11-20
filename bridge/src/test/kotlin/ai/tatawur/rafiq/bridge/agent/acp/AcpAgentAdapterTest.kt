@@ -1,17 +1,12 @@
 package ai.tatawur.rafiq.bridge.agent.acp
 
-import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.agent.TurnInProgressException
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
-import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.ThreadKind
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -19,8 +14,6 @@ import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
-import java.util.concurrent.atomic.AtomicInteger
-import kotlin.io.path.readLines
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -139,8 +132,12 @@ class AcpAgentAdapterTest {
                     .jsonObject
             assertEquals(JsonObject(emptyMap()), capabilities["subagents"])
             assertTrue(
-                ProcessHandle.current().children().noneMatch { it.isAlive },
-                "No agent process outlives close().",
+                ProcessHandle
+                    .of(run.agentPid())
+                    .map { it.isAlive }
+                    .orElse(false)
+                    .not(),
+                "The agent outlived close().",
             )
         }
 
@@ -178,61 +175,11 @@ class AcpAgentAdapterTest {
         assertEquals(0, outOfOrder, "$outOfOrder of $runs runs reported events out of wire order.")
     }
 
-    /** The adapter, its session, and everything the session reported so far. */
-    private class Run(
-        val session: AgentSession,
-        private val log: Path,
-        scope: CoroutineScope,
-    ) {
-        private val received = Channel<EventPayload>(Channel.UNLIMITED)
-        private val seen = mutableListOf<EventPayload>()
-
-        init {
-            scope.launch {
-                session.updates.collect { received.send(it) }
-                received.close()
-            }
-        }
-
-        suspend fun awaitEvent(predicate: (EventPayload) -> Boolean): EventPayload {
-            while (true) {
-                val event = received.receive()
-                seen += event
-                if (predicate(event)) return event
-            }
-        }
-
-        /** Everything up to the end of the session, which comes when the agent process exits. */
-        suspend fun drain(): List<EventPayload> {
-            for (event in received) seen += event
-            return seen
-        }
-
-        /** Every line the bridge wrote to the agent, read once the agent has exited. */
-        fun sentByBridge(): List<JsonObject> = log.readLines().map { Json.parseToJsonElement(it).jsonObject }
-    }
-
     private fun runScript(
         fixture: String,
         exitAtEnd: Boolean = true,
-        block: suspend CoroutineScope.(Run) -> Unit,
-    ) = runBlocking {
-        val log = projectPath.resolve("sent-by-bridge.jsonl")
-        val ids = AtomicInteger()
-        val adapter =
-            AcpAgentAdapter(
-                agentId = "fake",
-                command = fakeAcpAgentCommand(fixture, log, exitAtEnd),
-                clientVersion = "test",
-                newId = { "id-${ids.incrementAndGet()}" },
-            )
-        val session = adapter.start("session-1", projectPath)
-        try {
-            block(Run(session, log, this))
-        } finally {
-            session.close()
-        }
-    }
+        block: suspend CoroutineScope.(AcpRun) -> Unit,
+    ) = runFakeAgent(projectPath, fixture, exitAtEnd = exitAtEnd, block = block)
 }
 
 /** Names the three events whose order the agent fixed on the wire, and ignores the rest. */
@@ -249,14 +196,5 @@ private fun orderMark(event: EventPayload): String? =
 
         else -> {
             null
-        }
-    }
-
-private fun EventPayload.Message.text(): String =
-    content.joinToString("") {
-        when (it) {
-            is ContentBlock.Text -> it.text
-            is ContentBlock.Markdown -> it.markdown
-            else -> ""
         }
     }

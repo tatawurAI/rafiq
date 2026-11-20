@@ -38,6 +38,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.serializer
+import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.nio.file.Path
 import java.util.UUID
@@ -65,8 +66,13 @@ import kotlin.time.Duration.Companion.seconds
  * @param ioDispatcher runs process I/O. Tests can pass their own.
  * @param startTimeout how long the agent may take to answer `initialize` and open the session.
  * @param stopGracePeriod how long the agent gets to exit after stdin closes, and again after a
- *   termination signal, before it is killed.
+ *   termination signal, before it is killed. Also how long the session waits for the agent's last
+ *   lines after it exits.
  * @param newId makes event ids for messages and approvals, which must stay unique across resumes.
+ * @param environment the environment the agent starts with. Every `RAFIQ_*` variable is removed
+ *   first, so the bridge's settings and device token never reach the agent or its tools.
+ * @param maxLineChars the longest stdout line the bridge reads. A longer one is dropped as it is
+ *   read, and the session reports that something was left out.
  */
 class AcpAgentAdapter(
     override val agentId: String,
@@ -76,6 +82,8 @@ class AcpAgentAdapter(
     private val startTimeout: Duration = 60.seconds,
     private val stopGracePeriod: Duration = 5.seconds,
     private val newId: () -> String = { UUID.randomUUID().toString() },
+    private val environment: Map<String, String> = System.getenv(),
+    private val maxLineChars: Int = DEFAULT_MAX_LINE_CHARS,
 ) : AgentAdapter {
     init {
         require(command.isNotEmpty()) { "The ACP command for $agentId is empty." }
@@ -134,14 +142,16 @@ class AcpAgentAdapter(
     ): AgentSession {
         val process =
             try {
-                AgentProcess.start(command, projectPath, ioDispatcher, stopGracePeriod)
+                AgentProcess.start(command, projectPath, environment, ioDispatcher, stopGracePeriod, maxLineChars)
             } catch (e: IOException) {
-                throw AgentUnavailableException("Could not start $agentId with `${command.first()}`.", e)
+                // The command can carry paths and arguments, so it goes to the log, not to the client.
+                logger.warn("could not start agent {} with {}: {}", agentId, command.first(), e.message)
+                throw AgentUnavailableException("Could not start $agentId.", e)
             }
         val scope = CoroutineScope(SupervisorJob() + ioDispatcher + CoroutineName("acp-$agentId-$sessionId"))
         process.drainStderr(scope)
         val mapper = AcpEventMapper(sessionId, projectPath, newId)
-        val session = AcpAgentSession(sessionId, process, scope, ioDispatcher, mapper, newId)
+        val session = AcpAgentSession(sessionId, process, scope, ioDispatcher, mapper, newId, stopGracePeriod)
         session.attach()
         val protocol = session.protocol
         var opened = false
@@ -205,12 +215,19 @@ class AcpAgentAdapter(
         try {
             protocol.sendRequestRaw(method, params)
         } catch (e: JsonRpcException) {
-            throw AgentUnavailableException("$agentId refused `${method.name}`: ${e.message}", e)
+            // The agent's own error text can say anything, so it is logged and the client gets a fixed message.
+            logger.warn("agent {} refused {}: {}", agentId, method.name, e.message)
+            throw AgentUnavailableException("$agentId refused `${method.name}`.", e)
         } catch (e: IllegalStateException) {
             // The SDK reports a closed connection this way, for example when the process has exited.
             throw AgentUnavailableException("$agentId closed the connection during `${method.name}`.", e)
         }
 }
+
+private val logger = LoggerFactory.getLogger(AcpAgentAdapter::class.java)
+
+/** 8 MiB of text. A JSON-RPC message from an agent is far smaller unless something is wrong. */
+private const val DEFAULT_MAX_LINE_CHARS = 8 * 1024 * 1024
 
 private inline fun <reified T> encode(value: T): JsonElement = ACPJson.encodeToJsonElement(serializer<T>(), value)
 

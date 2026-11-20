@@ -1,0 +1,6 @@
+{"dir":"out","msg":{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":false},"authMethods":[]}}}
+{"dir":"out","msg":{"jsonrpc":"2.0","id":1,"method":"session/new","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":1,"result":{"sessionId":"sess_root"}}}
+{"dir":"out","msg":{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_root","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Looking at the forecast"},"messageId":"msg_1"}}}}

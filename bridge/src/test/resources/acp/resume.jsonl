@@ -1,0 +1,5 @@
+{"dir":"out","msg":{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{}}},"authMethods":[]}}}
+{"dir":"out","msg":{"jsonrpc":"2.0","id":1,"method":"session/resume","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":1,"result":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_old","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Picking up where we left off."},"messageId":"msg_1"}}}}

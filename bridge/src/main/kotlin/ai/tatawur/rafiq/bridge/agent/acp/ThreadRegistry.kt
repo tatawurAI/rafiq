@@ -90,7 +90,8 @@ internal class ThreadRegistry(
         parentToolCall: (String) -> ToolCallTracker.Origin?,
         out: MutableList<EventPayload>,
     ): String {
-        val existing = helpers[toolUseId]
+        val threadId = helperThreadId(toolUseId)
+        val existing = helpers[threadId]
         if (existing != null) {
             // A helper launched in the background keeps working after its launching tool call completed.
             if (existing.status != AgentState.WORKING) put(existing.copy(status = AgentState.WORKING), out)
@@ -98,7 +99,7 @@ internal class ThreadRegistry(
             val origin = parentToolCall(toolUseId)
             val thread =
                 AgentThread(
-                    id = toolUseId,
+                    id = threadId,
                     sessionId = rafiqSessionId,
                     parentThreadId = origin?.threadId ?: MAIN_THREAD_ID,
                     kind = ThreadKind.SUBAGENT,
@@ -107,7 +108,7 @@ internal class ThreadRegistry(
                 )
             put(thread, out)
         }
-        return toolUseId
+        return threadId
     }
 
     /**
@@ -120,7 +121,7 @@ internal class ThreadRegistry(
         out: MutableList<EventPayload>,
     ): String? {
         val childSessionId = update.string("sessionId") ?: return null
-        val threadId = threadByChildSession[childSessionId] ?: childSessionId
+        val threadId = threadByChildSession[childSessionId] ?: helperThreadId(childSessionId)
         val parentThreadId =
             if (parentAcpSessionId == rootAcpSessionId) MAIN_THREAD_ID else threadByChildSession[parentAcpSessionId]
         val previous =
@@ -163,7 +164,7 @@ internal class ThreadRegistry(
         state: AgentState,
         out: MutableList<EventPayload>,
     ) {
-        val thread = helpers[toolUseId]?.takeIf { it.id !in childSessionByThread } ?: return
+        val thread = helpers[helperThreadId(toolUseId)]?.takeIf { it.id !in childSessionByThread } ?: return
         if (thread.status != state) put(thread.copy(status = state), out)
     }
 
@@ -173,19 +174,20 @@ internal class ThreadRegistry(
     ): String {
         // The spec makes the agent announce a child first. If one slips through, show its work under
         // the main thread's helper list rather than mixing it into the main conversation.
+        val threadId = helperThreadId(acpSessionId)
         val thread =
             AgentThread(
-                id = acpSessionId,
+                id = threadId,
                 sessionId = rafiqSessionId,
                 parentThreadId = MAIN_THREAD_ID,
                 kind = ThreadKind.SUBAGENT,
                 title = FALLBACK_TITLE,
                 status = AgentState.UNKNOWN,
             )
-        threadByChildSession[acpSessionId] = acpSessionId
-        childSessionByThread[acpSessionId] = acpSessionId
+        threadByChildSession[acpSessionId] = threadId
+        childSessionByThread[threadId] = acpSessionId
         put(thread, out)
-        return acpSessionId
+        return threadId
     }
 
     private fun put(
@@ -213,6 +215,13 @@ internal class ThreadRegistry(
 
 /** The id of every session's main thread. Helpers use agent-side ids, which never take this value. */
 internal const val MAIN_THREAD_ID = "main"
+
+/**
+ * The thread id for a helper the agent knows as [agentSideId]: a child session id or a tool-use id.
+ * It is used as is, unless it would take the main thread's id.
+ */
+internal fun helperThreadId(agentSideId: String): String =
+    if (agentSideId == MAIN_THREAD_ID) "helper:$agentSideId" else agentSideId
 
 /** The title of a helper the agent did not name. */
 internal const val FALLBACK_TITLE = "Helper agent"

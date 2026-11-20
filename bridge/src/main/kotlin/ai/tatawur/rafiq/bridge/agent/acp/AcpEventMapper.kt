@@ -44,7 +44,8 @@ import com.agentclientprotocol.model.ContentBlock as AcpContentBlock
  *   app shows, so they map to nothing.
  * - Anything else, or a known update that fails to decode, becomes a plain system message.
  *
- * Not thread-safe. The session calls it under one lock, which also keeps events in wire order.
+ * Not thread-safe. It is owned by a [SessionActor], whose single consumer calls it in the agent's wire
+ * order.
  */
 internal class AcpEventMapper(
     rafiqSessionId: String,
@@ -259,22 +260,20 @@ internal class AcpEventMapper(
         content: AcpContentBlock,
         out: MutableList<EventPayload>,
     ) {
-        if (content is AcpContentBlock.Image) {
-            messages.end(threadId, out)
-            out +=
-                EventPayload.Message(
-                    id = newId(),
-                    threadId = threadId,
-                    role = role,
-                    content =
-                        listOf(
-                            ContentBlock.Image("data:${content.mimeType};base64,${content.data}", content.mimeType),
-                        ),
-                )
+        if (content !is AcpContentBlock.Image) {
+            contentText(content)?.let { messages.append(threadId, role, streamKey, it, out) }
             return
         }
-        val text = contentText(content) ?: return
-        messages.append(threadId, role, streamKey, text, out)
+        messages.end(threadId, out)
+        // An image is stored, replayed and sent to your phone inside an event, so a huge one is
+        // replaced by a note rather than carried.
+        out +=
+            if (content.data.length > MAX_IMAGE_DATA_CHARS) {
+                plainMessage(newId(), threadId, "The agent sent an image too large to show.")
+            } else {
+                val uri = "data:${content.mimeType};base64,${content.data}"
+                EventPayload.Message(newId(), threadId, role, listOf(ContentBlock.Image(uri, content.mimeType)))
+            }
     }
 
     private fun toolCallUpdate(
@@ -393,6 +392,9 @@ private fun unrecognised(
     val label = type?.let { "`$it`" } ?: "untyped"
     return if (text != null) text else "The agent sent an update this bridge does not show yet: $label."
 }
+
+/** About 1.5 MB of image as base64 text. */
+private const val MAX_IMAGE_DATA_CHARS = 2 * 1024 * 1024
 
 private val SESSION_MESSAGES = setOf("session_message", "session_message_chunk")
 

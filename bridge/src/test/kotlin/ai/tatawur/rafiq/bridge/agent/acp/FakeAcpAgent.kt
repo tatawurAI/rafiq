@@ -11,6 +11,7 @@ import java.nio.file.Path
 import kotlin.io.path.bufferedWriter
 import kotlin.io.path.readLines
 import kotlin.io.path.toPath
+import kotlin.io.path.writeText
 import kotlin.system.exitProcess
 
 /**
@@ -23,6 +24,10 @@ import kotlin.system.exitProcess
  * that matches no expected entry exits with code 2, which the test sees as the agent failing. Stdin
  * closing early ends the replay, as it would end a real agent.
  *
+ * A `raw` entry writes its `line` as is, or `count` copies of `repeat`, to send something that is not
+ * a JSON-RPC message. At start it writes its pid to `<log>.pid` and its environment's names to
+ * `<log>.env`, so a test can check the very process it started.
+ *
  * At the end it exits, or with no `exit-at-end` it waits for stdin to close, as a real agent does.
  */
 fun main(args: Array<String>) {
@@ -32,60 +37,85 @@ fun main(args: Array<String>) {
             .readLines()
             .filter { it.isNotBlank() }
             .map { Json.parseToJsonElement(it).jsonObject }
-    val log = Path.of(args[1]).bufferedWriter()
-    val exitAtEnd = args.getOrNull(2) == "exit-at-end"
-    val stdin = System.`in`.bufferedReader()
-    val stdout = System.out.bufferedWriter()
-    val idsSeen = mutableMapOf<JsonElement, JsonElement>()
+    Path.of("${args[1]}.pid").writeText(ProcessHandle.current().pid().toString())
+    Path.of("${args[1]}.env").writeText(
+        System
+            .getenv()
+            .keys
+            .sorted()
+            .joinToString("\n"),
+    )
+    Replay(script, Path.of(args[1]).bufferedWriter()).run(exitAtEnd = args.getOrNull(2) == "exit-at-end")
+}
 
-    fun receive(): JsonObject {
+/** Steps through the script, writing `in` and `raw` entries and waiting for `out` ones. */
+private class Replay(
+    private val script: List<JsonObject>,
+    private val log: java.io.BufferedWriter,
+) {
+    private val stdin = System.`in`.bufferedReader()
+    private val stdout = System.out.bufferedWriter()
+    private val idsSeen = mutableMapOf<JsonElement, JsonElement>()
+
+    fun run(exitAtEnd: Boolean) {
+        var index = 0
+        while (index < script.size) {
+            val entry = script[index]
+            index +=
+                when (dir(entry)) {
+                    "raw" -> write(rawLine(entry))
+                    "in" -> write(withMappedId(entry.getValue("msg").jsonObject, idsSeen).toString())
+                    "out" -> awaitRun(index)
+                    else -> 1
+                }
+        }
+        if (!exitAtEnd) {
+            while (true) logLine(stdin.readLine() ?: break)
+        }
+        log.close()
+        exitProcess(0)
+    }
+
+    /** Waits for the run of `out` entries starting at [start], in any order. Returns its length. */
+    private fun awaitRun(start: Int): Int {
+        val expected = script.drop(start).takeWhile { dir(it) == "out" }
+        val waiting = expected.map { it.getValue("msg").jsonObject }.toMutableList()
+        repeat(waiting.size) {
+            val received = receive()
+            val match = waiting.firstOrNull { key(it) == key(received) } ?: fail("unexpected ${key(received)}")
+            waiting.remove(match)
+            if ("method" in match && "id" in match) idsSeen[match.getValue("id")] = received.getValue("id")
+        }
+        return expected.size
+    }
+
+    private fun receive(): JsonObject {
         // The bridge hung up early, for example a test that closes the session mid-script.
         val line = stdin.readLine() ?: exitProcess(0)
-        log.write(line)
-        log.newLine()
-        log.flush()
+        logLine(line)
         return Json.parseToJsonElement(line).jsonObject
     }
 
-    var index = 0
-    while (index < script.size) {
-        val entry = script[index]
-        val message = entry.getValue("msg").jsonObject
-        when ((entry["dir"] as? JsonPrimitive)?.content) {
-            "in" -> {
-                stdout.write(withMappedId(message, idsSeen).toString())
-                stdout.newLine()
-                stdout.flush()
-                index++
-            }
-
-            "out" -> {
-                val expected = script.drop(index).takeWhile { (it["dir"] as? JsonPrimitive)?.content == "out" }
-                val waiting = expected.map { it.getValue("msg").jsonObject }.toMutableList()
-                repeat(waiting.size) {
-                    val received = receive()
-                    val match = waiting.firstOrNull { key(it) == key(received) } ?: fail("unexpected ${key(received)}")
-                    waiting.remove(match)
-                    if ("method" in match && "id" in match) idsSeen[match.getValue("id")] = received.getValue("id")
-                }
-                index += expected.size
-            }
-
-            else -> {
-                index++
-            }
-        }
+    private fun write(line: String): Int {
+        stdout.write(line)
+        stdout.newLine()
+        stdout.flush()
+        return 1
     }
-    if (!exitAtEnd) {
-        while (true) {
-            val line = stdin.readLine() ?: break
-            log.write(line)
-            log.newLine()
-            log.flush()
-        }
+
+    private fun logLine(line: String) {
+        log.write(line)
+        log.newLine()
+        log.flush()
     }
-    log.close()
-    exitProcess(0)
+}
+
+private fun dir(entry: JsonObject): String? = (entry["dir"] as? JsonPrimitive)?.content
+
+private fun rawLine(entry: JsonObject): String {
+    val repeat = (entry["repeat"] as? JsonPrimitive)?.content
+    val count = (entry["count"] as? JsonPrimitive)?.content?.toInt() ?: 1
+    return repeat?.repeat(count) ?: (entry.getValue("line") as JsonPrimitive).content
 }
 
 /** A request or notification matches by method, a response by the id it answers. */

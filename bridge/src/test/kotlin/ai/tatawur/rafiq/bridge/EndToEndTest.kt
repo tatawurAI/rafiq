@@ -22,6 +22,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
@@ -52,7 +53,6 @@ class EndToEndTest {
     @Test
     fun a_prompt_with_background_helpers_reaches_a_client_once_and_in_full() =
         testApplication {
-            val project = Files.createDirectory(dir.resolve("weather-app"))
             val log = EventLog.open(dir.resolve("data"), Dispatchers.IO.limitedParallelism(1))
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val adapter =
@@ -62,49 +62,59 @@ class EndToEndTest {
                     clientVersion = "test",
                 )
             val sessions = SessionManager(log, listOf(adapter), scope)
-            application { bridgeModule("test", log, sessions) }
-            val sockets = createClient { install(WebSockets) }
+            try {
+                application { bridgeModule("test", log, sessions) }
+                val prompt = "Launch two helpers in parallel."
+                val (session, payloads) = promptAndReadToTheEnd(prompt)
 
-            val created =
-                client.post("/sessions") {
-                    contentType(ContentType.Application.Json)
-                    setBody("""{"agent":"claude-code","project_path":"$project"}""")
-                }
-            assertEquals(HttpStatusCode.Created, created.status)
-            val session = protocolJson.decodeFromString(Session.serializer(), created.bodyAsText())
-            val prompt = "Launch two helpers in parallel."
-            val accepted =
-                client.post("/sessions/${session.id}/prompt") {
-                    contentType(ContentType.Application.Json)
-                    setBody("""{"text":"$prompt"}""")
-                }
-            assertEquals(HttpStatusCode.Accepted, accepted.status)
-
-            // The fixture ends with the agent exiting, which the bridge reports for the whole session.
-            val events = mutableListOf<Event>()
-            sockets.webSocket("/events?session=${session.id}&after=0") {
-                do {
-                    val frame = incoming.receive() as Frame.Text
-                    val event = protocolJson.decodeFromString(Event.serializer(), frame.readText())
-                    events += event
-                    val payload = event.payload
-                } while (!(payload is EventPayload.StatusChanged && payload.threadId == null))
+                assertPromptLoggedOnce(payloads, prompt)
+                assertHelperThreads(
+                    protocolJson.decodeFromString(
+                        ListSerializer(AgentThread.serializer()),
+                        client.get("/sessions/${session.id}/threads").bodyAsText(),
+                    ),
+                )
+                assertLateWorkStreams(payloads)
+                assertSessionEndsWithTheExit(payloads)
+            } finally {
+                sessions.shutdown()
+                scope.cancel()
+                log.close()
             }
-            val payloads = events.map { it.payload }
-
-            assertPromptLoggedOnce(payloads, prompt)
-            assertHelperThreads(
-                protocolJson.decodeFromString(
-                    ListSerializer(AgentThread.serializer()),
-                    client.get("/sessions/${session.id}/threads").bodyAsText(),
-                ),
-            )
-            assertLateWorkStreams(payloads)
-
-            sessions.shutdown()
-            scope.cancel()
-            log.close()
         }
+
+    /**
+     * Acts as a client: creates a session, prompts it, and reads the event stream until the session
+     * reports an error, which here is the agent exiting at the end of the recording.
+     */
+    private suspend fun ApplicationTestBuilder.promptAndReadToTheEnd(
+        prompt: String,
+    ): Pair<Session, List<EventPayload>> {
+        val project = Files.createDirectory(dir.resolve("weather-app"))
+        val created =
+            client.post("/sessions") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"agent":"claude-code","project_path":"$project"}""")
+            }
+        assertEquals(HttpStatusCode.Created, created.status)
+        val session = protocolJson.decodeFromString(Session.serializer(), created.bodyAsText())
+        val accepted =
+            client.post("/sessions/${session.id}/prompt") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"text":"$prompt"}""")
+            }
+        assertEquals(HttpStatusCode.Accepted, accepted.status)
+
+        val payloads = mutableListOf<EventPayload>()
+        createClient { install(WebSockets) }.webSocket("/events?session=${session.id}&after=0") {
+            do {
+                val frame = incoming.receive() as Frame.Text
+                val payload = protocolJson.decodeFromString(Event.serializer(), frame.readText()).payload
+                payloads += payload
+            } while (!isSessionError(payload))
+        }
+        return session to payloads
+    }
 
     /** (1) Your prompt is in the log once, logged by the bridge, not echoed by the adapter. */
     private fun assertPromptLoggedOnce(
@@ -129,26 +139,42 @@ class EndToEndTest {
         )
     }
 
-    /** (3) The turn ends while the helpers still work. What they do afterwards still streams. */
+    /**
+     * (3) The turn ends while the helpers still work. Each helper's last report of being done, and the
+     * agent's own follow-up on the main thread, still stream after it.
+     */
     private fun assertLateWorkStreams(payloads: List<EventPayload>) {
         val turnEnded =
             payloads.indexOfFirst {
-                it is EventPayload.StatusChanged &&
-                    it.threadId == MAIN_THREAD &&
-                    it.state == AgentState.WAITING_ON_YOU
-            }
-        val helpersDone =
-            payloads.withIndex().filter { (_, payload) ->
-                payload is EventPayload.ThreadUpdated &&
-                    payload.thread.kind == ThreadKind.SUBAGENT &&
-                    payload.thread.status == AgentState.DONE
+                it is EventPayload.StatusChanged && it.threadId == MAIN_THREAD && it.state == AgentState.WAITING_ON_YOU
             }
         assertTrue(turnEnded >= 0, "The main turn ends.")
-        assertEquals(2, helpersDone.size)
-        assertTrue(helpersDone.all { it.index > turnEnded }, "Both helpers finish after the turn ended.")
-        val followUp = payloads.indexOfFirst { it is EventPayload.MessageDelta && "finished" in it.text }
-        assertTrue(followUp > turnEnded, "The agent's unprompted follow-up streams after the turn.")
+        val lastDoneByHelper =
+            payloads
+                .withIndex()
+                .filter { (_, payload) ->
+                    payload is EventPayload.ThreadUpdated &&
+                        payload.thread.kind == ThreadKind.SUBAGENT &&
+                        payload.thread.status == AgentState.DONE
+                }.groupBy { (it.value as EventPayload.ThreadUpdated).thread.id }
+                .mapValues { (_, done) -> done.last().index }
+        assertEquals(2, lastDoneByHelper.size, "Both helpers report done.")
+        assertTrue(lastDoneByHelper.values.all { it > turnEnded }, "Both helpers finish after the turn ended.")
+        assertTrue(
+            payloads.drop(turnEnded + 1).any { it is EventPayload.MessageDelta && it.threadId == MAIN_THREAD },
+            "The agent's unprompted follow-up streams on the main thread after the turn.",
+        )
+    }
+
+    /** (4) The last thing a client sees is the session-level error for the agent's exit. */
+    private fun assertSessionEndsWithTheExit(payloads: List<EventPayload>) {
+        val last = payloads.last() as EventPayload.StatusChanged
+        assertEquals(AgentState.ERROR, last.state)
+        assertTrue("exited" in last.detail.orEmpty(), "Reported as an exit: ${last.detail}")
     }
 }
+
+private fun isSessionError(payload: EventPayload): Boolean =
+    payload is EventPayload.StatusChanged && payload.threadId == null && payload.state == AgentState.ERROR
 
 private const val MAIN_THREAD = "main"

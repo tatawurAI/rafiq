@@ -10,6 +10,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
+import io.ktor.server.application.log
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
@@ -40,6 +41,14 @@ internal fun io.ktor.server.application.Application.installErrorShape() {
         }
         exception<BadRequestException> { call, _ -> call.respondInvalidBody() }
         exception<SerializationException> { call, _ -> call.respondInvalidBody() }
+        // Anything unexpected, including a failing adapter, gets the standard body and no stack trace.
+        exception<Throwable> { call, failure ->
+            call.application.log.error("Request failed: ${call.request.local.uri}", failure)
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                ApiError(ApiErrorDetail("internal_error", "The bridge could not complete the request.")),
+            )
+        }
         status(HttpStatusCode.NotFound) { call, _ ->
             call.respond(HttpStatusCode.NotFound, ApiError(ApiErrorDetail("not_found", "No such route.")))
         }
@@ -68,6 +77,7 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
     get("/sessions/{id}/threads") {
         call.respond(sessions.threads(call.parameters.getOrFail("id")))
     }
+    // Prompts go to the main thread. A thread_id naming a helper thread is rejected with invalid_thread.
     post("/sessions/{id}/prompt") {
         val request = call.receive<PromptRequest>()
         sessions.prompt(call.parameters.getOrFail("id"), request.threadId, request.text)

@@ -48,6 +48,9 @@ class FakeAgentSession(
     val cancels = CopyOnWriteArrayList<String>()
     val approvals = CopyOnWriteArrayList<Pair<String, String>>()
 
+    /** When set, [prompt], [cancel] or [respondToApproval] throws it, as an adapter that refuses would. */
+    @Volatile var failure: Throwable? = null
+
     override val mainThreadId = "main"
     override val updates: Flow<EventPayload> = outbox.receiveAsFlow()
 
@@ -64,12 +67,14 @@ class FakeAgentSession(
         threadId: String,
         text: String,
     ) {
+        failure?.let { throw it }
         prompts += threadId to text
         // Like the real adapter: it reports the turn starting, but never echoes the user's message.
         emit(status(AgentState.WORKING, threadId))
     }
 
     override suspend fun cancel(threadId: String) {
+        failure?.let { throw it }
         cancels += threadId
     }
 
@@ -77,6 +82,7 @@ class FakeAgentSession(
         approvalId: String,
         optionId: String,
     ) {
+        failure?.let { throw it }
         approvals += approvalId to optionId
     }
 

@@ -5,11 +5,13 @@ import ai.tatawur.rafiq.bridge.bridgeModule
 import ai.tatawur.rafiq.bridge.eventAfter
 import ai.tatawur.rafiq.bridge.status
 import ai.tatawur.rafiq.protocol.AgentState
+import ai.tatawur.rafiq.protocol.AgentThread
 import ai.tatawur.rafiq.protocol.ApprovalOption
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
+import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -182,6 +184,7 @@ class RoutesTest {
             assertEquals("invalid_body", parse(postJson("/sessions", "{not json").bodyAsText()).code())
             assertEquals("invalid_body", parse(postJson("/sessions", """{"agent":"fake"}""").bodyAsText()).code())
             assertEquals("not_found", parse(client.get("/nothing-here").bodyAsText()).code())
+            assertAdapterRefusalsKeepTheErrorShape(fixture)
             fixture.close()
         }
 
@@ -212,6 +215,38 @@ class RoutesTest {
             )
             fixture.close()
         }
+
+    private suspend fun ApplicationTestBuilder.assertAdapterRefusalsKeepTheErrorShape(fixture: BridgeFixture) {
+        val sessionId = fixture.sessions.create("fake", project, null).id
+        val agent = fixture.adapter.started.single()
+
+        agent.failure = UnsupportedOperationException("grouped helper")
+        val cancel = postJson("/sessions/$sessionId/threads/main/cancel", "{}")
+        assertEquals(HttpStatusCode.Conflict, cancel.status)
+        assertEquals("not_supported", parse(cancel.bodyAsText()).code())
+
+        val helper = AgentThread("sub-1", sessionId, "main", ThreadKind.SUBAGENT, "Explore", AgentState.WORKING)
+        fixture.log.eventAfter(sessionId, trigger = { agent.emit(EventPayload.ThreadUpdated(helper)) }) {
+            it.payload is EventPayload.ThreadUpdated
+        }
+        val loggedBefore = fixture.log.after(sessionId, 0, 1000).size
+        val helperPrompt = postJson("/sessions/$sessionId/prompt", """{"thread_id":"sub-1","text":"hi"}""")
+        assertEquals(HttpStatusCode.BadRequest, helperPrompt.status)
+        assertEquals("invalid_thread", parse(helperPrompt.bodyAsText()).code())
+        assertEquals(loggedBefore, fixture.log.after(sessionId, 0, 1000).size) // nothing logged, not even the prompt
+        assertTrue(agent.prompts.isEmpty())
+
+        agent.failure = IllegalArgumentException("ACP forbids prompting a helper")
+        val prompt = postJson("/sessions/$sessionId/prompt", """{"text":"hi"}""")
+        assertEquals(HttpStatusCode.BadRequest, prompt.status)
+        assertEquals("invalid_thread", parse(prompt.bodyAsText()).code())
+
+        agent.failure = IllegalStateException("adapter bug with secret detail")
+        val unexpected = postJson("/sessions/$sessionId/prompt", """{"text":"hi"}""")
+        assertEquals(HttpStatusCode.InternalServerError, unexpected.status)
+        assertEquals("internal_error", parse(unexpected.bodyAsText()).code())
+        assertTrue("secret detail" !in unexpected.bodyAsText())
+    }
 
     private suspend fun assertPromptLoggedAsUser(
         fixture: BridgeFixture,

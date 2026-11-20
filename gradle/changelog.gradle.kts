@@ -31,18 +31,22 @@ abstract class AssembleChangelog : DefaultTask() {
 
     @TaskAction
     fun assemble() {
-        val version = releaseVersion.orNull
-            ?: throw GradleException("Pass the release version, for example -Pversion=1.2.3.")
+        val version =
+            releaseVersion.orNull
+                ?: throw GradleException("Pass the release version, for example -Pversion=1.2.3.")
         if (!semver.matches(version)) {
             throw GradleException("Version '$version' is not X.Y.Z (an optional -suffix is allowed).")
         }
         val date = releaseDate.orNull ?: LocalDate.now().toString()
         LocalDate.parse(date)
 
-        val fragments = fragmentsDir.get().asFile
-            .listFiles { file -> file.isFile && file.name != ".gitkeep" }
-            .orEmpty()
-            .sortedBy { it.name }
+        val fragments =
+            fragmentsDir
+                .get()
+                .asFile
+                .listFiles { file -> file.isFile && file.name != ".gitkeep" }
+                .orEmpty()
+                .sortedBy { it.name }
         if (fragments.isEmpty()) {
             throw GradleException("No fragments in changelog.d, so there is nothing to release.")
         }
@@ -55,21 +59,23 @@ abstract class AssembleChangelog : DefaultTask() {
         }
 
         val byCategory = fragments.groupBy { it.name.removeSuffix(".md").substringAfterLast('.') }
-        val section = buildString {
-            append("## [$version] - $date\n")
-            for (category in categories) {
-                val files = byCategory[category] ?: continue
-                append("\n### ${category.replaceFirstChar { it.uppercase() }}\n\n")
-                files.forEach { append("- ${sentence(it)}\n") }
+        val section =
+            buildString {
+                append("## [$version] - $date\n")
+                for (category in categories) {
+                    val files = byCategory[category] ?: continue
+                    append("\n### ${category.replaceFirstChar { it.uppercase() }}\n\n")
+                    files.forEach { append("- ${sentence(it)}\n") }
+                }
             }
-        }
 
         val changelog = changelogFile.get().asFile
-        val existing = if (changelog.exists()) {
-            changelog.readText()
-        } else {
-            "# Changelog\n\nAll notable changes to this project are documented in this file.\n\n## [Unreleased]\n"
-        }
+        val existing =
+            if (changelog.exists()) {
+                changelog.readText()
+            } else {
+                "# Changelog\n\nAll notable changes to this project are documented in this file.\n\n## [Unreleased]\n"
+            }
         val lines = existing.lines().toMutableList()
         if (lines.any { it.startsWith("## [$version]") }) {
             throw GradleException("CHANGELOG.md already has a section for $version.")
@@ -90,12 +96,14 @@ abstract class AssembleChangelog : DefaultTask() {
     }
 
     private fun sentence(file: File): String {
-        val text = file.readLines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .joinToString(" ")
-            .removePrefix("- ")
-            .trim()
+        val text =
+            file
+                .readLines()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString(" ")
+                .removePrefix("- ")
+                .trim()
         if (text.isEmpty()) throw GradleException("Fragment ${file.name} is empty.")
         return text
     }

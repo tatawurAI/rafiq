@@ -18,4 +18,4 @@ The repository is one Gradle multi-project build with three modules: `:protocol`
 - One toolchain and one command set cover every module.
 - Versions of shared libraries (Kotlin, coroutines, serialisation) cannot diverge between bridge and app.
 - A build now includes the Android toolchain even when you only work on the bridge. Contributors need the Android SDK installed.
-- The bridge and the app release together from one version number, so an old app and a new bridge are not guaranteed to match. The additive-only protocol rules in [STYLE.md](../../STYLE.md#protocol-rules) are what keep adjacent versions compatible.
+- The bridge and the app release together from one version number, so an old app and a new bridge are not guaranteed to match. The additive-only protocol rules in [STYLE.md](../../STYLE.md#wire-protocol) are what keep adjacent versions compatible.

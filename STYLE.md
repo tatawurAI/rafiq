@@ -13,7 +13,7 @@ Rafiq is Kotlin from the wire to the screen. This guide lists the conventions th
 
 - A unit that the type does not carry goes in the name: `timestampMs`, `expiresAtMs`, `widthDp`. Prefer `kotlin.time.Duration` for lengths of time inside one process.
 - Kotlin property names are for readers of Kotlin. The wire name is a separate decision (see [Wire protocol](#wire-protocol)), so `timestampMs` can be `ts_ms` on the wire.
-- Say what a thing is in Rafiq's vocabulary: session, thread, event, approval. A `Thread` here is a conversation within a session, so avoid naming anything `Worker` or `Job` when it means one.
+- Say what a thing is in Rafiq's vocabulary: session, thread, event, approval. An `AgentThread` here is a conversation within a session, so avoid naming anything `Worker` or `Job` when it means one.
 
 ### Null and unknown
 

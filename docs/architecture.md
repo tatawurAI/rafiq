@@ -71,7 +71,7 @@ Every event carries an envelope:
 - `seq`: a number that increases monotonically within the session.
 - `ts_ms`: when the bridge recorded the event, in milliseconds since the Unix epoch (UTC).
 
-Output the app does not recognise falls back to a plain Message, so a new agent feature degrades to readable text. Evolution rules are in [STYLE.md](../STYLE.md#protocol-rules). See [ADR 0004](adr/0004-the-app-knows-only-generic-sessions-threads-and-events.md).
+Output the app does not recognise falls back to a plain Message, so a new agent feature degrades to readable text. Evolution rules are in [STYLE.md](../STYLE.md#wire-protocol). See [ADR 0004](adr/0004-the-app-knows-only-generic-sessions-threads-and-events.md).
 
 ## Bridge server
 

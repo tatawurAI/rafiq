@@ -36,6 +36,9 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
@@ -310,6 +313,34 @@ class RoutesTest {
         }
 
     @Test
+    fun two_prompts_sent_at_once_give_one_accepted_one_refused_and_one_logged_message() =
+        testApplication {
+            val (fixture, http) = start()
+            val sessionId = fixture.sessions.create("fake", project, null).id
+            val prompt = "/sessions/$sessionId/prompt"
+
+            val statuses =
+                coroutineScope {
+                    val sent = listOf("a", "b").map { text -> async(Dispatchers.Default) { send(http, prompt, text) } }
+                    sent.awaitAll()
+                }
+
+            assertEquals(listOf(HttpStatusCode.Accepted, HttpStatusCode.Conflict), statuses.sortedBy { it.value })
+            val userMessages =
+                fixture.log
+                    .after(sessionId, 0, 1000)
+                    .map { it.payload }
+                    .filterIsInstance<EventPayload.Message>()
+            assertEquals(1, userMessages.size)
+            assertEquals(
+                1,
+                fixture.adapter.started
+                    .single()
+                    .prompts.size,
+            )
+        }
+
+    @Test
     fun approvals_reject_unknown_ids_bad_options_and_answers_the_agent_no_longer_waits_for() =
         testApplication {
             val (fixture, http) = start()
@@ -378,6 +409,12 @@ class RoutesTest {
             )
         }
     }
+
+    private suspend fun send(
+        http: HttpClient,
+        path: String,
+        text: String,
+    ) = http.postJson(path, """{"text":"$text"}""").status
 
     private suspend fun assertPromptLoggedAsUser(
         fixture: BridgeFixture,

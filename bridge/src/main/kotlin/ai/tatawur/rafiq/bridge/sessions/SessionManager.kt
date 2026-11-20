@@ -62,6 +62,10 @@ class SessionManager(
     private val live = ConcurrentHashMap<String, LiveSession>()
     private val resumeLocks = ConcurrentHashMap<String, Mutex>()
     private val approvals = ConcurrentHashMap<String, PendingApproval>()
+    private val promptLocks = ConcurrentHashMap<String, Mutex>()
+
+    /** Threads (as session id to thread id) that accepted a prompt and have not reported the turn over yet. */
+    private val turnsInFlight = ConcurrentHashMap.newKeySet<Pair<String, String>>()
 
     /** The agent ids a session can be created with. */
     val agentIds: List<String> get() = adaptersById.keys.sorted()
@@ -124,8 +128,8 @@ class SessionManager(
     /**
      * Sends [text] to the session's main thread. [threadId] may name it, and any other thread is
      * refused. The message is logged as yours, on that thread, before the agent sees it, so everything
-     * a prompt can be refused for is checked first. The adapter must not echo it. A session that is not
-     * live is resumed first.
+     * a prompt can be refused for is checked first, under a per-session lock. The adapter must not
+     * echo it. A session that is not live is resumed first.
      *
      * @throws SessionException.NotFound when the session or thread does not exist.
      * @throws SessionException.Invalid when the thread is not the main thread.
@@ -137,19 +141,36 @@ class SessionManager(
         text: String,
     ) {
         if (text.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
-        val target = resolvePromptTarget(sessionId, threadId)
-        val agentSession = liveSession(sessionId).agentSession
-        log.append(
-            sessionId,
-            EventPayload.Message(
-                id = "user:" + UUID.randomUUID(),
-                threadId = target.id,
-                role = MessageRole.USER,
-                content = listOf(ContentBlock.Text(text)),
-            ),
-        )
-        adapterCall({ SessionException.Invalid("invalid_thread", "That thread does not accept prompts.", it) }) {
-            agentSession.prompt(target.id, text)
+        // One prompt at a time per session, from the checks to the adapter call, so two racing prompts
+        // cannot both pass the checks and both be logged.
+        promptLocks.computeIfAbsent(sessionId) { Mutex() }.withLock {
+            val target = resolvePromptTarget(sessionId, threadId)
+            val turn = sessionId to target.id
+            if (!turnsInFlight.add(turn)) {
+                throw SessionException.Conflict("turn_in_progress", "That thread is still working on a turn.")
+            }
+            var accepted = false
+            try {
+                val agentSession = liveSession(sessionId).agentSession
+                log.append(
+                    sessionId,
+                    EventPayload.Message(
+                        id = "user:" + UUID.randomUUID(),
+                        threadId = target.id,
+                        role = MessageRole.USER,
+                        content = listOf(ContentBlock.Text(text)),
+                    ),
+                )
+                adapterCall(
+                    { SessionException.Invalid("invalid_thread", "That thread does not accept prompts.", it) },
+                ) {
+                    agentSession.prompt(target.id, text)
+                }
+                accepted = true
+            } finally {
+                // Cleared when the thread's status leaves working, or here if the prompt never got in.
+                if (!accepted) turnsInFlight.remove(turn)
+            }
         }
     }
 
@@ -221,6 +242,7 @@ class SessionManager(
         val sessions = live.values.toList()
         live.clear()
         approvals.clear()
+        turnsInFlight.clear()
         val finished =
             withTimeoutOrNull(SHUTDOWN_BUDGET) {
                 coroutineScope {
@@ -282,7 +304,7 @@ class SessionManager(
                 try {
                     val failure = drain(sessionId, liveSession, buffer)
                     if (live.remove(sessionId, liveSession)) {
-                        approvals.values.removeIf { it.sessionId == sessionId }
+                        forget(sessionId)
                         // A clean exit is reported by the adapter itself, with the exit code. Only a
                         // failure of the bridge's own logging needs a status written here.
                         if (failure != null) markDied(sessionId, failure)
@@ -318,6 +340,18 @@ class SessionManager(
     ) {
         log.append(sessionId, payload)
         when (payload) {
+            is EventPayload.StatusChanged -> {
+                payload.threadId?.takeUnless { payload.state.isRunning() }?.let {
+                    turnsInFlight.remove(sessionId to it)
+                }
+            }
+
+            is EventPayload.ThreadUpdated -> {
+                if (!payload.thread.status.isRunning()) {
+                    turnsInFlight.remove(sessionId to payload.thread.id)
+                }
+            }
+
             is EventPayload.ToolCall -> {
                 liveSession?.toolThreads?.put(payload.id, payload.threadId)
             }
@@ -394,6 +428,12 @@ class SessionManager(
                 SessionException.Conflict("session_not_running", "The session is not running.", closed)
             }
         throw refusal
+    }
+
+    private fun forget(sessionId: String) {
+        approvals.values.removeIf { it.sessionId == sessionId }
+        turnsInFlight.removeIf { it.first == sessionId }
+        promptLocks.remove(sessionId)
     }
 
     private fun runningSession(sessionId: String): AgentSession =

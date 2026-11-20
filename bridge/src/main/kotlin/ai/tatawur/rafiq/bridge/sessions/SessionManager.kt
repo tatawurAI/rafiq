@@ -117,11 +117,12 @@ class SessionManager(
     }
 
     /**
-     * Sends [text] to [threadId], or to the session's main thread when it is null. The message is logged
-     * as yours, on the target thread, before the agent sees it. The adapter must not echo it. A session
-     * that is not live is resumed first.
+     * Sends [text] to the session's main thread. [threadId] may name it, and any other thread is
+     * refused. The message is logged as yours, on that thread, before the agent sees it. The adapter
+     * must not echo it. A session that is not live is resumed first.
      *
      * @throws SessionException.NotFound when the session or thread does not exist.
+     * @throws SessionException.Invalid when the thread is not the main thread.
      * @throws SessionException.Conflict when the agent cannot resume the session.
      */
     suspend fun prompt(
@@ -129,20 +130,19 @@ class SessionManager(
         threadId: String?,
         text: String,
     ) {
-        if (text.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
-        val target = resolveThread(sessionId, threadId)
+        val target = resolvePromptTarget(sessionId, threadId, text)
         val agentSession = liveSession(sessionId).agentSession
         log.append(
             sessionId,
             EventPayload.Message(
                 id = "user:" + UUID.randomUUID(),
-                threadId = target,
+                threadId = target.id,
                 role = MessageRole.USER,
                 content = listOf(ContentBlock.Text(text)),
             ),
         )
         try {
-            agentSession.prompt(target, text)
+            agentSession.prompt(target.id, text)
         } catch (refused: IllegalArgumentException) {
             throw SessionException.Invalid("invalid_thread", "That thread does not accept prompts.", refused)
         }
@@ -324,20 +324,32 @@ class SessionManager(
     private suspend fun requireSession(sessionId: String) =
         log.session(sessionId) ?: throw SessionException.NotFound("session_not_found", "No session '$sessionId'.")
 
+    /** Checks everything a prompt can be refused for before anything is logged. */
+    private suspend fun resolvePromptTarget(
+        sessionId: String,
+        threadId: String?,
+        text: String,
+    ): AgentThread {
+        if (text.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
+        val target = resolveThread(sessionId, threadId)
+        if (target.kind != ThreadKind.MAIN) {
+            throw SessionException.Invalid("invalid_thread", "Prompts go to the main thread, not a helper thread.")
+        }
+        return target
+    }
+
     private suspend fun resolveThread(
         sessionId: String,
         threadId: String?,
-    ): String {
+    ): AgentThread {
         requireSession(sessionId)
         val threads = log.threads(sessionId)
         if (threadId == null) {
-            return threads.firstOrNull { it.kind == ThreadKind.MAIN }?.id
+            return threads.firstOrNull { it.kind == ThreadKind.MAIN }
                 ?: throw SessionException.NotFound("thread_not_found", "The session has no main thread.")
         }
-        if (threads.none { it.id == threadId }) {
-            throw SessionException.NotFound("thread_not_found", "No thread '$threadId' in session '$sessionId'.")
-        }
-        return threadId
+        return threads.firstOrNull { it.id == threadId }
+            ?: throw SessionException.NotFound("thread_not_found", "No thread '$threadId' in session '$sessionId'.")
     }
 
     private suspend fun <T> unavailableAsConflict(block: suspend () -> T): T =

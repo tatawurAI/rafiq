@@ -101,7 +101,7 @@ The health, session, thread, prompt, cancel, approval and event routes are imple
 | `POST /sessions` | Start a session (agent, project) |
 | `GET /sessions` | List sessions |
 | `GET /sessions/{id}/threads` | List a session's threads |
-| `POST /sessions/{id}/prompt` | Send a prompt to a thread, the main one by default |
+| `POST /sessions/{id}/prompt` | Send a prompt. Prompts go to the main thread, and a helper thread is refused. |
 | `POST /sessions/{id}/threads/{threadId}/cancel` | Stop the current turn on a thread |
 | `POST /approvals/{id}` | Answer an approval request |
 | `GET /files?path=` | List files |

@@ -77,6 +77,7 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
     get("/sessions/{id}/threads") {
         call.respond(sessions.threads(call.parameters.getOrFail("id")))
     }
+    // Prompts go to the main thread. A thread_id naming a helper thread is rejected with invalid_thread.
     post("/sessions/{id}/prompt") {
         val request = call.receive<PromptRequest>()
         sessions.prompt(call.parameters.getOrFail("id"), request.threadId, request.text)

@@ -6,6 +6,7 @@ package ai.tatawur.rafiq.bridge.agent.acp
 
 import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.agent.AgentUnavailableException
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.EventPayload
 import com.agentclientprotocol.annotations.UnstableApi
 import com.agentclientprotocol.model.AcpMethod
@@ -94,7 +95,7 @@ internal class AcpAgentSession(
         protocol.setNotificationHandlerRaw(AcpMethod.ClientMethods.V1.SessionUpdate) {}
         protocol.setRequestHandlerRaw(AcpMethod.ClientMethods.V1.SessionRequestPermission) { request ->
             val key = requestKey(JsonRpcJson.encodeToJsonElement(RequestIdSerializer, request.id))
-            approvals.answer(key) { actor.offer(SessionActor.Item.Answered(it.threadId)) }
+            approvals.answer(key) { actor.offer(SessionActor.Item.Resolved(it)) }
         }
         scope.launch { actor.run() }
         exitWatcher =
@@ -157,7 +158,7 @@ internal class AcpAgentSession(
         val acpSessionId = ask { SessionActor.Item.Cancel(threadId, it) }
         protocol.sendNotification(AcpMethod.AgentMethods.V1.SessionCancel, CancelNotification(SessionId(acpSessionId)))
         // ACP requires the client to answer a cancelled session's open permission requests.
-        approvals.cancelWhere { it.acpSessionId == acpSessionId }
+        approvals.resolveWhere(ApprovalOutcome.CANCELLED) { it.acpSessionId == acpSessionId }
     }
 
     override suspend fun respondToApproval(
@@ -172,7 +173,7 @@ internal class AcpAgentSession(
             return
         }
         try {
-            approvals.cancelWhere { true }
+            approvals.resolveWhere(ApprovalOutcome.CANCELLED) { true }
             protocol.close()
             process.stop()
             exitWatcher?.join()

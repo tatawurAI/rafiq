@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.bridge.agent.acp
 import ai.tatawur.rafiq.bridge.agent.TurnInProgressException
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.ThreadKind
@@ -107,6 +108,11 @@ class AcpAgentAdapterTest {
             run.session.cancel("sess_child")
             run.drain()
 
+            assertEquals(
+                listOf(EventPayload.ApprovalResolved(approval.id, ApprovalOutcome.SELECTED, "allow-once")),
+                run.drain().filterIsInstance<EventPayload.ApprovalResolved>(),
+                "One resolution for one answered approval, even with the helper cancelled after it.",
+            )
             val sent = run.sentByBridge()
             val answer = sent.single { it["id"] == JsonPrimitive("perm-1") && "result" in it }
             assertEquals(

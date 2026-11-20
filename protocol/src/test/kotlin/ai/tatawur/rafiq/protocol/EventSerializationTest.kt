@@ -88,6 +88,7 @@ class EventSerializationTest {
                     ),
                 expiresAtMs = 1_767_225_900_000,
             ),
+            EventPayload.ApprovalResolved(id = "a-1", outcome = ApprovalOutcome.SELECTED, optionId = "o-1"),
             EventPayload.StatusChanged(
                 threadId = "t-1",
                 state = AgentState.WAITING_ON_YOU,

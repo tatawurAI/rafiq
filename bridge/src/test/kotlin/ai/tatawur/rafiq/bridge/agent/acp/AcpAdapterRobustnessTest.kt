@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.bridge.agent.acp
 
 import ai.tatawur.rafiq.protocol.AgentState
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import kotlinx.serialization.json.JsonPrimitive
@@ -93,6 +94,24 @@ class AcpAdapterRobustnessTest {
         }
 
     @Test
+    fun cancelling_the_turn_resolves_its_open_approval_once_as_cancelled() =
+        runFakeAgent(projectPath, "approval-turn-cancel.jsonl") { run ->
+            run.session.prompt(MAIN_THREAD_ID, "Clean up.")
+            val (approval, resolved) = run.resolutionsAfter { run.session.cancel(MAIN_THREAD_ID) }
+
+            assertEquals(listOf(EventPayload.ApprovalResolved(approval.id, ApprovalOutcome.CANCELLED)), resolved)
+        }
+
+    @Test
+    fun closing_the_session_resolves_its_open_approval_once_as_cancelled() =
+        runFakeAgent(projectPath, "approval-turn-cancel.jsonl", exitAtEnd = false) { run ->
+            run.session.prompt(MAIN_THREAD_ID, "Clean up.")
+            val (approval, resolved) = run.resolutionsAfter { run.session.close() }
+
+            assertEquals(listOf(EventPayload.ApprovalResolved(approval.id, ApprovalOutcome.CANCELLED)), resolved)
+        }
+
+    @Test
     fun the_agent_never_sees_the_bridges_own_settings() =
         runFakeAgent(
             projectPath,
@@ -105,6 +124,15 @@ class AcpAdapterRobustnessTest {
             assertTrue("KEEP_ME" in names, "Other variables pass through: $names")
             assertTrue(names.none { it.startsWith("RAFIQ_") }, "No RAFIQ_ variable reaches the agent: $names")
         }
+}
+
+/** Every resolution the session reported, read once the approval has been seen. */
+private suspend fun AcpRun.resolutionsAfter(
+    action: suspend (EventPayload.ApprovalRequest) -> Unit,
+): Pair<EventPayload.ApprovalRequest, List<EventPayload.ApprovalResolved>> {
+    val approval = awaitEvent { it is EventPayload.ApprovalRequest } as EventPayload.ApprovalRequest
+    action(approval)
+    return approval to drain().filterIsInstance<EventPayload.ApprovalResolved>()
 }
 
 private fun isTurnEnd(event: EventPayload): Boolean =

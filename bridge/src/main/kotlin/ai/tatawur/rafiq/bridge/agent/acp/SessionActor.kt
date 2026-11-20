@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.bridge.agent.acp
 import ai.tatawur.rafiq.bridge.agent.AgentUnavailableException
 import ai.tatawur.rafiq.bridge.agent.TurnInProgressException
 import ai.tatawur.rafiq.protocol.AgentState
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
@@ -55,9 +56,9 @@ internal class SessionActor(
         /** The prompt request could not be written, so the turn it started is over. */
         data object PromptNotSent : Item
 
-        /** You chose an option on [threadId]'s approval. */
-        data class Answered(
-            val threadId: String,
+        /** An approval was resolved, however that happened. Reported once, see [ApprovalDesk.claimReport]. */
+        data class Resolved(
+            val pending: ApprovalDesk.Pending,
         ) : Item
 
         /**
@@ -111,17 +112,19 @@ internal class SessionActor(
                 } catch (e: Exception) {
                     logger.error("could not handle {}", item::class.simpleName, e)
                     val refused = AgentUnavailableException("The agent session could not handle the request.", e)
-                    (item as? Item.Prompt)?.reply?.completeExceptionally(refused)
-                    (item as? Item.Cancel)?.reply?.completeExceptionally(refused)
+                    refuseWaiters(item, refused, approvals)
                     events.sendAll(listOf(systemMessage(newId(), UNREADABLE_UPDATE)))
                 }
+                // The session is over once Finish is handled, even if handling it failed part way.
+                if (item is Item.Finish) break
             }
         } finally {
             val ended = AgentUnavailableException("The agent session has ended.")
-            events.close()
             items.close()
             failQueued(items, ended)
-            approvals.closeAll(ended)
+            // Approvals still open end with the session, and each is reported before the stream closes.
+            approvals.closeAll(ended).forEach { events.reportResolved(approvals, mapper, it) }
+            events.close()
             outputDrained.complete(Unit)
             finished.complete(Unit)
         }
@@ -154,8 +157,8 @@ internal class SessionActor(
                 events.sendAll(mapper.turnEnded(MAIN_THREAD_ID, stopReason = null, failure = TURN_FAILED))
             }
 
-            is Item.Answered -> {
-                events.sendAll(mapper.approvalAnswered(item.threadId))
+            is Item.Resolved -> {
+                events.reportResolved(approvals, mapper, item.pending)
             }
 
             is Item.Finish -> {
@@ -198,6 +201,11 @@ internal class SessionActor(
                 if (response.error != null) logger.warn("the agent failed a turn: {}", response.error)
                 val stopReason = (response.result as? JsonObject)?.string("stopReason")
                 val failure = response.error?.let { TURN_FAILED }
+                // The agent is done with the turn, so it no longer waits on approvals it asked for in it.
+                val root = mapper.threads.rootAcpSessionId
+                approvals
+                    .resolveWhere(ApprovalOutcome.WITHDRAWN) { it.acpSessionId == root }
+                    .forEach { events.reportResolved(approvals, mapper, it) }
                 events.sendAll(mapper.turnEnded(MAIN_THREAD_ID, stopReason, failure))
             }
 
@@ -281,14 +289,40 @@ internal class SessionActor(
             val code = item.exitCode?.toString() ?: "unknown"
             events.sendAll(listOf(EventPayload.StatusChanged(state = AgentState.ERROR, detail = "$EXITED $code.")))
         }
-        // Closing the queue ends the loop in run. What is already queued is refused, not handled.
-        events.close()
+        // Closing the queue ends the loop in run, whose finally reports the approvals still open and
+        // closes the stream. What is already queued is refused, not handled.
         items.close()
         failQueued(items, AgentUnavailableException("The agent session has ended."))
     }
 
     private companion object {
         val logger = LoggerFactory.getLogger(SessionActor::class.java)
+    }
+}
+
+/**
+ * Refuses whoever waits on an [item] that failed: the caller of a prompt or cancel, and the SDK
+ * handler of a permission request, so the agent gets an error answer instead of silence.
+ */
+private fun refuseWaiters(
+    item: SessionActor.Item,
+    reason: Exception,
+    approvals: ApprovalDesk,
+) {
+    when (item) {
+        is SessionActor.Item.Prompt -> {
+            item.reply.completeExceptionally(reason)
+        }
+
+        is SessionActor.Item.Cancel -> {
+            item.reply.completeExceptionally(reason)
+        }
+
+        is SessionActor.Item.Wire -> {
+            (item.inbound as? WireOrder.Inbound.Request)?.let { approvals.rejected(it.requestKey, reason) }
+        }
+
+        else -> {}
     }
 }
 
@@ -304,6 +338,21 @@ private fun failQueued(
             else -> Unit
         }
     }
+}
+
+/**
+ * Reports a resolved approval, once: [EventPayload.ApprovalResolved], and for a choice you made, the
+ * thread working again.
+ */
+private fun Channel<EventPayload>.reportResolved(
+    approvals: ApprovalDesk,
+    mapper: AcpEventMapper,
+    pending: ApprovalDesk.Pending,
+) {
+    if (!approvals.claimReport(pending)) return
+    val outcome = pending.outcome ?: ApprovalOutcome.UNKNOWN
+    sendAll(listOf(EventPayload.ApprovalResolved(pending.approvalId, outcome, pending.optionId)))
+    if (outcome == ApprovalOutcome.SELECTED) sendAll(mapper.approvalAnswered(pending.threadId))
 }
 
 /** Sends every payload. The channel is unlimited, so this never suspends. */

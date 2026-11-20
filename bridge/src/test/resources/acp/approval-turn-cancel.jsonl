@@ -1,0 +1,10 @@
+{"dir":"out","msg":{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":false},"authMethods":[]}}}
+{"dir":"out","msg":{"jsonrpc":"2.0","id":1,"method":"session/new","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":1,"result":{"sessionId":"sess_root"}}}
+{"dir":"out","msg":{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_root","update":{"sessionUpdate":"tool_call","toolCallId":"call_007","title":"Delete the build folder","kind":"delete","status":"pending"}}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":"perm-2","method":"session/request_permission","params":{"sessionId":"sess_root","toolCall":{"toolCallId":"call_007"},"options":[{"optionId":"allow-once","name":"Allow once","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}}}
+{"dir":"out","msg":{"jsonrpc":"2.0","id":"perm-2","result":{"outcome":{"outcome":"cancelled"}}}}
+{"dir":"out","msg":{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"sess_root"}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":2,"result":{"stopReason":"cancelled"}}}

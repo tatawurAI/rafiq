@@ -1,11 +1,13 @@
 package ai.tatawur.rafiq.bridge.agent.acp
 
+import ai.tatawur.rafiq.bridge.agent.AgentUnavailableException
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -21,10 +23,11 @@ import kotlin.test.assertTrue
 @Timeout(30)
 class SessionActorTest {
     private val ids = AtomicInteger()
+    private val desk = ApprovalDesk()
     private val actor =
         SessionActor(
             AcpEventMapper("session-1", Path.of("/home/user/weather-app"), newId = { "id-${ids.incrementAndGet()}" }),
-            ApprovalDesk(),
+            desk,
             newId = { "id-${ids.incrementAndGet()}" },
         )
 
@@ -53,6 +56,28 @@ class SessionActorTest {
                     .single()
                     .thread
             assertEquals("helper:main", helper.id)
+        }
+
+    @Test
+    fun a_permission_request_the_consumer_cannot_map_is_answered_with_an_error() =
+        runBlocking {
+            launch { actor.run() }
+            val events = async { actor.updates.toList() }
+            actor.offer(SessionActor.Item.OpenedRoot("sess_root", replay = false))
+            // The SDK's handler for the request is already waiting for the consumer to map it.
+            val answer = async { runCatching { desk.answer("\"perm-9\"") {} } }
+            yield()
+
+            val request = WireOrder.Inbound.Request("\"perm-9\"", "session/request_permission", JsonObject(ThrowingMap))
+            actor.offer(SessionActor.Item.Wire(request))
+            actor.offer(update(json("""{"sessionId":"sess_root","update":$CHUNK}""")))
+            actor.offer(SessionActor.Item.Finish(exitCode = 0, askedToClose = true))
+            actor.finished.await()
+            events.await()
+
+            val failure = answer.await().exceptionOrNull()
+            assertTrue(failure is AgentUnavailableException, "The agent gets an error answer, not silence: $failure")
+            assertTrue("could not handle" in failure.message.orEmpty(), "Refused by the guard, not by the session end.")
         }
 
     private fun update(params: JsonObject) =

@@ -108,6 +108,22 @@ sealed interface EventPayload {
     ) : Known
 
     /**
+     * An approval is no longer waiting on you. The app removes its card when this arrives, whoever
+     * answered it: you on this phone, you on another device, a cancel, or the agent. The bridge sends
+     * exactly one per [ApprovalRequest].
+     *
+     * @property id the [ApprovalRequest.id] it resolves.
+     * @property optionId the option chosen, set when [outcome] is [ApprovalOutcome.SELECTED] and null otherwise.
+     */
+    @Serializable
+    @SerialName("approval_resolved")
+    data class ApprovalResolved(
+        @SerialName("id") val id: String,
+        @SerialName("outcome") val outcome: ApprovalOutcome = ApprovalOutcome.UNKNOWN,
+        @SerialName("option_id") val optionId: String? = null,
+    ) : Known
+
+    /**
      * A session or thread changed state. This drives badges, colours and notifications.
      *
      * @property threadId the thread that changed, or null when the change is for the whole session.

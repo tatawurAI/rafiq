@@ -25,7 +25,7 @@ logback = "1.6.8"
 # The Agent Client Protocol (ACP) Kotlin SDK. The bridge starts using it in M1.
 acp = "0.34.0"
 
-junit = "5.14.4"
+junit = "6.1.3"
 
 spotless = "8.11.0"
 ktlint = "1.8.0"

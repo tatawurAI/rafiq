@@ -1,0 +1,92 @@
+// The seam between the bridge's server side and the agents it drives. An adapter turns one agent's
+// own protocol into Rafiq events; everything above this file knows only sessions, threads and events.
+package ai.tatawur.rafiq.bridge.agent
+
+import ai.tatawur.rafiq.protocol.EventPayload
+import kotlinx.coroutines.flow.Flow
+import java.nio.file.Path
+
+/**
+ * Starts and resumes sessions for one kind of agent.
+ *
+ * The bridge holds one adapter per configured agent and picks it by [agentId] when a session is
+ * created. Adding an agent means adding an adapter; nothing outside this package changes.
+ */
+interface AgentAdapter {
+    /** The id the bridge and the app use for this agent, for example `claude-code`. */
+    val agentId: String
+
+    /**
+     * Starts a new agent session in [projectPath].
+     *
+     * @param sessionId the Rafiq session id the bridge has already assigned. The adapter keeps its own
+     *   agent-side ids private and reports everything under this id.
+     */
+    suspend fun start(
+        sessionId: String,
+        projectPath: Path,
+    ): AgentSession
+
+    /**
+     * Reopens a session the agent can still resume, for example after a bridge restart.
+     *
+     * @param agentSessionRef the value [AgentSession.agentSessionRef] returned when the session started.
+     * @throws AgentUnavailableException when the agent can no longer resume it.
+     */
+    suspend fun resume(
+        sessionId: String,
+        projectPath: Path,
+        agentSessionRef: String,
+    ): AgentSession
+}
+
+/**
+ * One live agent session.
+ *
+ * Thread ids are chosen by the adapter and are stable for the life of the session. The main
+ * thread's id is [mainThreadId]; helper threads are announced with a
+ * [EventPayload.ThreadUpdated] before any event that refers to them.
+ */
+interface AgentSession {
+    val sessionId: String
+
+    /** The agent's own handle for this session, stored by the bridge so [AgentAdapter.resume] can use it. */
+    val agentSessionRef: String
+
+    val mainThreadId: String
+
+    /**
+     * Everything the agent reports, in the order it happened, without `seq` or a timestamp: the event
+     * log assigns those. The flow is hot, so the bridge collects it once, as soon as the session
+     * exists, and keeps collecting until [close]. It completes when the agent process exits.
+     */
+    val updates: Flow<EventPayload>
+
+    /** Sends your message to [threadId]. Returns once the agent has accepted it, not when it finishes the turn. */
+    suspend fun prompt(
+        threadId: String,
+        text: String,
+    )
+
+    /** Stops the current turn on [threadId]. Cancelling a helper thread leaves the main thread running. */
+    suspend fun cancel(threadId: String)
+
+    /**
+     * Answers a pending [EventPayload.ApprovalRequest].
+     *
+     * @param optionId the id of one of the request's options.
+     */
+    suspend fun respondToApproval(
+        approvalId: String,
+        optionId: String,
+    )
+
+    /** Ends the session and stops the agent process. Safe to call more than once. */
+    suspend fun close()
+}
+
+/** The agent cannot start or resume a session, for example because its adapter is not installed. */
+class AgentUnavailableException(
+    message: String,
+    cause: Throwable? = null,
+) : Exception(message, cause)

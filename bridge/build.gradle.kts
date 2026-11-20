@@ -26,6 +26,7 @@ application {
 
 dependencies {
     implementation(project(":protocol"))
+    implementation(libs.kotlinx.coroutines.core)
     implementation(libs.ktor.server.core)
     // CIO is Ktor's pure-Kotlin engine: fewer dependencies and a smaller footprint than Netty,
     // which suits one long-running process on a small server.

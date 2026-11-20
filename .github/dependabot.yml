@@ -4,6 +4,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # Bot PRs carry no user-facing change, so they skip the changelog check.
+    labels: ["skip-changelog", "dependencies"]
     # One PR per week for all minor and patch bumps. Majors stay separate so
     # each one gets a deliberate review.
     groups:
@@ -14,6 +16,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # Bot PRs carry no user-facing change, so they skip the changelog check.
+    labels: ["skip-changelog", "dependencies"]
     groups:
       actions-minor-patch:
         update-types: [minor, patch]

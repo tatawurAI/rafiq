@@ -27,7 +27,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      # Full history so the base commit is available to diff against.
+      # Full history, so the merge base of the PR and its target is available.
+      # The diff below compares against that merge base, so a target branch that
+      # moved on after the PR was opened does not show up as PR changes. Fork PRs
+      # work too: the head commit is a parent of the merge ref checked out here.
       - name: Check out the pull request
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,6 +40,7 @@ jobs:
       - name: Require a changelog fragment or the skip label
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           set -euo pipefail
@@ -46,8 +50,9 @@ jobs:
             exit 0
           fi
 
+          # Three dots: changes on the PR side since the merge base.
           pattern='^changelog\.d/[a-z0-9][a-z0-9-]*\.(added|changed|deprecated|removed|fixed|security)\.md$'
-          added=$(git diff --name-only --diff-filter=A "${BASE_SHA}" HEAD -- changelog.d | grep -v '^changelog\.d/\.gitkeep$' || true)
+          added=$(git diff --name-only --diff-filter=A "${BASE_SHA}...${HEAD_SHA}" -- changelog.d | grep -v '^changelog\.d/\.gitkeep$' || true)
 
           if [ -z "${added}" ]; then
             echo "::error::This PR adds no changelog fragment. Add changelog.d/<slug>.<added|changed|deprecated|removed|fixed|security>.md with one sentence, or apply the skip-changelog label."

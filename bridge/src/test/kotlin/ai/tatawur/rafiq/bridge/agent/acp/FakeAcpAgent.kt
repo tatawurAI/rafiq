@@ -10,6 +10,7 @@ import kotlinx.serialization.json.jsonObject
 import java.nio.file.Path
 import kotlin.io.path.bufferedWriter
 import kotlin.io.path.readLines
+import kotlin.io.path.toPath
 import kotlin.system.exitProcess
 
 /**
@@ -103,4 +104,25 @@ private fun withMappedId(
 private fun fail(reason: String): Nothing {
     System.err.println("FakeAcpAgent: $reason")
     exitProcess(2)
+}
+
+/** The command that starts [main] on [fixture], a resource under `acp/`, logging what the bridge sends to [log]. */
+internal fun fakeAcpAgentCommand(
+    fixture: String,
+    log: Path,
+    exitAtEnd: Boolean = true,
+): List<String> {
+    val resource = requireNotNull(object {}.javaClass.getResource("/acp/$fixture")) { "Missing fixture $fixture" }
+    return listOfNotNull(
+        Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+        // A small, quick-starting JVM: the fake only shuffles a few lines of JSON.
+        "-Xmx64m",
+        "-XX:TieredStopAtLevel=1",
+        "-cp",
+        System.getProperty("java.class.path"),
+        "ai.tatawur.rafiq.bridge.agent.acp.FakeAcpAgentKt",
+        resource.toURI().toPath().toString(),
+        log.toString(),
+        "exit-at-end".takeIf { exitAtEnd },
+    )
 }

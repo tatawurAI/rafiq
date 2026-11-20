@@ -19,7 +19,6 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.readLines
-import kotlin.io.path.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -194,13 +193,11 @@ class AcpAgentAdapterTest {
         block: suspend CoroutineScope.(Run) -> Unit,
     ) = runBlocking {
         val log = projectPath.resolve("sent-by-bridge.jsonl")
-        val resource = requireNotNull(javaClass.getResource("/acp/$fixture")) { "Missing fixture $fixture" }
-        val script = resource.toURI().toPath()
         val ids = AtomicInteger()
         val adapter =
             AcpAgentAdapter(
                 agentId = "fake",
-                command = fakeAgentCommand(script, log, exitAtEnd),
+                command = fakeAcpAgentCommand(fixture, log, exitAtEnd),
                 clientVersion = "test",
                 newId = { "id-${ids.incrementAndGet()}" },
             )
@@ -211,24 +208,6 @@ class AcpAgentAdapterTest {
             session.close()
         }
     }
-
-    private fun fakeAgentCommand(
-        script: Path,
-        log: Path,
-        exitAtEnd: Boolean,
-    ): List<String> =
-        listOfNotNull(
-            Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-            // A small, quick-starting JVM: the fake only shuffles a few lines of JSON.
-            "-Xmx64m",
-            "-XX:TieredStopAtLevel=1",
-            "-cp",
-            System.getProperty("java.class.path"),
-            "ai.tatawur.rafiq.bridge.agent.acp.FakeAcpAgentKt",
-            script.toString(),
-            log.toString(),
-            "exit-at-end".takeIf { exitAtEnd },
-        )
 }
 
 private fun EventPayload.Message.text(): String =

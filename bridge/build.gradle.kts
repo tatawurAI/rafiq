@@ -37,6 +37,8 @@ dependencies {
     implementation(libs.ktor.server.status.pages)
     // Plain JDBC on one connection: the event log is one writer and a few readers, so an ORM adds nothing.
     implementation(libs.sqlite.jdbc)
+    // The ACP Kotlin SDK: JSON-RPC over the agent process's stdio, and ACP's typed messages.
+    implementation(libs.acp)
     runtimeOnly(libs.logback.classic)
 
     testImplementation(libs.ktor.server.test.host)

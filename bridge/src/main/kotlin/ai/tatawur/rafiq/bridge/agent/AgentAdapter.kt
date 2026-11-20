@@ -62,7 +62,12 @@ interface AgentSession {
      */
     val updates: Flow<EventPayload>
 
-    /** Sends your message to [threadId]. Returns once the agent has accepted it, not when it finishes the turn. */
+    /**
+     * Sends your message to [threadId]. Returns once the agent has accepted it, not when it finishes the turn.
+     *
+     * The bridge logs your message itself, so an adapter never emits a user message for a prompt on
+     * [updates]. It reports the thread as working, then the agent's output.
+     */
     suspend fun prompt(
         threadId: String,
         text: String,

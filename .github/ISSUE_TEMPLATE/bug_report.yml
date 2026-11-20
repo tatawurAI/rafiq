@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in Rafiq does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For security problems, do not use this form. See the security policy instead.
+        Redact tokens, private paths and project contents from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the bridge
+        2. Open a session in the app
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Rafiq version
+      description: The app and bridge version, or the commit if you built from source.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Phone model and Android version
+      placeholder: Galaxy Z Flip, Android 15
+  - type: input
+    id: server
+    attributes:
+      label: Server OS and JDK version
+      placeholder: Ubuntu 24.04, JDK 21
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and ACP adapter
+      placeholder: claude-agent-acp
+  - type: dropdown
+    id: fold
+    attributes:
+      label: Fold mode, if it matters
+      options:
+        - Not relevant
+        - Closed (cover screen)
+        - Open
+        - Half-folded (Flex Mode)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant bridge or app log lines. Redact secrets.
+      render: text

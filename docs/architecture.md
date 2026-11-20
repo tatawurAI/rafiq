@@ -1,0 +1,167 @@
+# Architecture
+
+This page describes how Rafiq works today, for contributors. It covers the layers, the event model that connects them, the bridge server and the Android app. Decisions and their reasons are in [docs/adr/](adr/README.md).
+
+## Principles
+
+- **Agent-agnostic.** The app knows only generic sessions, threads and events. Agent-specific logic lives in adapters on the bridge.
+- **Chat, not terminal.** The app shows messages, tool-call cards, diffs and approvals. It is not a terminal emulator.
+- **Fold-native.** The cover screen, the open screen and Flex Mode (half-folded) each have their own design, with continuity between them.
+- **Private by default.** All traffic goes over Tailscale. Credentials stay on your server. The phone only approves.
+
+Non-goals for v1: a terminal emulator (SSH stays the out-of-band admin path), mosh or any terminal-state protocol, iOS, the Play Store, multiple users, and running agents on the phone.
+
+## Overview
+
+Rafiq has three layers. The phone talks to a bridge server over a WebSocket. The bridge talks to each agent over the Agent Client Protocol (ACP), a JSON-RPC protocol over stdio, using the official [`agentclientprotocol/kotlin-sdk`](https://github.com/agentclientprotocol/kotlin-sdk). Everything rides on [Tailscale](https://tailscale.com).
+
+```
+  Phone app  <-- WebSocket (JSON events) -->  Bridge  <-- ACP over stdio -->  Agent adapter
+       \________________ Tailscale (WireGuard) ________________/
+```
+
+The code is Kotlin on both ends, built by one Gradle build. A shared `:protocol` module holds the event model, so the bridge and the app cannot drift apart. See [ADR 0002](adr/0002-one-gradle-build-for-protocol-bridge-and-app.md) and [ADR 0003](adr/0003-kotlin-on-both-ends-with-a-shared-protocol-module.md).
+
+### Links
+
+| Link | Protocol | Purpose |
+|---|---|---|
+| Phone to server network | Tailscale (WireGuard) | Private, stable address from anywhere. No public ports. |
+| Phone to bridge | WebSocket, JSON events | Streams tokens and events down. Prompts and approvals go up. |
+| Bridge to agents | ACP over stdio | The bridge launches each agent's ACP adapter (for example `claude-agent-acp` or `codex-acp`) as a local process. |
+| Bridge to phone, app closed | Push (transport undecided, see [ADR 0010](adr/0010-push-transport.md)) | "Agent needs you" pings. Tapping one reopens the socket. |
+| Phone to dev servers | HTTP over Tailscale, `tailscale serve` for HTTPS | Live previews of what the agent builds. |
+| Admin fallback | SSH | Out-of-band repair when the bridge is down. |
+
+### Reconnecting
+
+The bridge keeps an append-only event log per session. Each event has a sequence number (`seq`). On reconnect, the phone sends the last `seq` it saw, and the bridge replays everything after it. This covers dropped signal, folding the phone and app restarts. See [ADR 0005](adr/0005-reconnect-by-sequence-replay.md).
+
+## Event model
+
+The event model is the contract between the bridge and the app. It lives in the shared `:protocol` Kotlin module.
+
+| Object | Key fields | Rendered as |
+|---|---|---|
+| Session | id, agent, project path, title, status, created and updated times | Session list row, cover-screen card |
+| Thread | id, session id, parent thread id, kind (main, subagent, worker), title, status | Tab or drawer entry in a session |
+| Message | id, thread id, role, content blocks (text, markdown, image), streaming flag | Chat bubble |
+| Tool call | id, thread id, kind (edit, command, search, read, fetch, other), input summary, output, status | Collapsible card, with a diff viewer for edits |
+| Approval request | id, tool call id, description, options (allow once, allow always, deny), expiry | Inline buttons, notification actions, cover-screen card |
+| Status | session or thread id, state (working, waiting on you, done, error), detail | Badge and colour. Drives notifications. |
+| Auth required | id, provider, kind (device code or redirect), URL, code, expiry | "Sign in" card, in-app browser |
+| Preview | id, URL, label, port | "Open preview" card, in-app browser |
+| File change | path, change type, diff reference, git status | File chip that opens the file viewer |
+
+Every event carries:
+
+- `session_id`: the session it belongs to.
+- `seq`: a number that increases monotonically within the session.
+- `ts`: the event timestamp.
+
+Output the app does not recognise falls back to a plain Message, so a new agent feature degrades to readable text. Evolution rules are in [STYLE.md](../STYLE.md#protocol-rules). See [ADR 0004](adr/0004-the-app-knows-only-generic-sessions-threads-and-events.md).
+
+## Bridge server
+
+The bridge is one long-running JVM process built on Ktor. systemd manages it, and it listens only on the Tailscale interface.
+
+### Adapters
+
+A generic ACP adapter spawns any ACP agent and maps ACP updates to events. The adapter interface is:
+
+| Member | Purpose |
+|---|---|
+| `start` | Begin a new agent session in a project folder |
+| `resume` | Reattach to an existing agent session |
+| `prompt` | Send the user's message to the agent |
+| `cancel` | Stop the current turn |
+| `respondToApproval` | Deliver the user's answer to an approval request |
+| event stream | Emits protocol events as the agent works |
+
+### API
+
+| Method and path | Purpose |
+|---|---|
+| `WS /events?session=&after=` | Stream a session's events, replaying from sequence `after` |
+| `POST /sessions` | Start a session (agent, project) |
+| `GET /sessions` | List sessions |
+| `GET /sessions/{id}/threads` | List a session's threads |
+| `POST /sessions/{id}/prompt` | Send a prompt |
+| `POST /approvals/{id}` | Answer an approval request |
+| `GET /files?path=` | List files |
+| `GET /files/content?path=` | Read a file |
+| `GET /git/diff?session=` | Diff, scoped to the session's project folder |
+| `POST /auth/{id}/callback` | Complete a sign-in relay |
+
+### Auth relay
+
+Agents sometimes need you to sign in to a provider. The bridge handles two kinds of flow:
+
+- **Device code.** The bridge detects the code and URL in the agent's output and emits an Auth required event. You enter the code in a browser.
+- **Localhost redirect.** The app opens the login page in an in-app browser. When the provider redirects to `http://localhost:PORT/...`, the app intercepts that final redirect and posts it to the bridge, which requests it locally so the agent receives it.
+
+### Previews
+
+The bridge watches for new listening ports under a session's processes. When one appears, it emits a Preview event with the Tailscale URL.
+
+### Storage and security
+
+- SQLite holds sessions, threads and the event log.
+- Tailscale ACLs restrict the bridge's port to your devices. A per-device token adds a second check. See [ADR 0006](adr/0006-tailscale-only-network-with-a-per-device-token.md).
+- The file API refuses paths outside the session's project root.
+- Approvals require a fresh biometric check on the phone.
+- Push payloads carry ids and short status only.
+
+For the vulnerability policy, see [SECURITY.md](../SECURITY.md).
+
+## Android app
+
+The app is native Kotlin and Jetpack Compose, installed directly (no Play Store). It is native because the cover screen, the fold posture and notification actions need platform APIs. See [ADR 0007](adr/0007-native-compose-for-fold-and-cover-screen-apis.md).
+
+### Stack
+
+| Concern | Choice |
+|---|---|
+| UI | Jetpack Compose |
+| Socket | OkHttp WebSocket |
+| Concurrency | Kotlin coroutines and Flow |
+| Offline history | Room cache |
+| Device token | Android Keystore |
+| Approval check | BiometricPrompt |
+| Fold posture | Jetpack WindowManager |
+| Push | FCM or ntfy (undecided, see [ADR 0010](adr/0010-push-transport.md)) |
+| Content | Markdown and syntax highlighting, diff view, in-app browser |
+
+### Screens
+
+- **Session list:** status badges, inline approve and deny.
+- **Session view:** thread tabs, chat with tool-call cards, and a composer with voice input and quick replies.
+- **File and diff viewer.**
+- **Preview browser.**
+- **Settings:** servers, agents, quick-reply macros and notification rules.
+
+### Fold modes
+
+| Fold mode | Job | Design |
+|---|---|---|
+| Closed (cover screen) | Triage without opening | One card per session: status, last line, approve and deny, voice reply, quick replies. A cover-screen widget comes first. |
+| Open | Full work | Chat, session drawer and thread tab strip. |
+| Half-folded (Flex Mode) | Read on top, act below | Conversation on top. Composer, quick replies and thread switcher below. |
+| Unfold transition | Continuity | Unfolding opens the session or card from the cover screen, scrolled to the latest event. |
+
+### Visual design
+
+The app is dark first. Touch targets are at least 44dp. Colours come from theme tokens, never from literals in a composable.
+
+| Token | Value |
+|---|---|
+| Ground | `#15191B` |
+| Surface | `#1E2426` |
+| Border | `#2A3234`, `#3F4A4C` |
+| Text | `#F7F6F3` |
+| Muted text | `#A8B0AD`, `#D8DCDA` |
+| Accent | `#3FD9BC` |
+| Needs you | `#F2B84B` |
+| Deletion | `#F2777A` |
+
+Type: Archivo for headings (600 and 700), IBM Plex Sans for body text, IBM Plex Mono for labels and code. Font licences are in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).

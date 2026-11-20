@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.bridge.sessions
 import ai.tatawur.rafiq.bridge.agent.AgentAdapter
 import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.agent.AgentUnavailableException
+import ai.tatawur.rafiq.bridge.agent.TurnInProgressException
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
@@ -11,15 +12,24 @@ import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -27,6 +37,7 @@ import java.time.Clock
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Owns the sessions on your server: starts them through the right adapter, writes everything an agent
@@ -37,6 +48,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * [AgentAdapter.resume].
  *
  * @param scope owns the work that collects each live session's updates. Cancel it to stop them.
+ * @param ioDispatcher runs the file system checks on project folders.
  */
 @Suppress("TooManyFunctions") // One operation per route plus the helpers they share; splitting would scatter one flow.
 class SessionManager(
@@ -44,11 +56,12 @@ class SessionManager(
     adapters: List<AgentAdapter>,
     private val scope: CoroutineScope,
     private val clock: Clock = Clock.systemUTC(),
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val adaptersById = adapters.associateBy(AgentAdapter::agentId)
     private val live = ConcurrentHashMap<String, LiveSession>()
     private val resumeLocks = ConcurrentHashMap<String, Mutex>()
-    private val approvalSessions = ConcurrentHashMap<String, String>()
+    private val approvals = ConcurrentHashMap<String, PendingApproval>()
 
     /** The agent ids a session can be created with. */
     val agentIds: List<String> get() = adaptersById.keys.sorted()
@@ -84,26 +97,18 @@ class SessionManager(
                 createdAtMs = now,
                 updatedAtMs = now,
             )
-        @Suppress("TooGenericExceptionCaught") // Rethrown after the half-started session is cleaned up.
-        try {
-            log.createSession(session, agentSession.agentSessionRef)
-            log.append(sessionId, EventPayload.SessionUpdated(session))
-            val mainThread =
-                AgentThread(
-                    id = agentSession.mainThreadId,
-                    sessionId = sessionId,
-                    kind = ThreadKind.MAIN,
-                    title = session.title,
-                    status = AgentState.DONE,
-                )
-            log.append(sessionId, EventPayload.ThreadUpdated(mainThread))
-        } catch (failure: Throwable) {
-            live.remove(sessionId)
-            liveSession.job.cancel()
-            agentSession.close()
-            throw failure
+        val mainThread =
+            AgentThread(
+                id = agentSession.mainThreadId,
+                sessionId = sessionId,
+                kind = ThreadKind.MAIN,
+                title = session.title,
+                status = AgentState.DONE,
+            )
+        guardingTheAttachedSession(sessionId, liveSession) {
+            log.createSession(session, agentSession.agentSessionRef, mainThread)
+            liveSession.job.start()
         }
-        liveSession.job.start()
         return session
     }
 
@@ -118,19 +123,21 @@ class SessionManager(
 
     /**
      * Sends [text] to the session's main thread. [threadId] may name it, and any other thread is
-     * refused. The message is logged as yours, on that thread, before the agent sees it. The adapter
-     * must not echo it. A session that is not live is resumed first.
+     * refused. The message is logged as yours, on that thread, before the agent sees it, so everything
+     * a prompt can be refused for is checked first. The adapter must not echo it. A session that is not
+     * live is resumed first.
      *
      * @throws SessionException.NotFound when the session or thread does not exist.
      * @throws SessionException.Invalid when the thread is not the main thread.
-     * @throws SessionException.Conflict when the agent cannot resume the session.
+     * @throws SessionException.Conflict when the thread is still in a turn, or the agent cannot resume.
      */
     suspend fun prompt(
         sessionId: String,
         threadId: String?,
         text: String,
     ) {
-        val target = resolvePromptTarget(sessionId, threadId, text)
+        if (text.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
+        val target = resolvePromptTarget(sessionId, threadId)
         val agentSession = liveSession(sessionId).agentSession
         log.append(
             sessionId,
@@ -141,52 +148,59 @@ class SessionManager(
                 content = listOf(ContentBlock.Text(text)),
             ),
         )
-        try {
+        adapterCall({ SessionException.Invalid("invalid_thread", "That thread does not accept prompts.", it) }) {
             agentSession.prompt(target.id, text)
-        } catch (refused: IllegalArgumentException) {
-            throw SessionException.Invalid("invalid_thread", "That thread does not accept prompts.", refused)
         }
     }
 
     /**
      * Stops the current turn on [threadId].
      *
-     * @throws SessionException.NotFound when the session or thread does not exist.
-     * @throws SessionException.Conflict when the session is not running, so there is no turn to stop.
+     * @throws SessionException.NotFound when the session does not exist, or the thread is unknown to it
+     *   or to the agent, which happens for a helper the agent forgot across a resume.
+     * @throws SessionException.Conflict when the session is not running, or the thread cannot be stopped alone.
      */
     suspend fun cancel(
         sessionId: String,
         threadId: String,
     ) {
         resolveThread(sessionId, threadId)
-        val agentSession =
-            live[sessionId]?.agentSession
-                ?: throw SessionException.Conflict("session_not_running", "The session is not running.")
-        try {
+        val agentSession = runningSession(sessionId)
+        adapterCall({ SessionException.NotFound("thread_not_found", "The agent does not know that thread.", it) }) {
             agentSession.cancel(threadId)
-        } catch (unsupported: UnsupportedOperationException) {
-            throw SessionException.Conflict("not_supported", "That thread cannot be cancelled on its own.", unsupported)
         }
+        // The agent answers the cancelled thread's open requests itself, so they are no longer pending.
+        approvals.values.removeIf { it.sessionId == sessionId && it.threadId == threadId }
     }
 
     /**
      * Answers a pending approval request with one of its options.
      *
      * @throws SessionException.NotFound when no pending request has this id.
-     * @throws SessionException.Conflict when the session is no longer running.
+     * @throws SessionException.Invalid when [optionId] is not one of the request's options.
+     * @throws SessionException.Conflict when the session is no longer running or the agent has
+     *   already dropped the request, for example because its thread was cancelled.
      */
     suspend fun respondToApproval(
         approvalId: String,
         optionId: String,
     ) {
-        val sessionId =
-            approvalSessions[approvalId]
+        val pending =
+            approvals[approvalId]
                 ?: throw SessionException.NotFound("approval_not_found", "No pending approval '$approvalId'.")
-        val agentSession =
-            live[sessionId]?.agentSession
-                ?: throw SessionException.Conflict("session_not_running", "The session is not running.")
-        agentSession.respondToApproval(approvalId, optionId)
-        approvalSessions.remove(approvalId)
+        if (optionId !in pending.optionIds) {
+            throw SessionException.Invalid("invalid_option", "That is not one of the approval's options.")
+        }
+        val agentSession = runningSession(pending.sessionId)
+        adapterCall(
+            {
+                approvals.remove(approvalId)
+                SessionException.Conflict("approval_gone", "The agent is no longer waiting on that approval.", it)
+            },
+        ) {
+            agentSession.respondToApproval(approvalId, optionId)
+        }
+        approvals.remove(approvalId)
     }
 
     /**
@@ -199,20 +213,52 @@ class SessionManager(
         }
     }
 
-    /** Stops every live session. Their logs stay, and they resume on the next prompt after a restart. */
+    /**
+     * Stops every live session, all at once, and gives up on the slow ones after [SHUTDOWN_BUDGET].
+     * Their logs stay, and they resume on the next prompt after a restart.
+     */
     suspend fun shutdown() {
         val sessions = live.values.toList()
         live.clear()
-        sessions.forEach {
-            it.job.cancel()
-            it.agentSession.close()
-        }
+        approvals.clear()
+        val finished =
+            withTimeoutOrNull(SHUTDOWN_BUDGET) {
+                coroutineScope {
+                    sessions
+                        .map {
+                            async {
+                                it.job.cancel()
+                                it.stop()
+                            }
+                        }.awaitAll()
+                }
+            }
+        if (finished == null) logger.warn("Some agent sessions did not stop within {}.", SHUTDOWN_BUDGET)
     }
+
+    private class PendingApproval(
+        val sessionId: String,
+        val threadId: String?,
+        val optionIds: Set<String>,
+    )
 
     private class LiveSession(
         val agentSession: AgentSession,
-        val job: Job,
-    )
+        private val collector: Job,
+        private val buffer: Channel<EventPayload>,
+    ) {
+        lateinit var job: Job
+
+        /** Which thread each tool call belongs to, so an approval can be tied to its thread. */
+        val toolThreads = ConcurrentHashMap<String, String>()
+
+        /** Stops collecting and ends the agent session. Safe to call more than once. */
+        suspend fun stop() {
+            collector.cancel()
+            buffer.cancel()
+            agentSession.close()
+        }
+    }
 
     /**
      * Starts collecting [agentSession]'s updates into a buffer straight away, and returns the live
@@ -223,19 +269,28 @@ class SessionManager(
         agentSession: AgentSession,
     ): LiveSession {
         val buffer = Channel<EventPayload>(Channel.UNLIMITED)
-        scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            agentSession.updates
-                .catch { buffer.close(it) }
-                .onCompletion { buffer.close() }
-                .collect { buffer.trySend(it) }
-        }
-        lateinit var liveSession: LiveSession
-        val job =
-            scope.launch(start = CoroutineStart.LAZY) {
-                val failure = drain(sessionId, buffer)
-                if (live.remove(sessionId, liveSession)) markDied(sessionId, failure)
+        val collector =
+            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                agentSession.updates
+                    .catch { buffer.close(it) }
+                    .onCompletion { buffer.close() }
+                    .collect { buffer.trySend(it) }
             }
-        liveSession = LiveSession(agentSession, job)
+        val liveSession = LiveSession(agentSession, collector, buffer)
+        liveSession.job =
+            scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val failure = drain(sessionId, liveSession, buffer)
+                    if (live.remove(sessionId, liveSession)) {
+                        approvals.values.removeIf { it.sessionId == sessionId }
+                        // A clean exit is reported by the adapter itself, with the exit code. Only a
+                        // failure of the bridge's own logging needs a status written here.
+                        if (failure != null) markDied(sessionId, failure)
+                    }
+                } finally {
+                    withContext(NonCancellable) { liveSession.stop() }
+                }
+            }
         live[sessionId] = liveSession
         return liveSession
     }
@@ -244,10 +299,11 @@ class SessionManager(
     @Suppress("TooGenericExceptionCaught") // Any failure here means the session is dead and must say so.
     private suspend fun drain(
         sessionId: String,
+        liveSession: LiveSession,
         buffer: Channel<EventPayload>,
     ): Throwable? =
         try {
-            for (payload in buffer) record(sessionId, payload)
+            for (payload in buffer) record(sessionId, liveSession, payload)
             null
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -257,26 +313,48 @@ class SessionManager(
 
     private suspend fun record(
         sessionId: String,
+        liveSession: LiveSession?,
         payload: EventPayload,
     ) {
         log.append(sessionId, payload)
-        if (payload is EventPayload.ApprovalRequest) approvalSessions[payload.id] = sessionId
+        when (payload) {
+            is EventPayload.ToolCall -> {
+                liveSession?.toolThreads?.put(payload.id, payload.threadId)
+            }
+
+            is EventPayload.ApprovalRequest -> {
+                approvals[payload.id] =
+                    PendingApproval(
+                        sessionId = sessionId,
+                        threadId = liveSession?.toolThreads?.get(payload.toolCallId),
+                        optionIds = payload.options.map { it.id }.toSet(),
+                    )
+            }
+
+            else -> {
+                Unit
+            }
+        }
     }
 
+    /** Writes the error status for a session whose logging failed. The failure's detail goes to the server log only. */
+    @Suppress("TooGenericExceptionCaught") // The log may be what failed. Nothing more can be done but say so.
     private suspend fun markDied(
         sessionId: String,
-        failure: Throwable?,
+        failure: Throwable,
     ) {
-        val stored = log.session(sessionId) ?: return
-        val detail =
-            if (failure ==
-                null
-            ) {
-                "The agent process exited."
-            } else {
-                "The agent process failed: ${failure.message}"
-            }
-        settleRunningWork(stored.session, AgentState.ERROR, detail, alsoSession = true)
+        logger.error("Logging for session {} failed, so the session is stopped.", sessionId, failure)
+        try {
+            val stored = log.session(sessionId) ?: return
+            settleRunningWork(
+                stored.session,
+                AgentState.ERROR,
+                "The bridge lost track of this session.",
+                alsoSession = true,
+            )
+        } catch (secondary: Exception) {
+            logger.error("Could not record the error status for session {}.", sessionId, secondary)
+        }
     }
 
     /** Sets the session, when [alsoSession] or it is running, and each running thread, to [state]. */
@@ -287,19 +365,51 @@ class SessionManager(
         alsoSession: Boolean = false,
     ) {
         if (alsoSession || session.status.isRunning()) {
-            record(session.id, EventPayload.StatusChanged(threadId = null, state = state, detail = detail))
+            record(session.id, null, EventPayload.StatusChanged(threadId = null, state = state, detail = detail))
         }
         for (thread in log.threads(session.id).filter { it.status.isRunning() }) {
-            record(session.id, EventPayload.StatusChanged(threadId = thread.id, state = state, detail = detail))
+            record(session.id, null, EventPayload.StatusChanged(threadId = thread.id, state = state, detail = detail))
         }
     }
+
+    /**
+     * Runs a call into the agent and turns its refusals into errors a client can act on. What an
+     * [IllegalArgumentException] means depends on the call, so the caller says.
+     */
+    private suspend fun adapterCall(
+        onIllegalArgument: (IllegalArgumentException) -> SessionException,
+        call: suspend () -> Unit,
+    ) {
+        val refusal =
+            try {
+                call()
+                return
+            } catch (refused: IllegalArgumentException) {
+                onIllegalArgument(refused)
+            } catch (busy: TurnInProgressException) {
+                SessionException.Conflict("turn_in_progress", "That thread is still working on a turn.", busy)
+            } catch (unsupported: UnsupportedOperationException) {
+                SessionException.Conflict("not_supported", "That thread cannot be cancelled on its own.", unsupported)
+            } catch (closed: IllegalStateException) {
+                SessionException.Conflict("session_not_running", "The session is not running.", closed)
+            }
+        throw refusal
+    }
+
+    private fun runningSession(sessionId: String): AgentSession =
+        live[sessionId]?.agentSession
+            ?: throw SessionException.Conflict("session_not_running", "The session is not running.")
 
     private suspend fun liveSession(sessionId: String): LiveSession {
         live[sessionId]?.let { return it }
         val stored = requireSession(sessionId)
         val lock = resumeLocks.computeIfAbsent(sessionId) { Mutex() }
-        return lock.withLock {
-            live[sessionId] ?: resume(stored.session, stored.agentSessionRef)
+        try {
+            return lock.withLock {
+                live[sessionId] ?: resume(stored.session, stored.agentSessionRef)
+            }
+        } finally {
+            resumeLocks.remove(sessionId, lock)
         }
     }
 
@@ -313,12 +423,38 @@ class SessionManager(
         val agentSession =
             unavailableAsConflict { adapter.resume(session.id, Path.of(session.projectPath), agentSessionRef) }
         val liveSession = attach(session.id, agentSession)
-        if (agentSession.agentSessionRef != agentSessionRef) {
-            log.updateAgentSessionRef(session.id, agentSession.agentSessionRef)
+        guardingTheAttachedSession(session.id, liveSession) {
+            if (agentSession.agentSessionRef != agentSessionRef) {
+                log.updateAgentSessionRef(session.id, agentSession.agentSessionRef)
+            }
+            val mainThread = log.threads(session.id).firstOrNull { it.kind == ThreadKind.MAIN }
+            record(
+                session.id,
+                null,
+                EventPayload.StatusChanged(threadId = mainThread?.id, state = AgentState.DONE, detail = "Resumed."),
+            )
+            liveSession.job.start()
         }
-        record(session.id, EventPayload.StatusChanged(threadId = null, state = AgentState.DONE, detail = "Resumed."))
-        liveSession.job.start()
         return liveSession
+    }
+
+    /** Runs [block], and if it fails ends the attached session so no process or buffer is left behind. */
+    @Suppress("TooGenericExceptionCaught") // Rethrown after the half-started session is cleaned up.
+    private suspend fun guardingTheAttachedSession(
+        sessionId: String,
+        liveSession: LiveSession,
+        block: suspend () -> Unit,
+    ) {
+        try {
+            block()
+        } catch (failure: Throwable) {
+            withContext(NonCancellable) {
+                live.remove(sessionId, liveSession)
+                liveSession.job.cancel()
+                liveSession.stop()
+            }
+            throw failure
+        }
     }
 
     private suspend fun requireSession(sessionId: String) =
@@ -328,12 +464,14 @@ class SessionManager(
     private suspend fun resolvePromptTarget(
         sessionId: String,
         threadId: String?,
-        text: String,
     ): AgentThread {
-        if (text.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
         val target = resolveThread(sessionId, threadId)
         if (target.kind != ThreadKind.MAIN) {
             throw SessionException.Invalid("invalid_thread", "Prompts go to the main thread, not a helper thread.")
+        }
+        // A thread that is not live has no turn to wait for, whatever its stored status says.
+        if (live.containsKey(sessionId) && target.status.isRunning()) {
+            throw SessionException.Conflict("turn_in_progress", "That thread is still working on a turn.")
         }
         return target
     }
@@ -363,20 +501,33 @@ class SessionManager(
             )
         }
 
-    private fun existingDirectory(raw: String): Path {
+    private suspend fun existingDirectory(raw: String): Path {
         val path =
             try {
                 Path.of(raw)
             } catch (invalid: InvalidPathException) {
                 throw SessionException.Invalid("invalid_project_path", "project_path is not a valid path.", invalid)
             }
-        if (!path.isAbsolute || !Files.isDirectory(path)) {
-            throw SessionException.Invalid(
+        val real =
+            withContext(ioDispatcher) {
+                if (path.isAbsolute &&
+                    Files.isDirectory(path)
+                ) {
+                    path.toRealPath()
+                } else {
+                    null
+                }
+            }
+        return real
+            ?: throw SessionException.Invalid(
                 "invalid_project_path",
                 "project_path must be an absolute path to an existing folder.",
             )
-        }
-        return path.toRealPath()
+    }
+
+    private companion object {
+        val SHUTDOWN_BUDGET = 10.seconds
+        val logger = LoggerFactory.getLogger(SessionManager::class.java)
     }
 }
 

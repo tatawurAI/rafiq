@@ -4,15 +4,15 @@ This page describes the target design of Rafiq for contributors: the layers, the
 
 ## What exists today
 
-Rafiq is pre-alpha. Most of what follows is design, not code.
+Rafiq is pre-alpha. Part of what follows is design, not code.
 
 | Part | Built |
 |---|---|
 | `:protocol` | The event types, with their serialisation and the unknown-type fallback |
-| Bridge | `GET /health` only. It binds to `127.0.0.1` by default. |
+| Bridge | The SQLite event log, the session manager, the ACP adapter, `WS /events` with replay, the session routes, a flag-gated dev page, and a shared device token with host and origin checks. It binds to `127.0.0.1` by default. |
 | Android app | A themed shell with an empty session list |
 
-Everything else on this page, including the other routes, ACP adapters, replay, the auth relay and push, is planned. Milestones are tracked on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
+Everything else on this page, including the file and git routes, per-device tokens, the auth relay and push, is planned. Milestones are tracked on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
 
 ## Principles
 
@@ -92,11 +92,13 @@ A generic ACP adapter spawns any ACP agent and maps ACP updates to events. The a
 
 ### API
 
-The health, session, thread, prompt, cancel, approval and event routes are implemented. The file, git and auth routes are planned. Errors always have the shape `{"error":{"code":"...","message":"..."}}`.
+The health, session, thread, prompt, cancel, approval and event routes are implemented. The file, git and auth routes are planned. Every route except `GET /health` and `GET /dev` needs `Authorization: Bearer <RAFIQ_DEVICE_TOKEN>`. `WS /events` also accepts the token as a `Sec-WebSocket-Protocol` value next to `rafiq.v1`, because a browser cannot set headers on a WebSocket. A token in the query string is never accepted. Errors always have the shape `{"error":{"code":"...","message":"..."}}`.
 
 | Method and path | Purpose |
 |---|---|
 | `GET /health` | Liveness and version. Needs no device token. |
+| `GET /dev` | A plain test page. Exists only when `RAFIQ_DEV_PAGE=1`. Needs no token, because the page asks for it. |
+| `GET /dev/agents` | The configured agent ids, for the test page. Exists only when `RAFIQ_DEV_PAGE=1`. |
 | `WS /events?session=&after=` | Stream a session's events, replaying from sequence `after` |
 | `POST /sessions` | Start a session (agent, project) |
 | `GET /sessions` | List sessions |
@@ -134,7 +136,8 @@ The bridge reads environment variables at start-up. Nothing reads a `.env` file.
 | `RAFIQ_DATA_DIR` | Folder for the database and logs. Unset keeps events in memory only. | unset |
 | `RAFIQ_AGENTS` | Agents as `id=command` pairs separated by commas | unset |
 | `RAFIQ_DEV_PAGE` | `1` serves a plain test page at `/dev` | unset |
-| `RAFIQ_DEVICE_TOKEN` | Secret a phone presents. Treat as sensitive. | unset |
+| `RAFIQ_DEVICE_TOKEN` | Secret every request but `/health` presents as a bearer token. At least 32 characters, and required when `RAFIQ_AGENTS` is set. Treat as sensitive. | unset |
+| `RAFIQ_ALLOWED_HOSTS` | Extra `Host` values to accept, for example your Tailscale name | unset |
 
 ### Auth relay
 
@@ -150,7 +153,7 @@ The bridge watches for new listening ports under a session's processes. When one
 ### Storage and security
 
 - SQLite holds sessions, threads and the event log.
-- Tailscale ACLs restrict the bridge's port to your devices. A per-device token adds a second check. See [ADR 0006](adr/0006-tailscale-only-network-with-a-per-device-token.md).
+- Tailscale ACLs restrict the bridge's port to your devices. A device token adds a second check, and the bridge enforces it now. The `Host` header must be the bind address, `localhost` or a listed name (421 otherwise), and a request with a foreign `Origin` is refused, so a web page cannot reach the bridge through DNS rebinding. Pairing, Keystore storage and revocation come with M3. See [ADR 0006](adr/0006-tailscale-only-network-with-a-per-device-token.md).
 - The file API refuses paths outside the session's project root.
 - Approvals require a fresh biometric check on the phone.
 - Push payloads carry ids and short status only.

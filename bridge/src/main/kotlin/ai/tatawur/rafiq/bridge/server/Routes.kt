@@ -12,6 +12,9 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
 import io.ktor.server.application.log
 import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.CannotTransformContentToTypeException
+import io.ktor.server.plugins.PayloadTooLargeException
+import io.ktor.server.plugins.UnsupportedMediaTypeException
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
@@ -39,6 +42,24 @@ internal fun io.ktor.server.application.Application.installErrorShape() {
                 }
             call.respond(status, ApiError(ApiErrorDetail(failure.code, failure.message.orEmpty())))
         }
+        exception<CannotTransformContentToTypeException> { call, _ ->
+            call.respond(
+                HttpStatusCode.UnsupportedMediaType,
+                ApiError(ApiErrorDetail("unsupported_media_type", "Send the body as application/json.")),
+            )
+        }
+        exception<UnsupportedMediaTypeException> { call, _ ->
+            call.respond(
+                HttpStatusCode.UnsupportedMediaType,
+                ApiError(ApiErrorDetail("unsupported_media_type", "Send the body as application/json.")),
+            )
+        }
+        exception<PayloadTooLargeException> { call, _ ->
+            call.respond(
+                HttpStatusCode.PayloadTooLarge,
+                ApiError(ApiErrorDetail("payload_too_large", "The request body is too large.")),
+            )
+        }
         exception<BadRequestException> { call, _ -> call.respondInvalidBody() }
         exception<SerializationException> { call, _ -> call.respondInvalidBody() }
         // Anything unexpected, including a failing adapter, gets the standard body and no stack trace.
@@ -62,7 +83,10 @@ private suspend fun ApplicationCall.respondInvalidBody() {
     )
 }
 
-/** The session routes. They stay thin: parsing here, the work in [SessionManager]. */
+/**
+ * The session routes. They stay thin: parsing here, the work in [SessionManager]. Every route needs the
+ * device token (see [BridgeSecurity]).
+ */
 internal fun Route.sessionRoutes(sessions: SessionManager) {
     post("/sessions") {
         val request = call.receive<CreateSessionRequest>()

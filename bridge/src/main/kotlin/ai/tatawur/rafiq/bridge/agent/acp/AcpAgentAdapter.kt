@@ -20,7 +20,6 @@ import com.agentclientprotocol.protocol.JsonRpcException
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.rpc.ACPJson
 import com.agentclientprotocol.rpc.MethodName
-import com.agentclientprotocol.transport.StdioTransport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineName
@@ -114,8 +113,8 @@ class AcpAgentAdapter(
                 agent.canLoad -> {
                     session.openedRoot(agentSessionRef, replay = true)
                     val request = LoadSessionRequest(sessionId = id, cwd = cwd, mcpServers = emptyList())
+                    // The session's consumer ends the replay at the answer, in wire order.
                     send(protocol, AcpMethod.AgentMethods.V1.SessionLoad.methodName, encode(request))
-                    session.openedRoot(agentSessionRef, replay = false)
                 }
 
                 else -> {
@@ -141,13 +140,10 @@ class AcpAgentAdapter(
             }
         val scope = CoroutineScope(SupervisorJob() + ioDispatcher + CoroutineName("acp-$agentId-$sessionId"))
         process.drainStderr(scope)
-        val transport =
-            StdioTransport(scope, ioDispatcher, withEndOfOutput(process.lines), process::write, name = "acp-$agentId")
-        val protocol = Protocol(scope, transport)
-        val session =
-            AcpAgentSession(sessionId, protocol, process, scope, AcpEventMapper(sessionId, projectPath, newId), newId)
+        val mapper = AcpEventMapper(sessionId, projectPath, newId)
+        val session = AcpAgentSession(sessionId, process, scope, ioDispatcher, mapper, newId)
         session.attach()
-        protocol.start()
+        val protocol = session.protocol
         var opened = false
         try {
             withTimeout(startTimeout) {

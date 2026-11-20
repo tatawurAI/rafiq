@@ -1,6 +1,8 @@
 package ai.tatawur.rafiq.bridge.agent.acp
 
 import ai.tatawur.rafiq.bridge.agent.AgentSession
+import ai.tatawur.rafiq.bridge.agent.TurnInProgressException
+import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
 import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.EventPayload
@@ -21,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.readLines
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 // Each test starts FakeAcpAgent as a real process. The timeout only stops a hung test; nothing
@@ -104,6 +107,9 @@ class AcpAgentAdapterTest {
                 approval.options.map { it.kind },
             )
 
+            // The turn is still open, waiting on you, so a second prompt is refused rather than sent.
+            assertFailsWith<TurnInProgressException> { run.session.prompt(MAIN_THREAD_ID, "And the docs.") }
+
             run.session.respondToApproval(approval.id, "allow-once")
             run.session.cancel("sess_child")
             run.drain()
@@ -152,6 +158,25 @@ class AcpAgentAdapterTest {
             assertEquals(MAIN_THREAD_ID, message.threadId)
             assertTrue("weather_report" in message.text())
         }
+
+    @Test
+    @Timeout(300)
+    fun the_turn_end_keeps_its_place_in_the_agents_wire_order() {
+        // The answer to session/prompt and the notifications around it take different paths through
+        // the SDK. A race between them shows only now and then, so the same run is repeated.
+        val runs = 50
+        val outOfOrder =
+            (1..runs).count {
+                var wrong = false
+                runScript("turn-end-order.jsonl") { run ->
+                    run.session.prompt(MAIN_THREAD_ID, "Start two helpers.")
+                    val order = run.drain().mapNotNull(::orderMark)
+                    wrong = order != listOf("early done", "turn ended", "late done")
+                }
+                wrong
+            }
+        assertEquals(0, outOfOrder, "$outOfOrder of $runs runs reported events out of wire order.")
+    }
 
     /** The adapter, its session, and everything the session reported so far. */
     private class Run(
@@ -209,6 +234,23 @@ class AcpAgentAdapterTest {
         }
     }
 }
+
+/** Names the three events whose order the agent fixed on the wire, and ignores the rest. */
+private fun orderMark(event: EventPayload): String? =
+    when {
+        event is EventPayload.StatusChanged && event.threadId == MAIN_THREAD_ID &&
+            event.state == AgentState.WAITING_ON_YOU -> {
+            "turn ended"
+        }
+
+        event is EventPayload.ThreadUpdated && event.thread.status == AgentState.DONE -> {
+            if (event.thread.id == "sess_early") "early done" else "late done"
+        }
+
+        else -> {
+            null
+        }
+    }
 
 private fun EventPayload.Message.text(): String =
     content.joinToString("") {

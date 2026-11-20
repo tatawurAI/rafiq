@@ -13,3 +13,4 @@ Written by hand, for traffic the recordings do not contain:
 
 - `child-approval.jsonl`: a helper session asks for permission, and the bridge answers and then cancels the helper.
 - `unknown-update.jsonl`: an update type that ACP does not define.
+- `turn-end-order.jsonl`: one helper finishes before the turn's answer and one after, to pin the wire order of the turn's end.

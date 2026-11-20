@@ -1,30 +1,19 @@
 # Architecture decision records
 
-An architecture decision record (ADR) captures one significant decision: the situation that forced it, what we chose, and what follows. We use the format described by Michael Nygard in "Documenting Architecture Decisions".
+Each file here records one decision that shapes Rafiq: what prompted it, what we chose, and what it costs us. The layout follows Michael Nygard's "Documenting Architecture Decisions".
 
-## Format
+## File layout
 
-Each ADR is a Markdown file with these sections:
+- Name: `NNNN-short-hyphenated-title.md`, with a four-digit number that is never reused.
+- Sections, in order: Status, Context, Decision, Consequences. Add Alternatives considered when a rejected option is worth explaining.
+- Status is one of `Proposed`, `Accepted`, `Deprecated` or `Superseded by NNNN`, followed by a date.
+- Write Context so someone who joined last week can follow it.
 
-- **Title:** `# NNNN. Short imperative or noun phrase`.
-- **Status:** `Proposed`, `Accepted`, `Deprecated`, or `Superseded by NNNN`, with the date it took that status.
-- **Context:** the forces at play: the problem, the constraints and the options. Write for a newcomer.
-- **Decision:** what we will do, in the active voice.
-- **Consequences:** what becomes easier and what becomes harder. Include the downsides.
+## Proposing and changing
 
-Add an **Alternatives considered** section when rejected options are worth keeping. Say why each lost.
-
-## Numbering and naming
-
-- Numbers are four digits, assigned in order, and never reused.
-- The file is `NNNN-short-hyphenated-title.md`.
-- Take the next free number when you open the pull request.
-
-## Lifecycle
-
-1. Open a pull request with the ADR at status `Proposed`.
-2. When it is accepted, set the status to `Accepted` and the date.
-3. Accepted ADRs are not edited, apart from the status line. To change a decision, write a new ADR, and mark the old one `Superseded by NNNN`.
+1. Pick the next free number and open a pull request with status `Proposed`.
+2. On acceptance, set the status to `Accepted` and add the date.
+3. To reverse a decision, add a new ADR and mark the old one `Superseded by NNNN`. Leave the old text as it was written.
 
 ## Index
 

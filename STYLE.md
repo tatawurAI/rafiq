@@ -1,120 +1,105 @@
-# Style guide
+# Rafiq style guide
 
-This guide covers how code, comments, protocol types, tests and documentation are written in Rafiq. Tools enforce the mechanical parts. The rest is judgement, and this file is the reference when reviewers disagree.
+Rafiq is Kotlin from the wire to the screen. This guide lists the conventions that are specific to this codebase. Spotless and detekt enforce the formatting. The rest is for you and the reviewer to keep.
 
-## Kotlin
+## Kotlin and Compose
 
-### Formatting and static analysis
+### Tooling
 
-- We follow the official [Kotlin coding conventions](https://kotlinlang.org/docs/coding-conventions.html).
-- ktlint, run through Spotless, owns formatting. Run `./gradlew spotlessApply` and do not argue with the result.
-- detekt owns static analysis. Fix findings. Suppress one only with a `@Suppress` that has a comment saying why.
-- See [ADR 0008](docs/adr/0008-formatting-by-ktlint-and-detekt.md) for the reasoning.
+- `./gradlew spotlessApply` formats. ktlint runs inside Spotless and follows the official Kotlin conventions, with the 120-column limit from `.editorconfig`. detekt rules live in `config/detekt/detekt.yml`. See [ADR 0008](docs/adr/0008-formatting-by-ktlint-and-detekt.md).
+- Suppress a detekt rule at the smallest scope you can, and put the reason in a comment next to the `@Suppress`.
 
-### Naming
+### Names and units
 
-- Types are `UpperCamelCase`. Functions and properties are `lowerCamelCase`. Constants are `SCREAMING_SNAKE_CASE`.
-- Name things for what they are in the domain: `Session`, `Thread`, `ApprovalRequest`. Avoid `Manager`, `Helper` and `Util`.
-- Boolean names read as a question: `isStreaming`, `hasPendingApproval`.
-- Put units in names when the type does not carry them: `timeoutMs`, `widthDp`. Prefer `kotlin.time.Duration` where you can.
-- A file holding one top-level type is named after it. Group small related types in a file named for the group.
+- A unit that the type does not carry goes in the name: `timestampMs`, `expiresAtMs`, `widthDp`. Prefer `kotlin.time.Duration` for lengths of time inside one process.
+- Kotlin property names are for readers of Kotlin. The wire name is a separate decision (see [Wire protocol](#wire-protocol)), so `timestampMs` can be `ts_ms` on the wire.
+- Say what a thing is in Rafiq's vocabulary: session, thread, event, approval. A `Thread` here is a conversation within a session, so avoid naming anything `Worker` or `Job` when it means one.
 
-### Nullability
+### Null and unknown
 
-- Make types non-null unless absence is a real state in the domain.
-- Never use `!!` in production code. Handle the null, or restructure so it cannot occur.
-- Model "unknown" as a sealed type or a default, not as a null with a hidden meaning.
-- Platform types from Java APIs get an explicit nullable or non-null type at the boundary.
+- On a protocol type, null means "the sender left this out". It never means "unknown value". An enum value the receiver does not recognise becomes that enum's `UNKNOWN` entry.
+- Outside the protocol, prefer a non-null type with a sensible default, or a sealed type with a case for the absent state.
+- Do not use `!!` in main code.
 
 ### Coroutines and Flow
 
-- Every coroutine has an owner with a defined lifetime. Do not use `GlobalScope`.
-- Inject dispatchers. Do not hard-code `Dispatchers.IO` inside a class that tests need to control.
-- Suspending functions are main-safe: they switch dispatcher themselves when they block.
-- Do not swallow `CancellationException`. Rethrow it.
-- Expose `Flow` or `StateFlow` from a class, and keep the mutable `MutableStateFlow` private.
-- Collect flows in the UI with lifecycle awareness (`collectAsStateWithLifecycle`).
-- Use `StateFlow` for state that always has a current value, and `SharedFlow` or a channel for one-off events.
+- The bridge ties work to the session it serves. When a session ends, everything launched for it is cancelled with it.
+- The app collects the event stream in a scope that follows the screen's lifecycle, so a folded or backgrounded app does not hold a socket open for nothing. Resuming goes through replay (see [ADR 0005](docs/adr/0005-reconnect-by-sequence-replay.md)).
+- Take a `CoroutineDispatcher` as a constructor parameter in any class that does blocking work, so tests can substitute one.
+- Never swallow `CancellationException`. A `catch (e: Exception)` around a suspending call must rethrow it.
+- Keep `MutableStateFlow` and `MutableSharedFlow` private and expose read-only `StateFlow` and `Flow`.
 
 ### Compose
 
-- Composables are stateless where they can be. They take state and callbacks as parameters.
-- Hoist state to the lowest common caller that needs it. Screens read from a view model. Components never do.
-- Give every reusable composable a `modifier: Modifier = Modifier` parameter, as the first optional parameter.
-- Use theme tokens for colour, type and spacing. Never write a hex colour, a raw `sp` size or a font family inside a composable.
-- Touch targets are at least 44dp.
-- Every reusable composable has a `@Preview`. Include the states that differ: empty, loading, error, long text.
-- Do not read from a repository or start a coroutine inside a composable body. Use effects (`LaunchedEffect`) or the view model.
+- Composables take state and callbacks as parameters. State is hoisted to the screen's state holder, and the screen is the only place that reads from it.
+- Colour comes from `RafiqColors` or the Material scheme in `ui/theme`. The private `Palette` is not for screens. No hex literals, no `Color(...)` in a composable.
+- Text uses the theme's typography: Archivo for headings, IBM Plex Sans for body, IBM Plex Mono for code and labels. Do not name a font family in a screen.
+- Anything you can tap is at least 44dp in both directions.
+- Layout decisions that depend on the fold (cover screen, open, Flex Mode) are driven by a posture value passed into the composable. Reading window state inside a leaf composable makes it impossible to preview.
+- Every composable that a screen reuses has a `@Preview`, including the states that differ in layout: empty, long text, and the half-folded posture where it applies.
+- Put user-visible strings in `strings.xml`.
+- The app's `minSdk` is 31 (Android 12). Do not add compatibility shims for older versions.
 
-## Comments and KDoc
+## Wire protocol
 
-- KDoc on public API says what the thing is for and why it exists, plus any contract the signature cannot show. Do not restate the signature.
-- Inline comments explain why: an invariant, a unit, a platform quirk, a rejected alternative. If a comment only repeats the code, delete it.
-- No `TODO` or `FIXME` comments. File an issue and, if it helps, link it from the pull request.
-- No migration history in code ("was X before", "changed from Y"). Version control keeps history.
-- Write comments in complete sentences, in plain English.
+The `:protocol` module is the contract between the bridge and the app, and the only code both sides share. A released app and a newer bridge have to keep talking, so these rules are strict. The event model is described in [docs/architecture.md](docs/architecture.md#event-model).
 
-Good:
+- Every serialised property and every subtype carries `@SerialName`. The Kotlin name can then be refactored without changing bytes on the wire.
+- Wire names are snake case. A time is an integer of epoch milliseconds in a field ending in `_ms`: `ts_ms`, `expires_at_ms`.
+- A wire name is permanent once a release uses it. Do not rename it and do not reuse it for a different meaning.
+- Change the protocol by adding: a new optional field with a default, or a new payload type. Removing, renaming or reinterpreting something needs an ADR.
+- A new field has a default so that an event from an older bridge still decodes.
+- Decoders ignore fields they do not know. A payload type they do not know decodes to `EventPayload.Unknown`, and the app shows it as a plain message. Never make the app throw on a new type.
+- Events are stored and replayed, and push payloads are built from them, so an event never carries a token, a credential or a file's full contents unless that is the event's whole purpose.
+- Identifiers are opaque strings. The app must not parse them.
 
-```kotlin
-/** Sequence number of the last event the phone has stored. The bridge replays everything after it. */
-val lastSeenSeq: Long
+### KDoc on protocol types
 
-// OkHttp reports a closed socket on the reader thread, so hop to the main scope before touching state.
-```
+Write the KDoc for the person deciding whether to send or render a type, not for the compiler.
 
-Not useful:
+- Say when the bridge emits it and what the app does with it, for example "carries the whole session" or "the app concatenates deltas in `seq` order".
+- State units and time bases on the property: "milliseconds since the Unix epoch".
+- Say what null means for each nullable property.
+- Do not repeat the property type or name.
 
-```kotlin
-// Set the title
-fun setTitle(title: String)
-```
+## Bridge
 
-## Protocol rules
+- Routes stay thin. Parsing, validation and the work itself live in plain classes that tests can call without a server.
+- `GET /health` is the only route that needs no device token. Every route you add behind it requires one.
+- Anything that takes a path from a request resolves it against the session's project root and rejects the result if it lands outside.
+- A class that holds a secret overrides `toString` so the secret cannot be logged. `BridgeConfig` is the model to follow.
+- Settings come from environment variables, read once at start-up. A bad value fails the start with a message that names the variable.
 
-The `:protocol` module defines the wire contract between the bridge and the app. See [docs/architecture.md](docs/architecture.md#event-model).
+## Tests
 
-- Every serialisable wire type and every enum value carries an explicit `@SerialName`. Renaming a Kotlin class or property must never change the wire format.
-- Changes are additive only: new optional fields, new event types. Removing a field, renaming one or changing its meaning needs an ADR.
-- New fields have defaults, so an older peer can still decode newer messages and a newer peer can decode older ones.
-- Decoders ignore unknown fields.
-- An event type the app does not know falls back to a plain message, so a new agent feature degrades to readable text and never to a crash.
-- Every event carries `session_id`, `seq` and `ts`. `seq` is monotonic per session.
+Test where a break would hurt and the check is cheap.
 
-## Testing
+| Layer | What to test | How |
+|---|---|---|
+| `:protocol` | Every payload kind survives a round trip. The wire shape of the kinds the app depends on is pinned. An unknown type, an unknown field and an unknown enum value all decode without error. | Plain JVM unit tests with `protocolJson` |
+| Bridge replay and storage | Replaying after a sequence number returns exactly the later events, in order, once. | Unit tests against in-memory SQLite |
+| Bridge routes | Status codes, bodies, and rejection of bad paths and missing tokens. | Ktor's `testApplication`, no real port |
+| ACP adapter | Mapping of ACP updates to events, including ones it does not recognise. | A small fake agent process that speaks ACP over stdio |
+| Android logic | State holders: how events turn into screen state, including unfold and reconnect. | JVM unit tests with a test dispatcher |
+| Android UI | Not covered by snapshot tests. Check layouts through previews and on a device or foldable emulator. | Manual |
 
-Tests earn their place. Each test protects a behaviour someone would notice breaking, at the cheapest level that can catch it.
+- A bug fix lands with a test that reproduces the bug at the lowest layer where it shows up.
+- No sleeps and no real clocks. Use the test dispatcher and pass time in.
+- Test names are plain sentences with underscores, in the style of the existing tests.
+- A test that only raises a coverage figure does not belong here.
 
-- Test behaviour through the public API, not private structure.
-- Prefer a unit test, then an integration test, then a UI test. Move up only when the cheaper level cannot see the failure.
-- A bug fix has a test that fails without the fix. Confirm that it does.
-- Do not chase coverage. A test that exists to raise a percentage is deleted in review.
-- Do not test the framework, generated code or simple data classes.
-- Use real collaborators over mocks where they are cheap, such as an in-memory SQLite database or a fake ACP agent process. Mock at the system boundary only.
-- Tests are deterministic. No sleeps, no wall-clock time, no real network. Use the test dispatcher and a fake clock.
-- Name a test for the behaviour: `replays_events_after_last_seen_seq`.
-- Keep the suite fast. A slow test needs a reason in a comment.
+## Writing for this repo
 
-## Docs writing
+- Plain punctuation. Use full stops, commas and colons, and reword instead of reaching for a dash.
+- Write to the reader as "you", and say "your server" and "your phone".
+- Examples and fixtures use neutral project names such as `weather-app`, `docs-site` and `api-server`.
+- A `TODO` in code is a missing issue. File the issue and delete the comment.
+- Code and comments describe the current design. History lives in git.
 
-- Use short sentences and plain punctuation. No em dashes: use a full stop, a colon or a comma, or reword the sentence.
-- Write "your server" and "your phone". Address the reader as "you".
-- Expand an acronym the first time it appears in a file, for example "Agent Client Protocol (ACP)".
-- Front-load the point. Put the key fact in the first sentence of a section.
-- Use numbered lists for steps and bullets for unordered items. Use a table to compare things along the same dimensions.
-- Never count things in prose that will drift, such as "the six screens" or "twelve endpoints". Name them, or point to the source.
-- Put commands and file paths in code formatting. Make examples copy-pasteable.
-- Use neutral names in examples: `weather-app`, `docs-site`, `api-server`.
-- Pick one term for one concept and keep it. Do not alternate between "session" and "conversation".
-- Docs describe the present. Plans, risks and discussion go in issues.
+## Before you open a pull request
 
-## Open-source hygiene
-
-This repository is public. Everything committed to it is read by strangers.
-
-- No personal paths, such as a home directory, in code, docs, scripts or fixtures.
-- No links to private systems, and no internal tracker ids.
-- Do not name people, companies or other products as the reason for a decision. A decision is justified by its trade-offs. The exceptions are `tatawur.ai` as the copyright holder, and the upstream projects and licences we depend on.
-- No secrets in the repository, including in tests and fixtures. Fixtures use obvious placeholders such as `test-token-0000`.
-- `.env` files are never committed. Configuration examples use placeholder values.
-- Sample data uses neutral names and example domains.
+- [ ] No real hostnames, tailnet names, IP addresses or device tokens in fixtures, logs, docs or screenshots. Use `100.64.0.1` style placeholders and `replace-with-a-long-random-value`.
+- [ ] No `.env` file and no secrets in the diff.
+- [ ] No home-directory paths and no links to private systems.
+- [ ] Protocol touched? The change is additive, or an ADR is linked.
+- [ ] You ran `./gradlew spotlessApply` and then `./gradlew spotlessCheck detekt test`.

@@ -14,6 +14,8 @@ The app understands only the generic event model: sessions, threads, messages, t
 
 Output that does not fit a known event type falls back to a plain message. See [architecture.md](../architecture.md#event-model).
 
+Two properties of the generic model are fixed. Every event carries `ts_ms`, an integer of milliseconds since the Unix epoch. Wire names are permanent once a release uses them: a name is never renamed or reused for another meaning.
+
 ## Consequences
 
 - Adding an agent that speaks ACP needs no app change. This is the milestone M6 test of the design.

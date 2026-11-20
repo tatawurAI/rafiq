@@ -2,11 +2,15 @@ package ai.tatawur.rafiq.bridge
 
 import ai.tatawur.rafiq.bridge.agent.AgentAdapter
 import ai.tatawur.rafiq.bridge.agent.AgentSession
+import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.protocol.AgentState
+import ai.tatawur.rafiq.protocol.AgentThread
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
+import ai.tatawur.rafiq.protocol.Session
+import ai.tatawur.rafiq.protocol.ThreadKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -63,6 +67,11 @@ class FakeAgentSession(
         outbox.close()
     }
 
+    /** The updates flow breaks with [cause]. */
+    fun breakWith(cause: Throwable) {
+        outbox.close(cause)
+    }
+
     override suspend fun prompt(
         threadId: String,
         text: String,
@@ -93,16 +102,27 @@ class FakeAgentSession(
 class BridgeFixture(
     dir: Path,
     val adapter: FakeAdapter = FakeAdapter(),
-) {
+) : AutoCloseable {
     val log: EventLog = EventLog.open(dir, Dispatchers.IO.limitedParallelism(1))
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val sessions = SessionManager(log, listOf(adapter), scope)
 
-    fun close() {
+    override fun close() {
         scope.cancel()
         log.close()
     }
 }
+
+/** A device token as long as the bridge demands: 64 hex characters, what `openssl rand -hex 32` makes. */
+const val TEST_TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+fun testSecurity() = BridgeSecurity(TEST_TOKEN, bindAddress = "127.0.0.1")
+
+val TEST_SESSION = Session("ses_1", "fake", "/work/weather-app", "weather-app", AgentState.DONE, 1, 1)
+val TEST_MAIN_THREAD = AgentThread("main", "ses_1", null, ThreadKind.MAIN, "weather-app", AgentState.DONE)
+
+/** Stores [TEST_SESSION], which leaves two events in its log: the session and its main thread. */
+suspend fun EventLog.seed() = createSession(TEST_SESSION, "ref", TEST_MAIN_THREAD)
 
 fun status(
     state: AgentState,

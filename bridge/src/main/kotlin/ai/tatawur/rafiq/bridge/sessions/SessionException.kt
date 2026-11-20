@@ -20,7 +20,8 @@ sealed class SessionException(
     class NotFound(
         code: String,
         message: String,
-    ) : SessionException(code, message)
+        cause: Throwable? = null,
+    ) : SessionException(code, message, cause)
 
     /** The request is valid but cannot be done now, such as cancelling in a session that is not running. */
     class Conflict(

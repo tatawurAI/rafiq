@@ -13,16 +13,19 @@ import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.protocolJson
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
@@ -63,15 +66,21 @@ class EndToEndTest {
                 )
             val sessions = SessionManager(log, listOf(adapter), scope)
             try {
-                application { bridgeModule("test", log, sessions) }
+                application { bridgeModule("test", log, sessions, testSecurity()) }
+                // Every route needs the device token, the event stream included.
+                val http =
+                    createClient {
+                        install(WebSockets)
+                        defaultRequest { header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN") }
+                    }
                 val prompt = "Launch two helpers in parallel."
-                val (session, payloads) = promptAndReadToTheEnd(prompt)
+                val (session, payloads) = http.promptAndReadToTheEnd(prompt)
 
                 assertPromptLoggedOnce(payloads, prompt)
                 assertHelperThreads(
                     protocolJson.decodeFromString(
                         ListSerializer(AgentThread.serializer()),
-                        client.get("/sessions/${session.id}/threads").bodyAsText(),
+                        http.get("/sessions/${session.id}/threads").bodyAsText(),
                     ),
                 )
                 assertLateWorkStreams(payloads)
@@ -87,26 +96,24 @@ class EndToEndTest {
      * Acts as a client: creates a session, prompts it, and reads the event stream until the session
      * reports an error, which here is the agent exiting at the end of the recording.
      */
-    private suspend fun ApplicationTestBuilder.promptAndReadToTheEnd(
-        prompt: String,
-    ): Pair<Session, List<EventPayload>> {
+    private suspend fun HttpClient.promptAndReadToTheEnd(prompt: String): Pair<Session, List<EventPayload>> {
         val project = Files.createDirectory(dir.resolve("weather-app"))
         val created =
-            client.post("/sessions") {
+            post("/sessions") {
                 contentType(ContentType.Application.Json)
                 setBody("""{"agent":"claude-code","project_path":"$project"}""")
             }
         assertEquals(HttpStatusCode.Created, created.status)
         val session = protocolJson.decodeFromString(Session.serializer(), created.bodyAsText())
         val accepted =
-            client.post("/sessions/${session.id}/prompt") {
+            post("/sessions/${session.id}/prompt") {
                 contentType(ContentType.Application.Json)
                 setBody("""{"text":"$prompt"}""")
             }
         assertEquals(HttpStatusCode.Accepted, accepted.status)
 
         val payloads = mutableListOf<EventPayload>()
-        createClient { install(WebSockets) }.webSocket("/events?session=${session.id}&after=0") {
+        webSocket("/events?session=${session.id}&after=0") {
             do {
                 val frame = incoming.receive() as Frame.Text
                 val payload = protocolJson.decodeFromString(Event.serializer(), frame.readText()).payload

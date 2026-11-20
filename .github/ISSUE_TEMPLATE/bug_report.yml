@@ -1,63 +1,71 @@
 name: Bug report
-description: Something in Rafiq does not work as it should.
+description: Rafiq did something you did not expect.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the report. For security problems, do not use this form. See the security policy instead.
-        Redact tokens, private paths and project contents from anything you paste.
-  - type: textarea
-    id: what-happened
+        Help us reproduce it. Logs and screenshots often contain server names and tokens, so blank those out before you paste.
+        A security problem does not belong here. Use the security policy.
+  - type: input
+    id: app-version
     attributes:
-      label: What happened
-      description: What did you do, what did you expect, and what happened instead?
-    validations:
-      required: true
-  - type: textarea
-    id: steps
-    attributes:
-      label: Steps to reproduce
-      placeholder: |
-        1. Start the bridge
-        2. Open a session in the app
-        3. ...
+      label: App version
+      description: The release you installed, or the commit you built.
     validations:
       required: true
   - type: input
-    id: version
+    id: bridge-version
     attributes:
-      label: Rafiq version
-      description: The app and bridge version, or the commit if you built from source.
+      label: Bridge version
+      description: The `version` field returned by `GET /health`.
     validations:
       required: true
   - type: input
-    id: device
+    id: phone
     attributes:
       label: Phone model and Android version
       placeholder: Galaxy Z Flip, Android 15
-  - type: input
-    id: server
-    attributes:
-      label: Server OS and JDK version
-      placeholder: Ubuntu 24.04, JDK 21
-  - type: input
-    id: agent
-    attributes:
-      label: Agent and ACP adapter
-      placeholder: claude-agent-acp
+    validations:
+      required: true
   - type: dropdown
-    id: fold
+    id: fold-state
     attributes:
-      label: Fold mode, if it matters
+      label: Fold state when it happened
       options:
-        - Not relevant
-        - Closed (cover screen)
+        - Not a foldable
+        - Closed, on the cover screen
         - Open
         - Half-folded (Flex Mode)
-  - type: textarea
-    id: logs
+        - Changed while it happened
+    validations:
+      required: true
+  - type: input
+    id: agent-adapter
     attributes:
-      label: Logs
-      description: Relevant bridge or app log lines. Redact secrets.
+      label: Agent and adapter
+      description: Which agent you ran and which ACP adapter launches it.
+      placeholder: Claude Code via claude-agent-acp
+  - type: textarea
+    id: observed
+    attributes:
+      label: What you saw
+      description: Include what you expected to see instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps
+      placeholder: |
+        1. Start a session on api-server
+        2. Send a prompt that edits a file
+        3. Fold the phone while the approval card is showing
+    validations:
+      required: true
+  - type: textarea
+    id: log-excerpt
+    attributes:
+      label: Log excerpt
+      description: Bridge log lines or `adb logcat` output around the problem, with names and tokens removed.
       render: text

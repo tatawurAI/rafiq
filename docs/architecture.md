@@ -1,6 +1,18 @@
 # Architecture
 
-This page describes how Rafiq works today, for contributors. It covers the layers, the event model that connects them, the bridge server and the Android app. Decisions and their reasons are in [docs/adr/](adr/README.md).
+This page describes the target design of Rafiq for contributors: the layers, the event model that connects them, the bridge server and the Android app. Decisions and their reasons are in [docs/adr/](adr/README.md).
+
+## What exists today
+
+Rafiq is pre-alpha. Most of what follows is design, not code.
+
+| Part | Built |
+|---|---|
+| `:protocol` | The event types, with their serialisation and the unknown-type fallback |
+| Bridge | `GET /health` only. It binds to `127.0.0.1` by default. |
+| Android app | A themed shell with an empty session list |
+
+Everything else on this page, including the other routes, ACP adapters, replay, the auth relay and push, is planned. Milestones are tracked on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
 
 ## Principles
 
@@ -53,11 +65,11 @@ The event model is the contract between the bridge and the app. It lives in the 
 | Preview | id, URL, label, port | "Open preview" card, in-app browser |
 | File change | path, change type, diff reference, git status | File chip that opens the file viewer |
 
-Every event carries:
+Every event carries an envelope:
 
 - `session_id`: the session it belongs to.
 - `seq`: a number that increases monotonically within the session.
-- `ts`: the event timestamp.
+- `ts_ms`: when the bridge recorded the event, in milliseconds since the Unix epoch (UTC).
 
 Output the app does not recognise falls back to a plain Message, so a new agent feature degrades to readable text. Evolution rules are in [STYLE.md](../STYLE.md#protocol-rules). See [ADR 0004](adr/0004-the-app-knows-only-generic-sessions-threads-and-events.md).
 
@@ -80,8 +92,11 @@ A generic ACP adapter spawns any ACP agent and maps ACP updates to events. The a
 
 ### API
 
+Only `GET /health` is implemented today. The rest of the table is the planned surface.
+
 | Method and path | Purpose |
 |---|---|
+| `GET /health` | Liveness and version. Needs no device token. |
 | `WS /events?session=&after=` | Stream a session's events, replaying from sequence `after` |
 | `POST /sessions` | Start a session (agent, project) |
 | `GET /sessions` | List sessions |
@@ -92,6 +107,31 @@ A generic ACP adapter spawns any ACP agent and maps ACP updates to events. The a
 | `GET /files/content?path=` | Read a file |
 | `GET /git/diff?session=` | Diff, scoped to the session's project folder |
 | `POST /auth/{id}/callback` | Complete a sign-in relay |
+
+#### GET /health
+
+Returns `200` with a JSON body:
+
+```json
+{"status":"ok","version":"0.1.0"}
+```
+
+`version` is the bridge's build version. The route is unauthenticated on purpose: it reveals only that the bridge is up and which version it is, and it is the first thing to check when your phone cannot connect.
+
+```sh
+curl http://127.0.0.1:8740/health
+```
+
+### Configuration
+
+The bridge reads environment variables at start-up. Nothing reads a `.env` file. Export the variables in your shell, or put them in a systemd unit's `EnvironmentFile=`.
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `RAFIQ_BIND_ADDRESS` | Address to listen on. Use your Tailscale address. | `127.0.0.1` |
+| `RAFIQ_PORT` | Port to listen on | `8740` |
+| `RAFIQ_DATA_DIR` | Folder for the database and logs | unset |
+| `RAFIQ_DEVICE_TOKEN` | Secret a phone presents. Treat as sensitive. | unset |
 
 ### Auth relay
 

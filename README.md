@@ -53,20 +53,12 @@ Read [docs/architecture.md](docs/architecture.md) for the full picture.
 
 ## Status
 
-Rafiq is pre-alpha. Nothing is released yet. The work is planned in milestones:
-
-- **M0 Foundation:** repository, documentation, build and CI.
-- **M1 Bridge core:** prompt, stream and approve one session from a browser dev page, with replay after a drop.
-- **M2 Android shell:** the app connects, lists sessions and shows a chat.
-- **M3 Approvals and push:** approve from notifications, plus the release workflow.
-- **M4 Flip modes:** separate cover-screen, open and half-folded (Flex Mode) layouts.
-- **M5 Files, auth and previews:** file and diff viewer, agent sign-in relay, live previews.
-- **M6 Second agent via ACP:** a second agent runs without app changes.
+Rafiq is pre-alpha and nothing is released. Today the bridge answers `GET /health`, the protocol types exist, and the app is a themed shell. Plans and progress are on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
 
 ## Requirements
 
 - JDK 21
-- The Android SDK, to build the app
+- The Android SDK, to build the app. The app needs Android 12 (API 31) or newer.
 - [Tailscale](https://tailscale.com) on your server and on your phone
 - An ACP adapter for your agent, installed on your server. For Claude Code that is `claude-agent-acp`.
 
@@ -79,17 +71,26 @@ Rafiq is pre-alpha. Nothing is released yet. The work is planned in milestones:
    cd rafiq
    ```
 
-2. Start the bridge.
+2. Run the bridge. For development, let Gradle start it:
 
    ```sh
    ./gradlew :bridge:run
    ```
 
-3. In another terminal, check that it is up. For local development the bridge listens on `127.0.0.1:8740`.
+   To run it as an installed program, build it once and start the script:
+
+   ```sh
+   ./gradlew :bridge:installDist
+   bridge/build/install/rafiq-bridge/bin/rafiq-bridge
+   ```
+
+3. In another terminal, check that it is up. It listens on `127.0.0.1:8740` unless you configure otherwise.
 
    ```sh
    curl http://127.0.0.1:8740/health
    ```
+
+   You should get `{"status":"ok","version":"..."}`.
 
 4. Install the debug app on a connected phone or emulator.
 
@@ -97,16 +98,18 @@ Rafiq is pre-alpha. Nothing is released yet. The work is planned in milestones:
    ./gradlew :android:installDebug
    ```
 
-The bridge reads its settings from environment variables:
+### Configuration
+
+The bridge reads environment variables. Export them in your shell, or use `EnvironmentFile=` in a systemd unit. Nothing reads a `.env` file, so `.env.example` only lists the names and sample values.
 
 | Variable | Purpose | Default |
 |---|---|---|
 | `RAFIQ_BIND_ADDRESS` | Address the bridge listens on | `127.0.0.1` |
 | `RAFIQ_PORT` | Port the bridge listens on | `8740` |
-| `RAFIQ_DATA_DIR` | Where the bridge keeps its data | |
-| `RAFIQ_DEVICE_TOKEN` | Token a phone must present (sensitive, keep it out of git) | |
+| `RAFIQ_DATA_DIR` | Where the bridge keeps its data | unset |
+| `RAFIQ_DEVICE_TOKEN` | Token a phone must present. Sensitive: keep it out of git. | unset |
 
-For real use, bind the bridge to your Tailscale address so it listens only on that interface. The app pairs with it using a per-device token.
+For real use, set `RAFIQ_BIND_ADDRESS` to your server's Tailscale address so only your devices can reach the bridge.
 
 ## Repository layout
 

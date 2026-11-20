@@ -14,6 +14,8 @@ The official ACP Kotlin SDK, [`agentclientprotocol/kotlin-sdk`](https://github.c
 
 The bridge is written in Kotlin on the JVM, using Ktor and the ACP Kotlin SDK. The event model lives in a `:protocol` Kotlin module, serialised with kotlinx.serialization, and both the bridge and the app depend on it.
 
+The toolchain is concrete: the bridge, the protocol module and the app all target JVM 21, and Android Gradle Plugin (AGP) 9 compiles the Kotlin in the app. Versions are pinned in `gradle/libs.versions.toml`.
+
 ## Consequences
 
 - One language, one set of coding rules, and one definition of each event. The compiler catches a protocol mismatch.

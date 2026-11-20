@@ -28,18 +28,24 @@ Only the latest release receives security fixes. Rafiq is pre-alpha, so expect t
 
 ## Threat surface
 
-The bridge is a long-running process on your server. It can read files in your project folders, start agent processes, and relay approvals from your phone to those agents. Treat access to the bridge as access to your project.
+Rafiq is pre-alpha. What exists today is small: the bridge answers `GET /health` and nothing else, and it binds to `127.0.0.1` unless you set `RAFIQ_BIND_ADDRESS`. It reads no files, starts no agents and relays no approvals yet.
 
-What the design relies on:
+The finished bridge will be able to read files in your project folders, start agent processes and relay approvals from your phone to them. Access to it will be access to your project. The protections below are the design, and each lands with the milestone shown.
 
-- **Network:** the bridge listens only on the Tailscale interface, and Tailscale ACLs limit which of your devices can reach its port. Nothing is exposed on a public port.
-- **Device token:** each phone presents a per-device token, held in the Android Keystore. The bridge rejects requests without a valid token.
-- **Approvals:** the app asks for a fresh biometric check before it sends an approval.
-- **File access:** the file API refuses paths outside the session's project root.
-- **Push payloads:** notifications carry ids and short status only, never file contents or command output.
-- **Credentials:** agent credentials stay on your server. The phone never holds them.
+| Protection | Intent | Planned in |
+|---|---|---|
+| Tailscale-only bind | You bind the bridge to your Tailscale address and use Tailscale ACLs to limit which of your devices reach it. This is deployment guidance. Nothing exposes a public port. | Deployment guidance, available now through `RAFIQ_BIND_ADDRESS` |
+| Device token | Each phone presents a per-device token kept in the Android Keystore, and the bridge rejects requests without a valid one. | M3 |
+| Biometric approvals | The app asks for a fresh biometric check before it sends an approval. | M3 |
+| Push payloads | Notifications carry ids and short status only, never file contents or command output. | M3 |
+| Path scoping | The file API refuses paths outside the session's project root. | M5 |
+| Auth relay | Sign-in flows are relayed without exposing credentials to the phone or a third party. | M5 |
+
+M3 and M5 are [milestones](https://github.com/tatawurAI/rafiq/milestones). Agent credentials stay on your server, and the phone never holds them.
 
 ## In scope
+
+These describe the finished design. Report a gap in any of them, and report anything wrong with what exists today.
 
 - Bypassing the device token, or reaching the bridge without it.
 - Reading or writing files outside a session's project root, including through symlinks or `..` segments.

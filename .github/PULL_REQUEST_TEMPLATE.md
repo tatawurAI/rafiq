@@ -1,19 +1,20 @@
-## What and why
+## Summary
 
-<!-- What does this change do, and why is it needed? -->
+<!-- Say what changes for someone using Rafiq, then why. -->
 
-## Linked issue
+Fixes #
 
-<!-- For example: Closes #123 -->
+## Tried on
 
-## How it was tested
+<!-- Phone or emulator and Android version, fold state if it matters, or "bridge only". -->
 
-<!-- Commands you ran, devices you tried, or why no test applies. -->
+## Protocol change?
 
-## Checklist
+<!-- No, or yes with the ADR link. Additions to the event model are fine without one. -->
 
-- [ ] I added a changelog fragment in `changelog.d/`, or the change has no user impact and carries the `skip-changelog` label.
-- [ ] I updated the docs affected by this change (`docs/architecture.md`, an ADR, or the README).
-- [ ] Where it applies, I added a test that fails without this change.
-- [ ] `./gradlew spotlessCheck detekt test` passes.
-- [ ] This pull request contains no secrets, personal paths or private links.
+## Before merge
+
+- [ ] `changelog.d/` has a fragment, or the `skip-changelog` label is set.
+- [ ] Docs match the new behaviour.
+- [ ] A bug fix comes with a test that reproduces the bug.
+- [ ] Fixtures, logs and screenshots hold no real hostnames, tailnet names or tokens.

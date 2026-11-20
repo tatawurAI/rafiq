@@ -8,7 +8,7 @@ You need:
 
 - JDK 21
 - The Android SDK (command-line tools or Android Studio), with `ANDROID_HOME` or `local.properties` pointing at it
-- A phone or emulator for the app
+- A phone or emulator running Android 12 (API 31) or newer
 
 Clone the repository and use the Gradle wrapper for everything. Do not install Gradle separately.
 
@@ -16,8 +16,11 @@ Clone the repository and use the Gradle wrapper for everything. Do not install G
 |---|---|
 | Format the code | `./gradlew spotlessApply` |
 | Check format, static analysis and tests | `./gradlew spotlessCheck detekt test` |
-| Run the bridge | `./gradlew :bridge:run` |
+| Run the bridge for development | `./gradlew :bridge:run` |
+| Build the bridge as an installed program | `./gradlew :bridge:installDist`, then `bridge/build/install/rafiq-bridge/bin/rafiq-bridge` |
 | Install the debug app on a connected device | `./gradlew :android:installDebug` |
+
+The bridge is configured through environment variables, not a `.env` file. Export `RAFIQ_BIND_ADDRESS`, `RAFIQ_PORT`, `RAFIQ_DATA_DIR` and `RAFIQ_DEVICE_TOKEN` as needed. See the [README](README.md#configuration).
 
 Run `./gradlew spotlessApply` before you commit. Run the check line before you mark a pull request ready.
 
@@ -63,14 +66,12 @@ Accepted ADRs are not edited. To change a decision, write a new ADR that superse
 
 ## Tests
 
-Tests earn their place. Each test protects a behaviour someone would notice breaking, at the cheapest level that can catch it. See [STYLE.md](STYLE.md#testing) for the rules.
+[STYLE.md](STYLE.md#tests) says which layers get tests and how. For a pull request:
 
-In short:
-
-- A bug fix comes with a test that fails without the fix.
-- Prefer a plain unit test over an integration test, and an integration test over a UI test.
-- Do not add tests to raise a coverage number.
-- No sleeps. Control time and concurrency with the test dispatcher.
+- A bug fix includes a test that reproduces the bug at the lowest layer where it appears.
+- A protocol change comes with a round-trip test for the new type or field.
+- The suite stays quick and deterministic: no sleeps, no real network.
+- There are no UI snapshot tests. Describe what you checked on a device or emulator in the pull request.
 
 ## Style and documentation
 

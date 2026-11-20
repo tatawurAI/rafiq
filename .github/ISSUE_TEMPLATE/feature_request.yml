@@ -1,40 +1,37 @@
 name: Feature request
-description: Suggest an improvement or a new capability.
-labels: ["enhancement"]
+description: Tell us what Rafiq should do that it does not do yet.
+labels: ["feature"]
 body:
   - type: markdown
     attributes:
       value: |
-        Rafiq is agent-agnostic and chat-based, not a terminal. Requests that fit those principles are the easiest to take on.
-        For open-ended questions, use Discussions instead.
+        Rafiq shows an agent's work as chat, tool calls, diffs and approvals. It does not emulate a terminal.
+        If you are not sure yet whether you want a feature, start a discussion.
   - type: textarea
-    id: problem
+    id: situation
     attributes:
-      label: The problem
-      description: What are you trying to do, and what gets in the way today?
+      label: Where were you when you needed this?
+      description: Phone closed on the cover screen, half-folded on a desk, away from your server, and so on.
     validations:
       required: true
   - type: textarea
-    id: proposal
+    id: wanted-behaviour
     attributes:
-      label: Proposed solution
-      description: What would you like to happen?
+      label: What would you like Rafiq to do?
     validations:
       required: true
   - type: textarea
-    id: alternatives
+    id: workaround
     attributes:
-      label: Alternatives considered
-      description: Other ways you have solved or worked around this.
+      label: Anything you tried instead?
   - type: dropdown
-    id: area
+    id: part
     attributes:
-      label: Area
+      label: Which part would change?
+      multiple: true
       options:
         - Android app
         - Bridge
-        - Protocol
+        - Event protocol
         - Documentation
-        - Other
-    validations:
-      required: true
+        - Not sure

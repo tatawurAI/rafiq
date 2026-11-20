@@ -21,4 +21,4 @@ The app is a native Android app written in Kotlin with Jetpack Compose. It uses 
 
 ## Alternatives considered
 
-**Cross-platform frameworks**, such as Flutter or React Native. They would allow an iOS version from one codebase. We rejected them because the fold posture, cover widgets and notification actions need platform APIs, and reaching them through a framework adds plugin code and lags behind platform releases. Those capabilities are the product, so we want the shortest path to them.
+**Cross-platform UI frameworks.** They would allow an iOS version from one codebase. We rejected them because the fold posture, cover widgets and notification actions need platform APIs, and reaching them through a framework adds plugin code and lags behind platform releases. Those capabilities are the product, so we want the shortest path to them.

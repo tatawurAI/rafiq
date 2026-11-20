@@ -97,7 +97,16 @@ Rafiq is pre-alpha. Nothing is released yet. The work is planned in milestones:
    ./gradlew :android:installDebug
    ```
 
-For real use, the bridge listens only on your Tailscale interface and the app pairs with it using a per-device token.
+The bridge reads its settings from environment variables:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `RAFIQ_BIND_ADDRESS` | Address the bridge listens on | `127.0.0.1` |
+| `RAFIQ_PORT` | Port the bridge listens on | `8740` |
+| `RAFIQ_DATA_DIR` | Where the bridge keeps its data | |
+| `RAFIQ_DEVICE_TOKEN` | Token a phone must present (sensitive, keep it out of git) | |
+
+For real use, bind the bridge to your Tailscale address so it listens only on that interface. The app pairs with it using a per-device token.
 
 ## Repository layout
 

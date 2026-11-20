@@ -127,7 +127,11 @@ class SessionManagerTest {
                     trigger = { agent.emit(EventPayload.ApprovalRequest("apr_1", "tool_1", "Run tests", options)) },
                 ) { it.payload is EventPayload.ApprovalRequest }
                 // A crash leaves the log as it is. A clean shutdown gets to settle it first.
-                if (cleanShutdown) first.sessions.shutdown()
+                if (cleanShutdown) {
+                    first.sessions.shutdown()
+                    // Settled by the shutdown itself, before any restart gets a chance to.
+                    assertEquals(emptyList(), first.log.unresolvedApprovals(session.id))
+                }
             }
             first.close()
             opened.remove(first)

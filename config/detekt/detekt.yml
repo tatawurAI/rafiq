@@ -1,0 +1,22 @@
+# Overrides on top of detekt's default rule set (buildUponDefaultConfig = true).
+# Only the differences live here. Each one says why.
+
+naming:
+  FunctionNaming:
+    # Composable functions are nouns in PascalCase, by Compose convention.
+    ignoreAnnotated: ['Composable']
+
+complexity:
+  LongParameterList:
+    # Composables take state, callbacks and a defaulted Modifier, so they run
+    # longer than ordinary functions. Defaulted parameters do not count.
+    functionThreshold: 8
+    ignoreDefaultParameters: true
+
+style:
+  UnusedPrivateMember:
+    # Previews are private and called only by the IDE.
+    ignoreAnnotated: ['Preview']
+  MagicNumber:
+    # Theme tokens (colours, sizes) are named properties holding literals.
+    ignorePropertyDeclaration: true

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Rafiq</string>
+  <string name="sessions_title">Sessions</string>
+  <string name="sessions_empty">No sessions yet. Connect to your server to start one.</string>
+  <string name="sessions_new">New session</string>
+</resources>

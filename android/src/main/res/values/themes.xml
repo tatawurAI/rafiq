@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- The window theme only sets what shows before Compose draws: a dark ground with no
+       action bar, so the app never flashes white on launch. Everything else is RafiqTheme. -->
+  <color name="rafiq_ground">#FF15191B</color>
+
+  <style name="Theme.Rafiq" parent="android:Theme.Material.NoActionBar">
+    <item name="android:windowBackground">@color/rafiq_ground</item>
+    <item name="android:windowSplashScreenBackground">@color/rafiq_ground</item>
+  </style>
+</resources>

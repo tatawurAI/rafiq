@@ -1,0 +1,64 @@
+# Every dependency and plugin version for the build lives here, pinned.
+# Add new entries here, never inline in a build file.
+
+[versions]
+# Bytecode level for every module. The bridge runs on JDK 21, and the Android
+# toolchain desugars it for the app.
+jvmTarget = "21"
+
+kotlin = "2.4.21"
+agp = "9.5.2"
+android-compileSdk = "36"
+android-targetSdk = "36"
+android-minSdk = "31"
+
+# The newest Compose BOM whose libraries still accept compileSdk 36. Later BOMs
+# require compileSdk 37.
+compose-bom = "2026.06.01"
+activity-compose = "1.13.0"
+
+kotlinx-serialization = "1.13.0"
+kotlinx-coroutines = "1.11.0"
+ktor = "3.6.1"
+logback = "1.6.8"
+
+# The Agent Client Protocol (ACP) Kotlin SDK. The bridge starts using it in M1.
+acp = "0.34.0"
+
+junit = "5.14.4"
+
+spotless = "8.11.0"
+ktlint = "1.8.0"
+detekt = "1.23.8"
+
+[libraries]
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+
+ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
+ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
+ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+
+acp = { module = "com.agentclientprotocol:acp", version.ref = "acp" }
+
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+android-application = { id = "com.android.application", version.ref = "agp" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }

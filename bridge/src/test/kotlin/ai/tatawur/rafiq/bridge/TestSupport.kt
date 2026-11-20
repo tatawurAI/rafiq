@@ -5,8 +5,10 @@ import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.protocol.AgentState
+import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
+import ai.tatawur.rafiq.protocol.MessageRole
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -65,6 +67,9 @@ class FakeAgentSession(
         text: String,
     ) {
         prompts += threadId to text
+        // Like the real adapter: it reports the user's message and the turn starting on its own.
+        emit(EventPayload.Message("msg_${prompts.size}", threadId, MessageRole.USER, listOf(ContentBlock.Text(text))))
+        emit(status(AgentState.WORKING, threadId))
     }
 
     override suspend fun cancel(threadId: String) {

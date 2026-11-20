@@ -9,6 +9,7 @@ import ai.tatawur.rafiq.protocol.ApprovalOption
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
+import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -68,13 +69,17 @@ class RoutesTest {
             val session = fixture.sessions.create("fake", project, null)
             val agent = fixture.adapter.started.single()
             val total = 600
+            fixture.sessions.prompt(session.id, threadId = null, text = "go")
 
             val emitter =
                 CoroutineScope(Dispatchers.Default).launch {
+                    // The prompt has already returned; the reply streams in afterwards, replacing by id.
+                    agent.emit(EventPayload.Message("reply", "main", MessageRole.AGENT, isStreaming = true))
                     repeat(total) {
                         agent.emit(EventPayload.MessageDelta("m", "main", "d$it"))
                         if (it % 5 == 0) yield()
                     }
+                    agent.emit(EventPayload.Message("reply", "main", MessageRole.AGENT, isStreaming = false))
                     agent.emit(status(AgentState.DONE, detail = "end"))
                 }
 
@@ -90,8 +95,9 @@ class RoutesTest {
             }
             emitter.join()
 
-            // Two initial events, the deltas, and the end marker: no gap, no repeat, same bytes as the log.
-            assertEquals((1L..(total + 3).toLong()).toList(), received.map { it.seq })
+            // Initial events, echoed prompt, reply start and finish, deltas and end marker:
+            // no gap, no repeat, same bytes as the log.
+            assertEquals((1L..(total + 7).toLong()).toList(), received.map { it.seq })
             assertEquals(fixture.log.after(session.id, 0, 10_000), received)
             fixture.close()
         }

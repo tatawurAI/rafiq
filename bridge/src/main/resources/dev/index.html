@@ -160,9 +160,13 @@ function apply(event) {
       break;
     }
     case "message": {
+      // The same id again means replace: the final snapshot supersedes the streamed text.
+      const text = payload.content.map(blockText).join("\n");
+      const known = state.messages.get(payload.id);
+      if (known) { known.textContent = text; break; }
       const node = el("div", "item " + payload.role);
       node.appendChild(el("div", "label", payload.role));
-      const body = el("div", "", payload.content.map(blockText).join("\n"));
+      const body = el("div", "", text);
       node.appendChild(body);
       threadPane(payload.thread_id).pane.appendChild(node);
       state.messages.set(payload.id, body);

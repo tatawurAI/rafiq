@@ -3,10 +3,8 @@ package ai.tatawur.rafiq.protocol
 import kotlinx.serialization.descriptors.elementNames
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -32,7 +30,7 @@ class EventSerializationTest {
             )
 
         val expected =
-            """{"session_id":"s-1","seq":7,"ts":1767225600000,"payload":{"type":"message","id":"m-1",""" +
+            """{"session_id":"s-1","seq":7,"ts_ms":1767225600000,"payload":{"type":"message","id":"m-1",""" +
                 """"thread_id":"t-1","role":"agent","content":[{"type":"text","text":"Tests pass."},""" +
                 """{"type":"markdown","markdown":"**Done**"}],"streaming":true}}"""
         assertEquals(expected, encode(event))
@@ -54,7 +52,7 @@ class EventSerializationTest {
         listOf(
             EventPayload.SessionUpdated(session),
             EventPayload.ThreadUpdated(
-                Thread(
+                AgentThread(
                     id = "t-2",
                     sessionId = "s-1",
                     parentThreadId = "t-1",
@@ -147,32 +145,45 @@ class EventSerializationTest {
 
     @Test
     fun unknown_payload_type_decodes_to_unknown_and_re_encodes_unchanged() {
-        val json = """{"session_id":"s-1","seq":7,"ts":1767225600000,"payload":{"type":"plan_updated","steps":3}}"""
+        val json = """{"session_id":"s-1","seq":7,"ts_ms":1767225600000,"payload":{"type":"plan_updated","steps":3}}"""
 
         val event = decode(json)
 
-        assertEquals(EventPayload.Unknown("plan_updated", buildJsonObject { put("steps", 3) }), event.payload)
+        assertEquals("plan_updated", (event.payload as EventPayload.Unknown).type)
+        assertEquals(json, encode(event))
+    }
+
+    // A peer on another protocol version may send a known type without a field this build
+    // requires. Only that payload degrades; the event, its seq and the raw fields survive.
+    @Test
+    fun known_payload_type_with_a_missing_field_decodes_to_unknown_and_re_encodes_unchanged() {
+        val json =
+            """{"session_id":"s-1","seq":8,"ts_ms":1767225600000,""" +
+                """"payload":{"type":"message_delta","message_id":"m-1"}}"""
+
+        val event = decode(json)
+
+        assertEquals(8, event.seq)
+        assertEquals("message_delta", (event.payload as EventPayload.Unknown).type)
         assertEquals(json, encode(event))
     }
 
     @Test
     fun unknown_content_block_type_decodes_to_unknown() {
         val json =
-            """{"session_id":"s-1","seq":1,"ts":0,"payload":{"type":"message","id":"m-1","thread_id":"t-1",""" +
+            """{"session_id":"s-1","seq":1,"ts_ms":0,"payload":{"type":"message","id":"m-1","thread_id":"t-1",""" +
                 """"content":[{"type":"audio","uri":"a.ogg"}]}}"""
 
         val message = decode(json).payload as EventPayload.Message
 
-        assertEquals(
-            listOf(ContentBlock.Unknown("audio", JsonObject(mapOf("uri" to JsonPrimitive("a.ogg"))))),
-            message.content,
-        )
+        val raw = JsonObject(mapOf("type" to JsonPrimitive("audio"), "uri" to JsonPrimitive("a.ogg")))
+        assertEquals(listOf(ContentBlock.Unknown(raw)), message.content)
     }
 
     @Test
     fun unknown_fields_are_ignored() {
         val json =
-            """{"session_id":"s-1","seq":2,"ts":0,"origin":"elsewhere",""" +
+            """{"session_id":"s-1","seq":2,"ts_ms":0,"origin":"elsewhere",""" +
                 """"payload":{"type":"message_delta","message_id":"m-1","thread_id":"t-1","text":"hi","tokens":1}}"""
 
         assertEquals(EventPayload.MessageDelta("m-1", "t-1", "hi"), decode(json).payload)
@@ -180,7 +191,7 @@ class EventSerializationTest {
 
     @Test
     fun unknown_enum_value_falls_back_to_the_default() {
-        val json = """{"session_id":"s-1","seq":3,"ts":0,"payload":{"type":"status_changed","state":"sleeping"}}"""
+        val json = """{"session_id":"s-1","seq":3,"ts_ms":0,"payload":{"type":"status_changed","state":"sleeping"}}"""
 
         assertEquals(EventPayload.StatusChanged(state = AgentState.UNKNOWN), decode(json).payload)
     }

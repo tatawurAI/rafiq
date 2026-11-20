@@ -16,10 +16,11 @@ import kotlinx.serialization.json.jsonObject
 /**
  * Serializer for a closed set of kinds that must still accept kinds it has never seen.
  *
- * A newer bridge can send a payload or content block type that this build does not know.
- * The generated sealed serializer would throw on it. This one decodes known types with
- * [knownSerializer] and wraps anything else in the caller's unknown case, keeping the original
- * type name and fields so the value can be shown as plain text, stored and re-encoded unchanged.
+ * A newer bridge can send a payload or content block type that this build does not know, or a
+ * known type whose fields this build cannot read. The generated sealed serializer would throw on
+ * either and lose the whole [Event]. This one decodes known types with [knownSerializer] and wraps
+ * anything it cannot decode in the caller's unknown case. That case keeps the raw JSON object, so
+ * the value can be shown as plain text, stored and re-encoded unchanged.
  *
  * It works only with JSON, which is the only format the protocol uses.
  *
@@ -44,24 +45,24 @@ internal abstract class FallbackSerializer<T : Any, K : T>(
     /** Returns [value] as a known kind, or null when it is the unknown case. */
     protected abstract fun asKnown(value: T): K?
 
-    /** Builds the unknown case from a type name this build does not recognise. */
-    protected abstract fun unknown(
-        type: String,
-        fields: JsonObject,
-    ): T
+    /** Builds the unknown case around the raw object, exactly as received. */
+    protected abstract fun unknown(raw: JsonObject): T
 
-    /** Splits the unknown case back into its type name and fields. */
-    protected abstract fun unknownParts(value: T): Pair<String, JsonObject>
+    /** Returns the raw object held by the unknown case. */
+    protected abstract fun rawOf(value: T): JsonObject
 
     override fun deserialize(decoder: Decoder): T {
         val input = decoder as? JsonDecoder ?: throw SerializationException("${descriptor.serialName} is JSON only.")
         val discriminator = input.json.configuration.classDiscriminator
-        val element = input.decodeJsonElement().jsonObject
-        val type = (element[discriminator] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
-        return if (type in knownTypes) {
-            input.json.decodeFromJsonElement(knownSerializer, element)
-        } else {
-            unknown(type, JsonObject(element - discriminator))
+        val raw = input.decodeJsonElement().jsonObject
+        val type = (raw[discriminator] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        if (type !in knownTypes) return unknown(raw)
+        return try {
+            input.json.decodeFromJsonElement(knownSerializer, raw)
+        } catch (_: SerializationException) {
+            // A known type with a missing or malformed field, typically from a peer on a
+            // different protocol version. Losing this one payload beats losing the event.
+            unknown(raw)
         }
     }
 
@@ -74,9 +75,7 @@ internal abstract class FallbackSerializer<T : Any, K : T>(
         if (known != null) {
             output.encodeSerializableValue(knownSerializer, known)
         } else {
-            val (type, fields) = unknownParts(value)
-            val discriminator = output.json.configuration.classDiscriminator
-            output.encodeJsonElement(JsonObject(mapOf(discriminator to JsonPrimitive(type)) + fields))
+            output.encodeJsonElement(rawOf(value))
         }
     }
 }

@@ -29,7 +29,7 @@ data class Session(
  * @property parentThreadId the thread that started this one, or null for the main thread.
  */
 @Serializable
-data class Thread(
+data class AgentThread(
     @SerialName("id") val id: String,
     @SerialName("session_id") val sessionId: String,
     @SerialName("parent_thread_id") val parentThreadId: String? = null,

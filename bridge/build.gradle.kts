@@ -33,6 +33,8 @@ dependencies {
     implementation(libs.ktor.server.cio)
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.serialization.kotlinx.json)
+    // The ACP Kotlin SDK: JSON-RPC over the agent process's stdio, and ACP's typed messages.
+    implementation(libs.acp)
     runtimeOnly(libs.logback.classic)
 
     testImplementation(libs.ktor.server.test.host)

@@ -10,6 +10,7 @@ import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
 import ai.tatawur.rafiq.protocol.ApprovalOption
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
@@ -382,6 +383,56 @@ class RoutesTest {
         }
 
     @Test
+    fun a_withdrawn_approval_stops_blocking_prompts_once_the_turn_has_ended() =
+        testApplication {
+            val (fixture, http) = start()
+            val sessionId = fixture.sessions.create("fake", project, null).id
+            val prompt = "/sessions/$sessionId/prompt"
+            val options = listOf(ApprovalOption("allow", ApprovalOptionKind.ALLOW_ONCE, "Allow"))
+            http.postJson(prompt, """{"text":"first"}""")
+            // The approval's thread is unknown to the bridge, which counts it against the main thread.
+            fixture.report(
+                sessionId,
+                EventPayload.ApprovalRequest("apr_1", "tool_1", "Run tests", options),
+                status(AgentState.WAITING_ON_YOU, "main"),
+            )
+            assertEquals(HttpStatusCode.Conflict, http.postJson(prompt, """{"text":"blocked"}""").status)
+
+            fixture.report(
+                sessionId,
+                EventPayload.ApprovalResolved("apr_1", ApprovalOutcome.WITHDRAWN),
+                status(AgentState.WAITING_ON_YOU, "main"),
+            )
+
+            assertEquals(HttpStatusCode.Accepted, http.postJson(prompt, """{"text":"after"}""").status)
+        }
+
+    @Test
+    fun an_approval_answered_twice_is_gone_the_second_time() =
+        testApplication {
+            val (fixture, http) = start()
+            val sessionId = fixture.sessions.create("fake", project, null).id
+            val agent = fixture.adapter.started.single()
+            val options = listOf(ApprovalOption("allow", ApprovalOptionKind.ALLOW_ONCE, "Allow"))
+            fixture.report(sessionId, EventPayload.ApprovalRequest("apr_1", "tool_1", "Run tests", options))
+
+            fixture.log.eventAfter(
+                sessionId,
+                trigger = {
+                    assertEquals(
+                        HttpStatusCode.Accepted,
+                        http.postJson("/approvals/apr_1", """{"option_id":"allow"}""").status,
+                    )
+                },
+            ) { it.payload is EventPayload.ApprovalResolved }
+            val again = http.postJson("/approvals/apr_1", """{"option_id":"allow"}""")
+
+            assertEquals(HttpStatusCode.Conflict, again.status)
+            assertEquals("approval_gone", again.code())
+            assertEquals(1, agent.approvals.size)
+        }
+
+    @Test
     fun approvals_reject_unknown_ids_bad_options_and_answers_the_agent_no_longer_waits_for() =
         testApplication {
             val (fixture, http) = start()
@@ -404,8 +455,12 @@ class RoutesTest {
             val stale = http.postJson("/approvals/apr_1", """{"option_id":"allow"}""")
             assertEquals(HttpStatusCode.Conflict, stale.status)
             assertEquals("approval_gone", stale.code())
+            // The agent reports the request gone, and a later answer is "gone" rather than "unknown".
             agent.failure = null
-            assertEquals(HttpStatusCode.NotFound, http.postJson("/approvals/apr_1", """{"option_id":"allow"}""").status)
+            fixture.report(sessionId, EventPayload.ApprovalResolved("apr_1", ApprovalOutcome.WITHDRAWN))
+            val late = http.postJson("/approvals/apr_1", """{"option_id":"allow"}""")
+            assertEquals(HttpStatusCode.Conflict, late.status)
+            assertEquals("approval_gone", late.code())
         }
 
     @Test

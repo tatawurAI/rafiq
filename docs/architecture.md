@@ -60,6 +60,7 @@ The event model is the contract between the bridge and the app. It lives in the 
 | Message | id, thread id, role, content blocks (text, markdown, image), streaming flag | Chat bubble |
 | Tool call | id, thread id, kind (edit, command, search, read, fetch, other), input summary, output, status | Collapsible card, with a diff viewer for edits |
 | Approval request | id, tool call id, description, options (allow once, allow always, deny), expiry | Inline buttons, notification actions, cover-screen card |
+| Approval resolved | approval id, outcome (selected, cancelled, withdrawn), chosen option | Removes the buttons. Sent once for every approval that goes away. |
 | Status | session or thread id, state (working, waiting on you, done, error), detail | Badge and colour. Drives notifications. |
 | Auth required | id, provider, kind (device code or redirect), URL, code, expiry | "Sign in" card, in-app browser |
 | Preview | id, URL, label, port | "Open preview" card, in-app browser |

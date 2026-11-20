@@ -7,6 +7,7 @@ import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.Session
@@ -93,6 +94,9 @@ class FakeAgentSession(
     ) {
         failure?.let { throw it }
         approvals += approvalId to optionId
+        // Like the real adapter: an answered approval is reported resolved, exactly once.
+        emit(EventPayload.ApprovalResolved(approvalId, ApprovalOutcome.SELECTED, optionId))
+        emit(status(AgentState.WORKING, mainThreadId))
     }
 
     override suspend fun close() = Unit

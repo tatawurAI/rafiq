@@ -34,6 +34,7 @@ import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.time.Clock
+import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
@@ -62,6 +63,17 @@ class SessionManager(
     private val live = ConcurrentHashMap<String, LiveSession>()
     private val resumeLocks = ConcurrentHashMap<String, Mutex>()
     private val approvals = ConcurrentHashMap<String, PendingApproval>()
+
+    /** The most recent approvals the agent reported resolved, so a repeat answer is "gone" and not "unknown". */
+    private val resolvedApprovals =
+        Collections.synchronizedSet(
+            Collections.newSetFromMap(
+                object : LinkedHashMap<String, Boolean>() {
+                    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>) =
+                        size > MAX_RESOLVED_APPROVALS
+                },
+            ),
+        )
     private val promptLocks = ConcurrentHashMap<String, Mutex>()
 
     /** Threads (as session id to thread id) that accepted a prompt and have not reported the turn over yet. */
@@ -146,7 +158,9 @@ class SessionManager(
         promptLocks.computeIfAbsent(sessionId) { Mutex() }.withLock {
             val target = resolvePromptTarget(sessionId, threadId)
             val turn = sessionId to target.id
-            if (hasOpenApproval(sessionId, target.id) || !turnsInFlight.add(turn)) {
+            if (hasOpenApproval(sessionId, target.id, isMain = target.kind == ThreadKind.MAIN) ||
+                !turnsInFlight.add(turn)
+            ) {
                 throw SessionException.Conflict("turn_in_progress", "That thread is still working on a turn.")
             }
             var accepted = false
@@ -190,41 +204,50 @@ class SessionManager(
         adapterCall({ SessionException.NotFound("thread_not_found", "The agent does not know that thread.", it) }) {
             agentSession.cancel(threadId)
         }
-        // The agent answers the cancelled thread's open requests itself, so they are no longer pending.
-        approvals.values.removeIf { it.sessionId == sessionId && it.threadId == threadId }
     }
 
     /**
-     * Answers a pending approval request with one of its options.
+     * Answers a pending approval request with one of its options. The request stays pending until the
+     * agent reports it resolved, which is also how one it withdrew or cancelled goes away.
      *
-     * @throws SessionException.NotFound when no pending request has this id.
+     * @throws SessionException.NotFound when the bridge never saw a request with this id.
      * @throws SessionException.Invalid when [optionId] is not one of the request's options.
-     * @throws SessionException.Conflict when the session is no longer running or the agent has
-     *   already dropped the request, for example because its thread was cancelled.
+     * @throws SessionException.Conflict when the request is already resolved, or the session is no
+     *   longer running.
      */
     suspend fun respondToApproval(
         approvalId: String,
         optionId: String,
     ) {
-        val pending =
-            approvals[approvalId]
-                ?: throw SessionException.NotFound("approval_not_found", "No pending approval '$approvalId'.")
+        val pending = pendingApproval(approvalId)
         if (optionId !in pending.optionIds) {
             throw SessionException.Invalid("invalid_option", "That is not one of the approval's options.")
         }
         val agentSession = runningSession(pending.sessionId)
-        adapterCall(
-            {
-                approvals.remove(approvalId)
-                SessionException.Conflict("approval_gone", "The agent is no longer waiting on that approval.", it)
-            },
-        ) {
-            agentSession.respondToApproval(approvalId, optionId)
+        // The agent carries on with the turn once it has the answer. The flag goes up first, so no
+        // prompt slips in between, and comes down again if the answer is refused.
+        val turn = pending.threadId?.let { pending.sessionId to it }
+        val raised = turn != null && turnsInFlight.add(turn)
+        var delivered = false
+        try {
+            adapterCall(
+                { SessionException.Conflict("approval_gone", "The agent is no longer waiting on that approval.", it) },
+            ) {
+                agentSession.respondToApproval(approvalId, optionId)
+            }
+            delivered = true
+        } finally {
+            if (raised && !delivered) turnsInFlight.remove(turn)
         }
-        approvals.remove(approvalId)
-        // The agent carries on with the turn until it reports otherwise.
-        pending.threadId?.let { turnsInFlight.add(pending.sessionId to it) }
     }
+
+    private fun pendingApproval(approvalId: String): PendingApproval =
+        approvals[approvalId]
+            ?: if (approvalId in resolvedApprovals) {
+                throw SessionException.Conflict("approval_gone", "That approval is already resolved.")
+            } else {
+                throw SessionException.NotFound("approval_not_found", "No pending approval '$approvalId'.")
+            }
 
     /**
      * Run once at start-up. Agent processes do not survive a bridge restart, so any session or thread
@@ -355,6 +378,11 @@ class SessionManager(
                 liveSession?.toolThreads?.put(payload.id, payload.threadId)
             }
 
+            is EventPayload.ApprovalResolved -> {
+                approvals.remove(payload.id)
+                resolvedApprovals.add(payload.id)
+            }
+
             is EventPayload.ApprovalRequest -> {
                 approvals[payload.id] =
                     PendingApproval(
@@ -387,11 +415,15 @@ class SessionManager(
         }
     }
 
-    /** An approval whose thread is unknown could belong to any thread, and prompts only go to the main one. */
+    /** An approval whose thread is unknown counts for the main thread only. */
     private fun hasOpenApproval(
         sessionId: String,
         threadId: String,
-    ): Boolean = approvals.values.any { it.sessionId == sessionId && (it.threadId == null || it.threadId == threadId) }
+        isMain: Boolean,
+    ): Boolean =
+        approvals.values.any {
+            it.sessionId == sessionId && (it.threadId == threadId || (it.threadId == null && isMain))
+        }
 
     /** Writes the error status for a session whose logging failed. The failure's detail goes to the server log only. */
     @Suppress("TooGenericExceptionCaught") // The log may be what failed. Nothing more can be done but say so.
@@ -600,6 +632,7 @@ class SessionManager(
 
     private companion object {
         val SHUTDOWN_BUDGET = 10.seconds
+        const val MAX_RESOLVED_APPROVALS = 1000
         val logger = LoggerFactory.getLogger(SessionManager::class.java)
     }
 }

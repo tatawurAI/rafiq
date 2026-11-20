@@ -1,0 +1,6 @@
+# Extends the default gitleaks ruleset. Nothing is allowlisted: placeholder
+# values in .env.example are deliberately not shaped like real secrets.
+title = "Rafiq gitleaks config"
+
+[extend]
+useDefault = true

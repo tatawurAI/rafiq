@@ -1,0 +1,69 @@
+# Requires every PR to describe its user-facing change in a changelog fragment.
+#
+# Add one file under changelog.d/ named <slug>.<category>.md, where category is
+# one of added, changed, deprecated, removed, fixed or security. The file holds
+# one sentence for people who use Rafiq. For a change with nothing to announce
+# (CI tweaks, refactors, docs), add the skip-changelog label instead.
+#
+# Plain git and shell only, no third-party action. The job runs on the
+# pull_request event with a read-only token, so PR code never gets secrets.
+name: Changelog
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changelog:
+    name: changelog
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Full history so the base commit is available to diff against.
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a changelog fragment or the skip label
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+
+          if echo "${LABELS}" | jq --exit-status 'index("skip-changelog")' > /dev/null; then
+            echo "Label skip-changelog is set. No fragment needed."
+            exit 0
+          fi
+
+          pattern='^changelog\.d/[a-z0-9][a-z0-9-]*\.(added|changed|deprecated|removed|fixed|security)\.md$'
+          added=$(git diff --name-only --diff-filter=A "${BASE_SHA}" HEAD -- changelog.d | grep -v '^changelog\.d/\.gitkeep$' || true)
+
+          if [ -z "${added}" ]; then
+            echo "::error::This PR adds no changelog fragment. Add changelog.d/<slug>.<added|changed|deprecated|removed|fixed|security>.md with one sentence, or apply the skip-changelog label."
+            exit 1
+          fi
+
+          status=0
+          while IFS= read -r file; do
+            if ! echo "${file}" | grep -Eq "${pattern}"; then
+              echo "::error file=${file}::Bad fragment name. Use changelog.d/<slug>.<added|changed|deprecated|removed|fixed|security>.md with a lowercase slug."
+              status=1
+            elif ! grep -q '[^[:space:]]' "${file}"; then
+              echo "::error file=${file}::The fragment is empty. Write one sentence about the change."
+              status=1
+            else
+              echo "OK: ${file}"
+            fi
+          done <<< "${added}"
+          exit "${status}"

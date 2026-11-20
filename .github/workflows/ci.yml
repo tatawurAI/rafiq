@@ -1,0 +1,102 @@
+# Continuous integration for Rafiq.
+#
+# Two jobs, on purpose:
+#   check   Formatting, static analysis, tests and both build outputs. One job
+#           instead of two because JDK setup, Gradle configuration and the
+#           Android SDK scan are the expensive fixed costs. Splitting would pay
+#           them twice and only save wall-clock time.
+#   secrets Scans the full git history for committed credentials. It needs no
+#           JDK, so it runs in parallel as a cheap separate job.
+#
+# Standing policy: draft PRs do not run CI, and a newer push cancels the older
+# run on the same PR. Mark the PR ready for review to start CI.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only by default. No job here needs to write anything.
+permissions:
+  contents: read
+
+# One run per workflow and ref. Superseded PR runs are cancelled. Runs on main
+# are never cancelled, so every merge keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: check
+    # True for push and workflow_dispatch, where there is no pull_request payload.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Caches the Gradle home. Only runs on main write the cache, so PRs read it
+      # but cannot poison it. validate-wrappers fails the job if gradle-wrapper.jar
+      # is not an official Gradle release.
+      #
+      # The Android SDK comes preinstalled on the GitHub-hosted ubuntu image
+      # (ANDROID_HOME is set and its licences are accepted), so there is no
+      # separate SDK install step.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          validate-wrappers: true
+
+      - name: Format, lint and test
+        run: ./gradlew --console=plain spotlessCheck detekt test
+
+      - name: Build the bridge and the debug app
+        run: ./gradlew --console=plain :bridge:installDist :android:assembleDebug
+
+  secrets:
+    name: secrets
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      # Pinned release binary, verified by checksum before it runs. To upgrade,
+      # take the new version and the linux_x64 line from the release's
+      # checksums file.
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      # Full history, because a secret removed in a later commit is still leaked.
+      - name: Check out the repository with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          mkdir "${RUNNER_TEMP}/gitleaks"
+          tar --extract --gzip --file "${RUNNER_TEMP}/${archive}" --directory "${RUNNER_TEMP}/gitleaks" gitleaks
+          echo "${RUNNER_TEMP}/gitleaks" >> "${GITHUB_PATH}"
+
+      # --redact keeps any match out of the public log.
+      - name: Scan for secrets
+        run: gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --verbose

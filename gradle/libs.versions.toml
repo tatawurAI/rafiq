@@ -21,6 +21,8 @@ kotlinx-serialization = "1.13.0"
 kotlinx-coroutines = "1.11.0"
 ktor = "3.6.1"
 logback = "1.6.8"
+# JDBC driver for the event log. It bundles the native SQLite library for every platform.
+sqlite-jdbc = "3.50.3.0"
 
 # The Agent Client Protocol (ACP) Kotlin SDK. The bridge starts using it in M1.
 acp = "0.34.0"
@@ -39,7 +41,11 @@ ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
 ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
 ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation", version.ref = "ktor" }
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
+ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages", version.ref = "ktor" }
+ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
 ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 
 acp = { module = "com.agentclientprotocol:acp", version.ref = "acp" }

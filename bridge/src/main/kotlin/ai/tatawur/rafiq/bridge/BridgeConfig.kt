@@ -12,17 +12,22 @@ import java.nio.file.Path
  *   your devices can reach the bridge. The default listens on loopback only.
  * @property dataDir the folder for the bridge's database and logs, or null when not set.
  * @property deviceToken the secret your phone presents on each request, or null when not set.
+ * @property agents the agents you can start sessions with, from `RAFIQ_AGENTS`.
+ * @property devPage whether to serve the development page at `/dev`, from `RAFIQ_DEV_PAGE=1`.
  */
 class BridgeConfig(
     val bindAddress: String,
     val port: Int,
     val dataDir: Path?,
     val deviceToken: String?,
+    val agents: List<AgentSpec> = emptyList(),
+    val devPage: Boolean = false,
 ) {
     // Configuration objects end up in logs. The token must never be one of the things printed.
     override fun toString(): String =
         "BridgeConfig(bindAddress=$bindAddress, port=$port, dataDir=$dataDir, " +
-            "deviceToken=${if (deviceToken == null) "unset" else "set"})"
+            "deviceToken=${if (deviceToken == null) "unset" else "set"}, agents=${agents.map(AgentSpec::id)}, " +
+            "devPage=$devPage)"
 
     companion object {
         const val DEFAULT_BIND_ADDRESS = "127.0.0.1"
@@ -50,7 +55,52 @@ class BridgeConfig(
                 port = port,
                 dataDir = read("RAFIQ_DATA_DIR")?.let(Path::of),
                 deviceToken = read("RAFIQ_DEVICE_TOKEN"),
+                agents = read("RAFIQ_AGENTS")?.let(::parseAgents).orEmpty(),
+                devPage = parseFlag("RAFIQ_DEV_PAGE", read("RAFIQ_DEV_PAGE")),
             )
         }
+
+        private fun parseFlag(
+            name: String,
+            raw: String?,
+        ): Boolean =
+            when (raw) {
+                null, "0" -> false
+                "1" -> true
+                else -> throw IllegalArgumentException("$name must be 1 or 0, got '$raw'.")
+            }
+
+        private fun parseAgents(raw: String): List<AgentSpec> {
+            val agents =
+                raw.split(',').map { entry ->
+                    val id = entry.substringBefore('=').trim()
+                    val command =
+                        entry
+                            .substringAfter('=', "")
+                            .trim()
+                            .split(Regex("\\s+"))
+                            .filter(String::isNotEmpty)
+                    require(AGENT_ID.matches(id) && command.isNotEmpty()) {
+                        "RAFIQ_AGENTS entries must look like id=command, for example claude-code=claude-agent-acp, " +
+                            "got '${entry.trim()}'."
+                    }
+                    AgentSpec(id, command)
+                }
+            val duplicate = agents.groupBy(AgentSpec::id).entries.firstOrNull { it.value.size > 1 }
+            require(duplicate == null) { "RAFIQ_AGENTS lists the agent '${duplicate?.key}' twice." }
+            return agents
+        }
+
+        private val AGENT_ID = Regex("[a-z0-9][a-z0-9-]*")
     }
 }
+
+/**
+ * One agent from `RAFIQ_AGENTS`: the id clients use, and the command that starts its ACP adapter.
+ *
+ * @property command the program and its arguments, split on whitespace.
+ */
+class AgentSpec(
+    val id: String,
+    val command: List<String>,
+)

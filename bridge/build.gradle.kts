@@ -33,9 +33,14 @@ dependencies {
     implementation(libs.ktor.server.cio)
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.ktor.server.websockets)
+    implementation(libs.ktor.server.status.pages)
+    // Plain JDBC on one connection: the event log is one writer and a few readers, so an ORM adds nothing.
+    implementation(libs.sqlite.jdbc)
     runtimeOnly(libs.logback.classic)
 
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.websockets)
     testImplementation(libs.kotlin.test)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

@@ -106,7 +106,9 @@ The bridge reads environment variables. Export them in your shell, or use `Envir
 |---|---|---|
 | `RAFIQ_BIND_ADDRESS` | Address the bridge listens on | `127.0.0.1` |
 | `RAFIQ_PORT` | Port the bridge listens on | `8740` |
-| `RAFIQ_DATA_DIR` | Where the bridge keeps its data | unset |
+| `RAFIQ_DATA_DIR` | Where the bridge keeps its data, including the event log. Unset keeps events in memory only. | unset |
+| `RAFIQ_AGENTS` | Agents you can start sessions with, as `id=command` pairs separated by commas, for example `claude-code=claude-agent-acp` | unset |
+| `RAFIQ_DEV_PAGE` | Set to `1` to serve a plain test page at `/dev` for trying sessions from a browser. The route does not exist otherwise. | unset |
 | `RAFIQ_DEVICE_TOKEN` | Token a phone must present. Sensitive: keep it out of git. | unset |
 
 For real use, set `RAFIQ_BIND_ADDRESS` to your server's Tailscale address so only your devices can reach the bridge.

@@ -36,8 +36,8 @@ Rafiq keeps its changelog in [Keep a Changelog](https://keepachangelog.com/en/1.
 
 Add one file to `changelog.d/` per user-facing change:
 
-- Name: `<PR-number-or-short-slug>.<category>.md`, for example `42.fixed.md` or `replay-gap.fixed.md`.
-- Category: one of `added`, `changed`, `fixed`, `removed`, `security`. Deprecations go under `changed`.
+- Name: `<slug>.<category>.md`, for example `voice-reply.added.md`. The slug is a PR number or short name, using lowercase letters, digits and hyphens.
+- Category: one of `added`, `changed`, `deprecated`, `removed`, `fixed`, `security`.
 - Content: one sentence a user would understand, in the past tense or as a plain statement. Describe the effect, not the code.
 
 Example, `changelog.d/replay-gap.fixed.md`:
@@ -46,7 +46,9 @@ Example, `changelog.d/replay-gap.fixed.md`:
 Reconnecting after a dropped signal no longer skips events from the gap.
 ```
 
-If the change has no effect on users (CI, refactors, docs, tests), add the `skip-changelog` label to the pull request instead. A CI check enforces one or the other.
+If the change has no effect on users (CI, refactors, docs, tests), add the `skip-changelog` label to the pull request instead. The `changelog` CI check enforces one or the other.
+
+To cut a release, maintainers run `./gradlew assembleChangelog -Pversion=X.Y.Z` (optionally `-PreleaseDate=YYYY-MM-DD`). It moves the fragments into a new `## [X.Y.Z]` section of `CHANGELOG.md`, grouped by category, and deletes them.
 
 ## Architecture decisions
 

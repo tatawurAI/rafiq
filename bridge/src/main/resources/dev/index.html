@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rafiq dev page</title>
+<style>
+  :root {
+    --ground: #15191B; --surface: #1E2426; --border: #2A3234; --border-strong: #3F4A4C;
+    --text: #F7F6F3; --muted: #A8B0AD; --accent: #3FD9BC; --needs-you: #F2B84B; --deletion: #F2777A;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  input, select, textarea, button {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border-strong);
+    border-radius: 6px; padding: 8px 10px; font: inherit; min-height: 44px;
+  }
+  input { flex: 1; min-width: 180px; }
+  textarea { flex: 1; min-height: 64px; }
+  button { cursor: pointer; }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  button.danger { border-color: var(--deletion); color: var(--deletion); }
+  #status { color: var(--muted); min-height: 20px; margin-bottom: 8px; }
+  #status.error { color: var(--deletion); }
+  #tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-top: 12px; }
+  #tabs button { border-bottom: 0; border-radius: 6px 6px 0 0; }
+  #tabs button.active { background: var(--border); border-color: var(--accent); }
+  #stream { background: var(--surface); border: 1px solid var(--border); min-height: 240px; padding: 8px; margin-bottom: 8px; }
+  .item { border-left: 3px solid var(--border-strong); padding: 4px 8px; margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+  .item.user { border-color: var(--accent); }
+  .item.agent { border-color: var(--muted); }
+  .item.tool { border-color: var(--border-strong); font-family: ui-monospace, monospace; font-size: 13px; }
+  .item.approval { border-color: var(--needs-you); }
+  .item.raw { color: var(--muted); font-size: 12px; }
+  .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Rafiq dev page</h1>
+  <div class="row">
+    <select id="agent" aria-label="Agent"></select>
+    <input id="project" placeholder="Absolute project folder on your server" aria-label="Project folder">
+    <input id="title" placeholder="Title (optional)" aria-label="Title">
+    <button id="create" class="primary">Create session</button>
+  </div>
+  <div class="row">
+    <select id="sessions" aria-label="Existing sessions"></select>
+    <button id="open">Open session</button>
+  </div>
+  <div id="status"></div>
+  <div id="tabs"></div>
+  <div id="stream"></div>
+  <div class="row">
+    <textarea id="prompt" placeholder="Prompt for the selected thread" aria-label="Prompt"></textarea>
+    <button id="send" class="primary">Send</button>
+    <button id="cancel" class="danger">Cancel thread</button>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = { sessionId: null, lastSeq: 0, socket: null, threads: new Map(), active: null, messages: new Map(), tools: new Map() };
+
+function setStatus(text, isError) {
+  $("status").textContent = text;
+  $("status").className = isError ? "error" : "";
+}
+
+async function api(method, path, body) {
+  const response = await fetch(path, {
+    method,
+    headers: body ? { "content-type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data && data.error ? data.error.code + ": " + data.error.message : response.status);
+  return data;
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function option(value, text) {
+  const node = el("option", "", text);
+  node.value = value;
+  return node;
+}
+
+// Each thread has its own container so switching tabs only toggles visibility.
+function threadPane(threadId) {
+  let thread = state.threads.get(threadId);
+  if (!thread) {
+    thread = { id: threadId, title: threadId, status: "", pane: el("div") };
+    thread.pane.hidden = true;
+    $("stream").appendChild(thread.pane);
+    state.threads.set(threadId, thread);
+    if (!state.active) state.active = threadId;
+  }
+  return thread;
+}
+
+function renderTabs() {
+  const tabs = $("tabs");
+  tabs.replaceChildren();
+  for (const thread of state.threads.values()) {
+    const label = thread.title + (thread.status ? " (" + thread.status + ")" : "");
+    const tab = el("button", thread.id === state.active ? "active" : "", label);
+    tab.addEventListener("click", () => { state.active = thread.id; renderTabs(); });
+    tabs.appendChild(tab);
+    thread.pane.hidden = thread.id !== state.active;
+  }
+}
+
+function blockText(block) {
+  return block.type === "text" || block.type === "markdown" ? block.text : JSON.stringify(block);
+}
+
+function addApproval(payload) {
+  const card = el("div", "item approval");
+  card.appendChild(el("div", "label", "Approval needed"));
+  card.appendChild(el("div", "", payload.description));
+  const row = el("div", "row");
+  for (const choice of payload.options) {
+    const button = el("button", "", choice.label);
+    button.addEventListener("click", async () => {
+      try {
+        await api("POST", "/approvals/" + encodeURIComponent(payload.id), { option_id: choice.id });
+        card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+      } catch (failure) { setStatus(failure.message, true); }
+    });
+    row.appendChild(button);
+  }
+  card.appendChild(row);
+  return card;
+}
+
+function apply(event) {
+  const payload = event.payload;
+  switch (payload.type) {
+    case "session_updated":
+      setStatus(payload.session.title + " (" + payload.session.status + ")");
+      break;
+    case "thread_updated": {
+      const thread = threadPane(payload.thread.id);
+      thread.title = payload.thread.title;
+      thread.status = payload.thread.status;
+      break;
+    }
+    case "status_changed": {
+      if (payload.thread_id) threadPane(payload.thread_id).status = payload.state;
+      else setStatus("Session " + payload.state + (payload.detail ? ": " + payload.detail : ""));
+      break;
+    }
+    case "message": {
+      const node = el("div", "item " + payload.role);
+      node.appendChild(el("div", "label", payload.role));
+      const body = el("div", "", payload.content.map(blockText).join("\n"));
+      node.appendChild(body);
+      threadPane(payload.thread_id).pane.appendChild(node);
+      state.messages.set(payload.id, body);
+      break;
+    }
+    case "message_delta": {
+      const body = state.messages.get(payload.message_id);
+      if (body) body.textContent += payload.text;
+      break;
+    }
+    case "tool_call": {
+      let node = state.tools.get(payload.id);
+      if (!node) {
+        node = el("div", "item tool");
+        state.tools.set(payload.id, node);
+        threadPane(payload.thread_id).pane.appendChild(node);
+      }
+      node.textContent = "[" + payload.kind + " " + payload.status + "] " + payload.input_summary +
+        (payload.output ? "\n" + payload.output : "");
+      break;
+    }
+    case "approval_request": {
+      const owner = state.tools.get(payload.tool_call_id);
+      const pane = owner ? owner.parentNode : threadPane(state.active || "").pane;
+      pane.appendChild(addApproval(payload));
+      break;
+    }
+    default:
+      if (state.active) threadPane(state.active).pane.appendChild(el("div", "item raw", JSON.stringify(payload)));
+  }
+  renderTabs();
+}
+
+function connect() {
+  if (!state.sessionId) return;
+  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+  const url = scheme + "//" + location.host + "/events?session=" + encodeURIComponent(state.sessionId) +
+    "&after=" + state.lastSeq;
+  const socket = new WebSocket(url);
+  state.socket = socket;
+  socket.onmessage = (message) => {
+    const event = JSON.parse(message.data);
+    state.lastSeq = event.seq;
+    apply(event);
+  };
+  // A dropped or too-slow socket reconnects from the last seq, which is the replay the bridge promises.
+  socket.onclose = () => {
+    if (state.socket === socket) setTimeout(connect, 1000);
+  };
+}
+
+function openSession(id) {
+  if (state.socket) { const old = state.socket; state.socket = null; old.close(); }
+  state.sessionId = id;
+  state.lastSeq = 0;
+  state.active = null;
+  state.threads.clear();
+  state.messages.clear();
+  state.tools.clear();
+  $("stream").replaceChildren();
+  $("tabs").replaceChildren();
+  connect();
+}
+
+async function refreshSessions() {
+  const list = await api("GET", "/sessions");
+  $("sessions").replaceChildren(...list.map((s) => option(s.id, s.title + " [" + s.agent + ", " + s.status + "]")));
+}
+
+$("create").addEventListener("click", async () => {
+  try {
+    const session = await api("POST", "/sessions", {
+      agent: $("agent").value, project_path: $("project").value.trim(), title: $("title").value.trim() || undefined,
+    });
+    await refreshSessions();
+    $("sessions").value = session.id;
+    openSession(session.id);
+  } catch (failure) { setStatus(failure.message, true); }
+});
+
+$("open").addEventListener("click", () => { if ($("sessions").value) openSession($("sessions").value); });
+
+$("send").addEventListener("click", async () => {
+  if (!state.sessionId) return;
+  try {
+    await api("POST", "/sessions/" + encodeURIComponent(state.sessionId) + "/prompt",
+      { thread_id: state.active || undefined, text: $("prompt").value });
+    $("prompt").value = "";
+  } catch (failure) { setStatus(failure.message, true); }
+});
+
+$("cancel").addEventListener("click", async () => {
+  if (!state.sessionId || !state.active) return;
+  try {
+    await api("POST", "/sessions/" + encodeURIComponent(state.sessionId) + "/threads/" +
+      encodeURIComponent(state.active) + "/cancel");
+  } catch (failure) { setStatus(failure.message, true); }
+});
+
+(async () => {
+  try {
+    const agents = await api("GET", "/dev/agents");
+    $("agent").replaceChildren(...agents.map((id) => option(id, id)));
+    await refreshSessions();
+  } catch (failure) { setStatus(failure.message, true); }
+})();
+</script>
+</body>
+</html>

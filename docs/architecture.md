@@ -92,7 +92,7 @@ A generic ACP adapter spawns any ACP agent and maps ACP updates to events. The a
 
 ### API
 
-Only `GET /health` is implemented today. The rest of the table is the planned surface.
+The health, session, thread, prompt, cancel, approval and event routes are implemented. The file, git and auth routes are planned. Errors always have the shape `{"error":{"code":"...","message":"..."}}`.
 
 | Method and path | Purpose |
 |---|---|
@@ -101,7 +101,8 @@ Only `GET /health` is implemented today. The rest of the table is the planned su
 | `POST /sessions` | Start a session (agent, project) |
 | `GET /sessions` | List sessions |
 | `GET /sessions/{id}/threads` | List a session's threads |
-| `POST /sessions/{id}/prompt` | Send a prompt |
+| `POST /sessions/{id}/prompt` | Send a prompt to a thread, the main one by default |
+| `POST /sessions/{id}/threads/{threadId}/cancel` | Stop the current turn on a thread |
 | `POST /approvals/{id}` | Answer an approval request |
 | `GET /files?path=` | List files |
 | `GET /files/content?path=` | Read a file |
@@ -130,7 +131,9 @@ The bridge reads environment variables at start-up. Nothing reads a `.env` file.
 |---|---|---|
 | `RAFIQ_BIND_ADDRESS` | Address to listen on. Use your Tailscale address. | `127.0.0.1` |
 | `RAFIQ_PORT` | Port to listen on | `8740` |
-| `RAFIQ_DATA_DIR` | Folder for the database and logs | unset |
+| `RAFIQ_DATA_DIR` | Folder for the database and logs. Unset keeps events in memory only. | unset |
+| `RAFIQ_AGENTS` | Agents as `id=command` pairs separated by commas | unset |
+| `RAFIQ_DEV_PAGE` | `1` serves a plain test page at `/dev` | unset |
 | `RAFIQ_DEVICE_TOKEN` | Secret a phone presents. Treat as sensitive. | unset |
 
 ### Auth relay

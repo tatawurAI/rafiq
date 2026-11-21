@@ -64,9 +64,11 @@ class SyncingSessionRepository(
     // While a socket is open or retrying it speaks for the link, and the list poll stays quiet.
     private val openSockets = AtomicInteger(0)
 
+    // The first value is worked out here, not by the coroutine that keeps it current: the first screen
+    // reads it before that coroutine runs, and a paired app must never look unpaired, even for a frame.
     override val connection: StateFlow<ConnectionState> =
-        combine(credentials, link) { paired, state -> if (paired == null) ConnectionState.NotPaired else state }
-            .stateIn(scope, SharingStarted.Eagerly, ConnectionState.NotPaired)
+        combine(credentials, link, ::connectionFor)
+            .stateIn(scope, SharingStarted.Eagerly, connectionFor(credentials.value, link.value))
 
     override fun sessions(): Flow<List<SessionListItem>> =
         channelFlow {
@@ -245,6 +247,11 @@ class SyncingSessionRepository(
             network.first { it }
         }
     }
+
+    private fun connectionFor(
+        paired: BridgeCredentials?,
+        state: ConnectionState,
+    ): ConnectionState = if (paired == null) ConnectionState.NotPaired else state
 
     private fun <T> CommandResult<T>.noting(): CommandResult<T> =
         also {

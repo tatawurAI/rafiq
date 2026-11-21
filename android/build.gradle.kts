@@ -70,6 +70,9 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.markdown.renderer.m3)
 
+    // Fold posture for the half-folded layout.
+    implementation(libs.window)
+
     // JVM unit tests for the screens' state holders.
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)

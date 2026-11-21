@@ -43,6 +43,8 @@ import kotlin.time.Duration.Companion.seconds
  * @param scope lives as long as the app. It only keeps [connection] up to date.
  * @param nowMs the wall clock in milliseconds since the Unix epoch, for [ConnectionState.Offline.retryAtMs].
  * @param onApplied called with each event once it is cached and applied, for debug logging.
+ * @param onRejected called with the HTTP status when the bridge refuses a socket handshake for a reason
+ *   other than the token, for debug logging.
  */
 @Suppress("LongParameterList", "TooManyFunctions") // Separate ports keep test fakes plain; one socket loop's steps.
 class SyncingSessionRepository(
@@ -56,6 +58,7 @@ class SyncingSessionRepository(
     random: Random = Random.Default,
     private val pollInterval: Duration = 5.seconds,
     private val onApplied: (Event) -> Unit = {},
+    private val onRejected: (status: Int) -> Unit = {},
 ) : SessionRepository {
     private val api = BridgeApi(http) { credentials.value }
     private val backoff = Backoff(random)
@@ -168,6 +171,9 @@ class SyncingSessionRepository(
             }
             // The socket was making progress, so the missing events are a replay away.
             if (result.end == StreamEnd.GAP && result.progressed) continue
+            // A refused host or origin (421, 403) needs a change on your server, so asking again soon is
+            // pointless. Wait the longest backoff straight away.
+            if (result.end == StreamEnd.REJECTED) attempt = LONGEST_BACKOFF
             waitToRetry(backoff.delayFor(attempt))
             attempt++
         }
@@ -195,12 +201,28 @@ class SyncingSessionRepository(
             } catch (broken: StreamBroken) {
                 broken.end
             } catch (rejected: HandshakeRejectedException) {
-                if (rejected.status == UNAUTHORIZED) StreamEnd.REFUSED else StreamEnd.DROPPED
+                handshakeEnd(rejected.status)
             } catch (_: Exception) {
                 StreamEnd.DROPPED
             }
         return ConnectResult(end, progressed)
     }
+
+    private fun handshakeEnd(status: Int): StreamEnd =
+        when (status) {
+            UNAUTHORIZED -> {
+                StreamEnd.REFUSED
+            }
+
+            FORBIDDEN, MISDIRECTED -> {
+                onRejected(status)
+                StreamEnd.REJECTED
+            }
+
+            else -> {
+                StreamEnd.DROPPED
+            }
+        }
 
     /** Caches and applies one frame. Returns true when it was the next event. */
     private suspend fun applyFrame(
@@ -262,7 +284,7 @@ class SyncingSessionRepository(
             }
         }
 
-    private enum class StreamEnd { DROPPED, GAP, REFUSED }
+    private enum class StreamEnd { DROPPED, GAP, REFUSED, REJECTED }
 
     private data class ConnectResult(
         val end: StreamEnd,
@@ -275,6 +297,11 @@ class SyncingSessionRepository(
 
     private companion object {
         const val UNAUTHORIZED = 401
+        const val FORBIDDEN = 403
+        const val MISDIRECTED = 421
+
+        // Backoff caps the attempt itself, so any attempt this high waits the longest.
+        const val LONGEST_BACKOFF = Int.MAX_VALUE / 2
     }
 }
 

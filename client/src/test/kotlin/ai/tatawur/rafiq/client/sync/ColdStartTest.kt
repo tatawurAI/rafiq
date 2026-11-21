@@ -77,6 +77,19 @@ class ColdStartTest {
             assertTrue(source.opens > 1, "opened ${source.opens} times")
         }
 
+    @Test
+    fun a_socket_refused_for_its_host_waits_the_longest_backoff_before_trying_again() =
+        runTest {
+            val repository = repository(source = RejectingSource(status = 421))
+            backgroundScope.launch { repository.session("ses_weather_app").collect {} }
+
+            val offline = repository.connection.first { it is ConnectionState.Offline } as ConnectionState.Offline
+
+            // Backoff waits a random point in the upper half of its 30 second ceiling.
+            val waitMs = checkNotNull(offline.retryAtMs) - testScheduler.currentTime
+            assertTrue(waitMs >= 15_000, "waited $waitMs ms")
+        }
+
     private fun TestScope.repository(
         source: EventSource,
         store: EventStore = InMemoryEventStore(),

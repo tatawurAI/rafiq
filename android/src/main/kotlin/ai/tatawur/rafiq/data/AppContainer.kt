@@ -68,14 +68,21 @@ class AppContainer(
             scope = scope,
             nowMs = System::currentTimeMillis,
             onApplied = if (application.isDebuggable()) { event -> logApplied(event) } else { _ -> },
+            onRejected = if (application.isDebuggable()) { status -> logRejected(status) } else { _ -> },
         )
 
     private companion object {
         // The airplane-mode check compares this log with the bridge's: `adb logcat -s RafiqSeq`.
         const val SEQ_TAG = "RafiqSeq"
 
+        const val LINK_TAG = "RafiqLink"
+
         fun logApplied(event: Event) {
             Log.d(SEQ_TAG, "session=${event.sessionId} seq=${event.seq}")
+        }
+
+        fun logRejected(status: Int) {
+            Log.d(LINK_TAG, "The bridge refused the socket with HTTP $status: it does not accept this host or origin.")
         }
 
         fun Context.isDebuggable(): Boolean = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0

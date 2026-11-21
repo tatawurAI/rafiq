@@ -4,12 +4,14 @@ import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.ui.components.FeedbackBar
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import ai.tatawur.rafiq.ui.theme.plexMono
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -21,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -42,8 +45,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -75,7 +82,11 @@ fun NewSessionRoute(
     NewSessionScreen(state, actions, modifier)
 }
 
-/** Pick an agent, give the project folder on your server and an optional title, then start. */
+/**
+ * Pick an agent, give the project folder on your server and an optional title, then start. The
+ * form scrolls while "Start session" stays at the bottom, above the keyboard when it is up, with
+ * the reason it is disabled underneath.
+ */
 @Composable
 fun NewSessionScreen(
     state: NewSessionUiState,
@@ -83,54 +94,90 @@ fun NewSessionScreen(
     modifier: Modifier = Modifier,
 ) {
     val spacing = RafiqTheme.spacing
-    val colors = RafiqTheme.colors
     Column(
         modifier =
             modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .verticalScroll(rememberScrollState())
+                .consumeWindowInsets(WindowInsets.safeDrawing)
                 .padding(horizontal = spacing.medium, vertical = spacing.small),
-        verticalArrangement = Arrangement.spacedBy(spacing.medium),
+        verticalArrangement = Arrangement.spacedBy(spacing.small),
     ) {
-        FormHeader(actions.onBack)
-        AgentPicker(state, actions)
-
-        val fieldColors = formFieldColors()
-        OutlinedTextField(
-            value = state.projectPath,
-            onValueChange = actions.onProjectPathChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(stringResource(R.string.new_session_project)) },
-            placeholder = { Text(stringResource(R.string.new_session_project_hint)) },
-            textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = plexMono),
-            singleLine = true,
-            keyboardOptions =
-                KeyboardOptions(
-                    autoCorrectEnabled = false,
-                    keyboardType = KeyboardType.Uri,
-                    imeAction = ImeAction.Next,
-                ),
-            colors = fieldColors,
-        )
-        OutlinedTextField(
-            value = state.title,
-            onValueChange = actions.onTitleChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(stringResource(R.string.new_session_name)) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            colors = fieldColors,
-        )
-        FeedbackBar(state.feedback, actions.onDismissFeedback)
+        Column(
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(spacing.medium),
+        ) {
+            FormHeader(actions.onBack)
+            AgentPicker(state, actions)
+            FormFields(state, actions)
+            FeedbackBar(state.feedback, actions.onDismissFeedback)
+        }
         Button(
             onClick = actions.onCreate,
             enabled = state.canCreate,
-            modifier = Modifier.fillMaxWidth().heightIn(min = spacing.composerHeight),
+            modifier = Modifier.fillMaxWidth().heightIn(min = spacing.largeTouchTarget),
             shape = MaterialTheme.shapes.small,
+            colors =
+                ButtonDefaults.buttonColors(
+                    disabledContainerColor = RafiqTheme.colors.border,
+                    disabledContentColor = RafiqTheme.colors.textSecondary,
+                ),
         ) { Text(stringResource(R.string.new_session_start)) }
+        state.startBlocker?.let { blocker ->
+            Text(
+                text = stringResource(blockerText(blocker)),
+                modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                style = MaterialTheme.typography.bodySmall,
+                color = RafiqTheme.colors.textMuted,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
+
+/** The project folder and title fields, each with a label that stays and a line of help. */
+@Composable
+private fun FormFields(
+    state: NewSessionUiState,
+    actions: NewSessionActions,
+) {
+    val fieldColors = formFieldColors()
+    OutlinedTextField(
+        value = state.projectPath,
+        onValueChange = actions.onProjectPathChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(stringResource(R.string.new_session_project)) },
+        placeholder = { Text(stringResource(R.string.new_session_project_hint)) },
+        supportingText = { Text(stringResource(R.string.new_session_project_help)) },
+        textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = plexMono),
+        singleLine = true,
+        keyboardOptions =
+            KeyboardOptions(
+                autoCorrectEnabled = false,
+                keyboardType = KeyboardType.Uri,
+                imeAction = ImeAction.Next,
+            ),
+        colors = fieldColors,
+    )
+    OutlinedTextField(
+        value = state.title,
+        onValueChange = actions.onTitleChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(stringResource(R.string.new_session_name)) },
+        supportingText = { Text(stringResource(R.string.new_session_name_help)) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        colors = fieldColors,
+    )
+}
+
+@StringRes
+private fun blockerText(blocker: StartBlocker): Int =
+    when (blocker) {
+        StartBlocker.STARTING -> R.string.new_session_starting
+        StartBlocker.NO_AGENT -> R.string.new_session_needs_agent
+        StartBlocker.NO_PROJECT -> R.string.new_session_needs_project
+    }
 
 @Composable
 private fun formFieldColors(): TextFieldColors {
@@ -262,12 +309,15 @@ private fun NewSessionTallPreview() {
     }
 }
 
-@Preview(name = "New session, cover screen", widthDp = 360, heightDp = 400)
+@Preview(name = "New session, cover screen", widthDp = 399, heightDp = 353)
 @Composable
 private fun NewSessionCoverPreview() {
     RafiqTheme {
         Surface(color = MaterialTheme.colorScheme.background) {
-            NewSessionScreen(NewSessionUiState(agents = listOf("claude-code", "codex")), NewSessionActions())
+            NewSessionScreen(
+                NewSessionUiState(agents = listOf("claude-code", "codex"), agent = "claude-code"),
+                NewSessionActions(),
+            )
         }
     }
 }

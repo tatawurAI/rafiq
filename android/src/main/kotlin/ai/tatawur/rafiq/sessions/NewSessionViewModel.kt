@@ -28,7 +28,24 @@ data class NewSessionUiState(
     val createdSessionId: String? = null,
 ) {
     val canCreate: Boolean
-        get() = agent != null && projectPath.isNotBlank() && !creating
+        get() = startBlocker == null
+
+    /** Why "Start session" is disabled, shown under it, or null when it can start. */
+    val startBlocker: StartBlocker?
+        get() =
+            when {
+                creating -> StartBlocker.STARTING
+                agent == null -> StartBlocker.NO_AGENT
+                projectPath.isBlank() -> StartBlocker.NO_PROJECT
+                else -> null
+            }
+}
+
+/** What stops "Start session" from starting, in the order you would fix it. */
+enum class StartBlocker {
+    STARTING,
+    NO_AGENT,
+    NO_PROJECT,
 }
 
 /** State holder for "New session". It reads only from [repository]. */
@@ -48,8 +65,8 @@ class NewSessionViewModel(
             when (val result = repository.agents()) {
                 is CommandResult.Ok -> {
                     mutableState.update {
-                        // With one agent there is nothing to choose, so it is picked for you.
-                        it.copy(agents = result.value, agent = it.agent ?: result.value.singleOrNull())
+                        // The first agent is picked for you, so the form starts one field from ready.
+                        it.copy(agents = result.value, agent = it.agent ?: result.value.firstOrNull())
                     }
                 }
 

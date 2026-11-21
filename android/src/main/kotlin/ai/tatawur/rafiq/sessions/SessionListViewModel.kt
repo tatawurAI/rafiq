@@ -21,6 +21,8 @@ import kotlinx.coroutines.launch
  *   mistaken for "no sessions".
  * @property items the rows under the current [filter], newest update first.
  * @property counts how many rows each filter chip would show.
+ * @property oldestWaiting the session that has waited on you longest, whatever the filter. The
+ *   half-folded layout shows it below the hinge with full-size buttons.
  * @property answering approval ids whose answer is on its way. Their buttons are disabled until the
  *   repository drops the approval, or until the answer fails.
  */
@@ -32,6 +34,7 @@ data class SessionListUiState(
     val connection: ConnectionState = ConnectionState.Connecting,
     val answering: Set<String> = emptySet(),
     val feedback: Feedback? = null,
+    val oldestWaiting: SessionListItem? = null,
 )
 
 /** State holder for the session list. It reads only from [repository]. */
@@ -59,6 +62,7 @@ class SessionListViewModel(
                 connection = connection,
                 answering = answering intersect openIds,
                 feedback = feedback,
+                oldestWaiting = all.oldestWaiting(),
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), SessionListUiState())
 

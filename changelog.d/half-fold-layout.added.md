@@ -1,0 +1,1 @@
+Half folded in Flex Mode, the app splits at the hinge: the conversation or session list sits above it, and the approval buttons, quick replies, composer and "New session" sit below it, clear of the crease.

@@ -34,3 +34,9 @@ enum class SessionFilter {
 /** How many sessions each chip would show, for the counts on the chips. */
 fun List<SessionListItem>.countsByFilter(): Map<SessionFilter, Int> =
     SessionFilter.entries.associateWith { filter -> count(filter::matches) }
+
+/**
+ * The session that has waited on you longest, for the half-folded bottom pane. The list arrives
+ * newest update first, so that is the last row that needs you.
+ */
+fun List<SessionListItem>.oldestWaiting(): SessionListItem? = lastOrNull { it.needsYou }

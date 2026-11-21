@@ -59,7 +59,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
  * One session as a card. A row waiting on you gets the needs-you border, the approval's
- * description, and Approve and Deny for its oldest approval.
+ * description, a status line, and Deny and Approve for its oldest approval on their own line.
+ *
+ * @param fullSizeActions makes Deny and Approve share the row's width at full height, for the
+ *   half-folded bottom pane.
  */
 @Composable
 fun SessionRow(
@@ -67,6 +70,7 @@ fun SessionRow(
     answering: Set<String>,
     actions: SessionListActions,
     modifier: Modifier = Modifier,
+    fullSizeActions: Boolean = false,
 ) {
     val spacing = RafiqTheme.spacing
     val colors = RafiqTheme.colors
@@ -80,31 +84,17 @@ fun SessionRow(
         border = BorderStroke(spacing.hairline, if (item.needsYou) colors.needsYou else colors.border),
     ) {
         Column(modifier = Modifier.padding(spacing.medium), verticalArrangement = Arrangement.spacedBy(spacing.small)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(spacing.small),
-            ) {
-                if (!item.needsYou) StatusDot(session.status)
-                Text(
-                    text = session.title,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = if (finished) colors.textSecondary else colors.text,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                AgentTag(session.agent)
-            }
-            Text(
-                text = session.projectPath,
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.StartEllipsis,
-            )
+            RowHeading(item, finished)
             val approval = item.openApprovals.firstOrNull()
             if (approval != null) {
-                RowApproval(approval, item.openApprovals.size - 1, approval.id in answering, session.id, actions)
+                RowApproval(
+                    approval = approval,
+                    othersWaiting = item.openApprovals.size - 1,
+                    answering = approval.id in answering,
+                    sessionId = session.id,
+                    actions = actions,
+                    fullSize = fullSizeActions,
+                )
             } else {
                 item.lastLine?.let {
                     Text(
@@ -121,6 +111,38 @@ fun SessionRow(
     }
 }
 
+/** The title line, with status dot and agent tag, and the project path under it. */
+@Composable
+private fun RowHeading(
+    item: SessionListItem,
+    finished: Boolean,
+) {
+    val colors = RafiqTheme.colors
+    val session = item.session
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(RafiqTheme.spacing.small),
+    ) {
+        if (!item.needsYou) StatusDot(session.status)
+        Text(
+            text = session.title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleMedium,
+            color = if (finished) colors.textSecondary else colors.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        AgentTag(session.agent)
+    }
+    Text(
+        text = session.projectPath,
+        style = MaterialTheme.typography.labelSmall,
+        color = colors.textMuted,
+        maxLines = 1,
+        overflow = TextOverflow.StartEllipsis,
+    )
+}
+
 @Composable
 private fun RowApproval(
     approval: ApprovalCard,
@@ -128,6 +150,7 @@ private fun RowApproval(
     answering: Boolean,
     sessionId: String,
     actions: SessionListActions,
+    fullSize: Boolean,
 ) {
     val spacing = RafiqTheme.spacing
     val choices = InlineChoices.of(approval)
@@ -138,18 +161,29 @@ private fun RowApproval(
         maxLines = 3,
         overflow = TextOverflow.Ellipsis,
     )
+    // The status gets its own line so "Waiting on you" is never squeezed by the buttons.
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
-        Column(modifier = Modifier.weight(1f)) {
-            StatusBadge(AgentState.WAITING_ON_YOU)
-            if (othersWaiting > 0) {
-                Text(
-                    text = stringResource(R.string.row_more_approvals, othersWaiting),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = RafiqTheme.colors.textMuted,
-                )
-            }
+        StatusBadge(AgentState.WAITING_ON_YOU)
+        if (othersWaiting > 0) {
+            Text(
+                text = stringResource(R.string.row_more_approvals, othersWaiting),
+                style = MaterialTheme.typography.bodySmall,
+                color = RafiqTheme.colors.textMuted,
+                maxLines = 1,
+            )
         }
-        val buttonModifier = Modifier.heightIn(min = spacing.minTouchTarget)
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(spacing.small, Alignment.End),
+    ) {
+        val buttonModifier =
+            if (fullSize) {
+                Modifier.weight(1f).heightIn(min = spacing.largeTouchTarget)
+            } else {
+                Modifier.heightIn(min = spacing.minTouchTarget)
+            }
         if (!choices.canAnswerInline) {
             TextButton(onClick = { actions.onOpen(sessionId) }, modifier = buttonModifier) {
                 Text(stringResource(R.string.row_review))

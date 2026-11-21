@@ -160,21 +160,12 @@ class SyncingSessionRepository(
             link.value = ConnectionState.Connecting
             val result = connectOnce(paired, current, commit)
             if (result.progressed) attempt = 0
-            when (result.end) {
-                StreamEnd.REFUSED -> {
-                    link.value = ConnectionState.Unauthorized
-                    return
-                }
-
-                // The socket was making progress, so the missing events are a replay away.
-                StreamEnd.GAP -> {
-                    if (result.progressed) continue
-                }
-
-                StreamEnd.DROPPED -> {
-                    Unit
-                }
+            if (result.end == StreamEnd.REFUSED) {
+                link.value = ConnectionState.Unauthorized
+                return
             }
+            // The socket was making progress, so the missing events are a replay away.
+            if (result.end == StreamEnd.GAP && result.progressed) continue
             waitToRetry(backoff.delayFor(attempt))
             attempt++
         }

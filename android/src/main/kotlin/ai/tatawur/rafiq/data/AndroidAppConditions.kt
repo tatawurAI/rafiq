@@ -24,10 +24,11 @@ class AndroidAppConditions(
     private val processLifecycle = ProcessLifecycleOwner.get().lifecycle
     private val isForeground = MutableStateFlow(processLifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
-    private val hasNetwork = MutableStateFlow(connectivity.activeNetwork.isUsable())
+    private val defaultNetwork =
+        connectivity.activeNetwork.let { active -> DefaultNetwork(active, active.isUsable()) }
 
     override val foreground: StateFlow<Boolean> = isForeground.asStateFlow()
-    override val networkAvailable: StateFlow<Boolean> = hasNetwork.asStateFlow()
+    override val networkAvailable: StateFlow<Boolean> = defaultNetwork.usable
 
     init {
         processLifecycle.addObserver(
@@ -41,11 +42,14 @@ class AndroidAppConditions(
                     network: Network,
                     capabilities: NetworkCapabilities,
                 ) {
-                    hasNetwork.value = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    defaultNetwork.onCapabilities(
+                        network,
+                        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                    )
                 }
 
                 override fun onLost(network: Network) {
-                    hasNetwork.value = false
+                    defaultNetwork.onLost(network)
                 }
             },
         )

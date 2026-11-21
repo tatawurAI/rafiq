@@ -37,8 +37,13 @@
   <string name="new_session_agents_none">Your server has no agents configured.</string>
   <string name="new_session_project">Project folder on your server</string>
   <string name="new_session_project_hint">/srv/weather-app</string>
+  <string name="new_session_project_help">The folder the agent works in, on your server.</string>
   <string name="new_session_name">Title (optional)</string>
+  <string name="new_session_name_help">Shown in your session list. Leave it empty to use the folder name.</string>
   <string name="new_session_start">Start session</string>
+  <string name="new_session_starting">Starting the session on your server</string>
+  <string name="new_session_needs_agent">Pick an agent to start.</string>
+  <string name="new_session_needs_project">Enter the project folder to start.</string>
 
   <!-- Session view -->
   <string name="back">Back</string>
@@ -79,10 +84,10 @@
 
   <!-- Approvals -->
   <string name="approval_label">Waiting on you</string>
-  <string name="approval_pinned">Pinned · Agent asked</string>
   <string name="approval_jump">Jump to it</string>
   <string name="approval_expand">Answer</string>
   <string name="approval_sending">Sending your answer</string>
+  <string name="approval_sending_short">Sending</string>
 
   <!-- Composer -->
   <string name="composer_hint">Message %1$s</string>

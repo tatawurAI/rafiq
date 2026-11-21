@@ -17,18 +17,26 @@ import ai.tatawur.rafiq.ui.components.ConnectionBanner
 import ai.tatawur.rafiq.ui.components.FeedbackBar
 import ai.tatawur.rafiq.ui.components.StatusDot
 import ai.tatawur.rafiq.ui.components.statusLabel
+import ai.tatawur.rafiq.ui.fold.FoldSplit
+import ai.tatawur.rafiq.ui.fold.Hinge
+import ai.tatawur.rafiq.ui.fold.LocalHinge
+import ai.tatawur.rafiq.ui.fold.previewHalfFoldHinge
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -37,6 +45,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -90,13 +100,23 @@ fun SessionRoute(
                 onDismissFeedback = viewModel::dismissFeedback,
             )
         }
-    SessionScreen(state, actions, dictation, modifier)
+    SessionScreen(state, actions, dictation, modifier, hinge = LocalHinge.current)
 }
 
 /**
  * One session: a header, the thread tabs, the selected thread's timeline, then the pinned approval
- * and the composer. On a short screen, such as the cover screen, the pinned approval folds to two
- * lines so the timeline keeps its room.
+ * and the composer.
+ *
+ * The screen is the only consumer of the window insets, keyboard included, so with the keyboard up
+ * the whole column ends above it. While you type, the pinned approval and the quick replies step
+ * aside so the timeline keeps its room. The pinned approval also hides while its own tool card is
+ * on screen, so the same request never shows twice.
+ *
+ * Half folded, the conversation sits above the hinge and the controls below it, out of the crease:
+ * the pinned approval with every option at full size, the quick replies when nothing waits, and the
+ * composer on the bottom edge. Only the bottom pane moves up for the keyboard.
+ *
+ * @param hinge where the half-folded hinge crosses the window, or null to keep one column.
  */
 @Composable
 fun SessionScreen(
@@ -104,133 +124,57 @@ fun SessionScreen(
     actions: SessionActions,
     dictation: DictationControl?,
     modifier: Modifier = Modifier,
+    hinge: Hinge? = null,
+) {
+    FoldSplit(
+        hinge = hinge,
+        modifier = modifier,
+        single = { SingleColumnSession(state, actions, dictation) },
+        top = {
+            Column(modifier = Modifier.fillMaxSize()) { TimelinePane(state, actions, compact = false) {} }
+        },
+        bottom = { SessionBottomPane(state, actions, dictation) },
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SingleColumnSession(
+    state: SessionUiState,
+    actions: SessionActions,
+    dictation: DictationControl?,
 ) {
     val spacing = RafiqTheme.spacing
-    BoxWithConstraints(modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+    val imeVisible = WindowInsets.isImeVisible
+    var pinnedCardOnScreen by remember { mutableStateOf(false) }
+    BoxWithConstraints(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .consumeWindowInsets(WindowInsets.safeDrawing),
+    ) {
         val compact = maxHeight < spacing.compactHeight
         Column(modifier = Modifier.fillMaxSize()) {
-            SessionHeader(state, actions)
-            if (state.screen.threads.size > 1) {
-                ThreadTabs(state.screen.threads, state.selectedThread?.id, actions.onSelectThread)
-            }
-            HorizontalDivider(color = RafiqTheme.colors.border, thickness = spacing.hairline)
-            ConnectionBanner(state.connection)
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                val threadId = state.selectedThread?.id
-                if (!state.isLoaded) {
-                    CenteredNote(stringResource(R.string.session_loading))
-                } else if (state.timeline.isEmpty()) {
-                    CenteredNote(stringResource(R.string.thread_empty))
-                } else {
-                    // A list per thread, so each tab opens at its latest item.
-                    key(threadId) { Timeline(state, actions, compact) }
-                }
-            }
+            TimelinePane(state, actions, compact, onPinnedCardOnScreen = { pinnedCardOnScreen = it })
             HorizontalDivider(color = RafiqTheme.colors.border, thickness = spacing.hairline)
             Column(
                 modifier = Modifier.padding(horizontal = spacing.medium, vertical = spacing.small),
                 verticalArrangement = Arrangement.spacedBy(spacing.small),
             ) {
                 FeedbackBar(state.feedback, actions.onDismissFeedback)
-                state.pinned?.let { pinned ->
+                val pinned = state.pinned
+                if (pinned != null && !imeVisible && !pinnedCardOnScreen) {
                     PinnedApproval(
                         approval = pinned,
-                        compact = compact,
                         answering = pinned.id in state.answering,
                         onAnswer = { optionId -> actions.onApprove(pinned.id, optionId) },
                         onJump = pinned.threadId?.let { { actions.onJump(pinned) } },
                     )
                 }
-                Composer(
-                    state =
-                        ComposerState(
-                            draft = state.draft,
-                            target =
-                                state.screen.session
-                                    ?.title
-                                    .orEmpty(),
-                            canPrompt = state.canPrompt,
-                            canSend = state.canSend,
-                            canStop = state.canStopMain,
-                        ),
-                    onDraftChange = actions.onDraftChange,
-                    onSend = actions.onSend,
-                    quickReplies = defaultQuickReplies(),
-                    onQuickReply = actions.onQuickReply,
-                    dictation = dictation,
-                )
+                SessionComposer(state, actions, dictation, showQuickReplies = !imeVisible)
             }
         }
-    }
-}
-
-@Composable
-private fun SessionHeader(
-    state: SessionUiState,
-    actions: SessionActions,
-) {
-    val spacing = RafiqTheme.spacing
-    val session = state.screen.session
-    val thread = state.selectedThread
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = spacing.xSmall, vertical = spacing.xSmall),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(spacing.xSmall),
-    ) {
-        IconButton(onClick = actions.onBack) {
-            Icon(
-                painter = painterResource(R.drawable.ic_back),
-                contentDescription = stringResource(R.string.back),
-                modifier = Modifier.size(spacing.icon),
-                tint = RafiqTheme.colors.text,
-            )
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = session?.title.orEmpty(),
-                style = MaterialTheme.typography.titleLarge,
-                color = RafiqTheme.colors.text,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (session != null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(spacing.small),
-                ) {
-                    StatusDot(session.status)
-                    Text(
-                        text =
-                            stringResource(
-                                R.string.session_subtitle,
-                                session.agent,
-                                stringResource(statusLabel(session.status)),
-                            ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = RafiqTheme.colors.textMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-        if (thread != null && thread.status == AgentState.WORKING) {
-            IconButton(onClick = { actions.onCancel(thread.id) }) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_stop),
-                    contentDescription = stringResource(R.string.cancel_turn),
-                    modifier = Modifier.size(spacing.icon),
-                    tint = RafiqTheme.colors.text,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun CenteredNote(text: String) {
-    Box(modifier = Modifier.fillMaxSize().padding(RafiqTheme.spacing.medium), contentAlignment = Alignment.Center) {
-        Text(text, style = MaterialTheme.typography.bodyMedium, color = RafiqTheme.colors.textMuted)
     }
 }
 
@@ -338,12 +282,22 @@ private fun SessionScreenTallPreview() {
     }
 }
 
-@Preview(name = "Session, cover screen", widthDp = 360, heightDp = 400)
+@Preview(name = "Session, cover screen", widthDp = 399, heightDp = 353)
 @Composable
 private fun SessionScreenCoverPreview() {
     RafiqTheme {
         Surface(color = MaterialTheme.colorScheme.background) {
             SessionScreen(previewState(), SessionActions(), dictation = null)
+        }
+    }
+}
+
+@Preview(name = "Session, half folded", widthDp = 360, heightDp = 840)
+@Composable
+private fun SessionScreenHalfFoldedPreview() {
+    RafiqTheme {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            SessionScreen(previewState(), SessionActions(), dictation = null, hinge = previewHalfFoldHinge)
         }
     }
 }

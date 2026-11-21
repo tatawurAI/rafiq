@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.sessions
 
 import ai.tatawur.rafiq.R
+import ai.tatawur.rafiq.ui.components.horizontalFadingEdges
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -93,6 +94,8 @@ data class ComposerState(
  * is the opposite: it is enabled only while there is a turn to stop.
  *
  * @param dictation the mic, or null to hide it when the phone has no on-device recognition.
+ * @param showQuickReplies false while an approval waits, where "Yes, go ahead" would read as an
+ *   answer to it, and while the keyboard is up.
  */
 @Composable
 fun Composer(
@@ -103,10 +106,11 @@ fun Composer(
     onQuickReply: (QuickReply) -> Unit,
     dictation: DictationControl?,
     modifier: Modifier = Modifier,
+    showQuickReplies: Boolean = true,
 ) {
     val spacing = RafiqTheme.spacing
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(spacing.small)) {
-        QuickReplyRow(quickReplies, state.canPrompt, state.canStop, onQuickReply)
+        if (showQuickReplies) QuickReplyRow(quickReplies, state.canPrompt, state.canStop, onQuickReply)
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
             val hint =
                 if (state.canPrompt) {
@@ -129,14 +133,15 @@ private fun QuickReplyRow(
     onQuickReply: (QuickReply) -> Unit,
 ) {
     val colors = RafiqTheme.colors
+    val scroll = rememberScrollState()
     Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxWidth().horizontalFadingEdges(scroll).horizontalScroll(scroll),
         horizontalArrangement = Arrangement.spacedBy(RafiqTheme.spacing.small),
     ) {
         quickReplies.forEach { chip ->
             AssistChip(
                 onClick = { onQuickReply(chip.reply) },
-                label = { Text(chip.label) },
+                label = { Text(chip.label, maxLines = 1) },
                 enabled = if (chip.reply is QuickReply.Stop) canStop else canPrompt,
                 shape = RafiqTheme.shapes.pill,
                 colors =
@@ -205,6 +210,10 @@ private fun MicButton(dictation: DictationControl) {
     }
 }
 
+/**
+ * The send disc. While there is nothing to send it is an outlined ring with a muted arrow, like the
+ * mic, so it reads as off at a glance instead of as a grey disc on a grey ground.
+ */
 @Composable
 private fun SendButton(
     enabled: Boolean,
@@ -212,22 +221,32 @@ private fun SendButton(
 ) {
     val spacing = RafiqTheme.spacing
     val colors = RafiqTheme.colors
-    FilledIconButton(
-        onClick = onSend,
-        enabled = enabled,
-        modifier = Modifier.size(spacing.composerHeight),
-        colors =
-            IconButtonDefaults.filledIconButtonColors(
-                containerColor = colors.accent,
-                contentColor = colors.ground,
-                disabledContainerColor = colors.border,
-                disabledContentColor = colors.textMuted,
-            ),
-    ) {
+    val icon = @Composable {
         Icon(
             painter = painterResource(R.drawable.ic_send),
             contentDescription = stringResource(R.string.composer_send),
             modifier = Modifier.size(spacing.icon),
+        )
+    }
+    if (enabled) {
+        FilledIconButton(
+            onClick = onSend,
+            modifier = Modifier.size(spacing.composerHeight),
+            colors =
+                IconButtonDefaults.filledIconButtonColors(
+                    containerColor = colors.accent,
+                    contentColor = colors.ground,
+                ),
+            content = icon,
+        )
+    } else {
+        OutlinedIconButton(
+            onClick = onSend,
+            enabled = false,
+            modifier = Modifier.size(spacing.composerHeight),
+            border = BorderStroke(spacing.hairline, colors.borderStrong),
+            colors = IconButtonDefaults.outlinedIconButtonColors(disabledContentColor = colors.textMuted),
+            content = icon,
         )
     }
 }

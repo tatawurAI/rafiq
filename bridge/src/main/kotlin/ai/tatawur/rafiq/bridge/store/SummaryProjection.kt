@@ -17,6 +17,7 @@ import java.sql.Connection
  *
  * The caller owns the connection and the transaction.
  */
+@Suppress("MagicNumber") // JDBC addresses parameters and columns by position.
 internal object SummaryProjection {
     /** The tables. Created with the rest of the schema. */
     val schema =
@@ -91,16 +92,15 @@ internal object SummaryProjection {
     /** Every open approval, by session id, oldest first. */
     fun openApprovals(connection: Connection): Map<String, List<EventPayload.ApprovalRequest>> =
         connection.createStatement().use { statement ->
-            statement.executeQuery("SELECT session_id, payload FROM open_approvals ORDER BY seq").use { rows ->
-                val bySession = mutableMapOf<String, MutableList<EventPayload.ApprovalRequest>>()
-                while (rows.next()) {
-                    val request = protocolJson.decodeFromString(EventPayload.serializer(), rows.getString(2))
-                    if (request is EventPayload.ApprovalRequest) {
-                        bySession.getOrPut(rows.getString(1)) { mutableListOf() } += request
-                    }
+            val rows =
+                statement.executeQuery("SELECT session_id, payload FROM open_approvals ORDER BY seq").use { rows ->
+                    buildList { while (rows.next()) add(rows.getString(1) to rows.getString(2)) }
                 }
-                bySession
-            }
+            rows
+                .mapNotNull { (sessionId, payload) ->
+                    val request = protocolJson.decodeFromString(EventPayload.serializer(), payload)
+                    (request as? EventPayload.ApprovalRequest)?.let { sessionId to it }
+                }.groupBy({ it.first }, { it.second })
         }
 
     private fun preview(

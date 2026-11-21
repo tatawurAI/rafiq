@@ -52,8 +52,8 @@ internal class MessageStreams(
             out += EventPayload.MessageDelta(messageId = current.id, threadId = threadId, text = text)
             return
         }
-        val paused = resumable[threadId]
-        if (current == null && paused != null && paused.sameStream(role, streamKey) && streamKey !in UNKEYED) {
+        val paused = resumable[threadId]?.takeIf { current == null && it.sameStream(role, streamKey) }
+        if (paused != null && streamKey !in UNKEYED) {
             resumable.remove(threadId)
             paused.text.append(text)
             open[threadId] = paused

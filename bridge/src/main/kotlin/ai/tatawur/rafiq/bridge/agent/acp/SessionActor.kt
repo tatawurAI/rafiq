@@ -294,16 +294,14 @@ internal class SessionActor(
             update != null -> {
                 val mapped = mapper.sessionUpdate(acpSessionId, update, params["_meta"])
                 events.sendAll(mapped)
-                if (mapped.any(::streamsOnMain)) armQuietTimer()
+                if (mapped.any(::streamsOnMain)) {
+                    // The quiet period starts again from now. Only the newest timer counts.
+                    quietTimer?.dispose()
+                    val generation = ++quietGeneration
+                    quietTimer = scheduler.schedule(quietPeriod) { offer(Item.QuietPeriodOver(generation)) }
+                }
             }
         }
-    }
-
-    /** Starts the quiet period again from now. Only the newest timer counts, see [Item.QuietPeriodOver]. */
-    private fun armQuietTimer() {
-        quietTimer?.dispose()
-        val generation = ++quietGeneration
-        quietTimer = scheduler.schedule(quietPeriod) { offer(Item.QuietPeriodOver(generation)) }
     }
 
     /** Maps a permission request and files it for the SDK handler to answer. */

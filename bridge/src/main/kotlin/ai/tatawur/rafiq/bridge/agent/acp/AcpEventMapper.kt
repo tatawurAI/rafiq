@@ -51,6 +51,7 @@ import com.agentclientprotocol.model.ContentBlock as AcpContentBlock
  * Not thread-safe. It is owned by a [SessionActor], whose single consumer calls it in the agent's wire
  * order.
  */
+@Suppress("TooManyFunctions") // One entry point per thing a session reports, plus the helpers they share.
 internal class AcpEventMapper(
     rafiqSessionId: String,
     projectPath: Path,

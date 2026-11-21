@@ -10,7 +10,6 @@ import ai.tatawur.rafiq.sessions.SessionListViewModel
 import ai.tatawur.rafiq.sessions.SessionRoute
 import ai.tatawur.rafiq.sessions.SessionViewModel
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
-import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -34,24 +33,14 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 
-/** The app's destinations. */
-private object Routes {
-    const val PAIRING = "pairing"
-    const val SESSIONS = "sessions"
-    const val NEW_SESSION = "sessions/new"
-    const val SESSION_ID = "sessionId"
-    const val SESSION = "session/{$SESSION_ID}"
-
-    // Session ids are opaque and may hold any character, so they are encoded into the route.
-    fun session(id: String) = "session/${Uri.encode(id)}"
-}
-
 /**
  * The app's screens and how you move between them. Screens get [sessions] through their view
  * models and never build a repository themselves.
  *
  * While no bridge is paired the app shows [pairing], and it returns there whenever the pairing is
- * lost. Pairing is its own screen, so it comes in as a slot.
+ * lost. It also leaves [pairing] on its own once a bridge is paired, so a start screen picked from
+ * an early connection value never strands a paired user there. Pairing is its own screen, so it
+ * comes in as a slot.
  *
  * @param pairing the pairing screen. It calls `onPaired` once a bridge is paired.
  */
@@ -67,15 +56,20 @@ fun RafiqNavHost(
     val current by navController.currentBackStackEntryAsState()
     LaunchedEffect(connection, current) {
         val route = current?.destination?.route ?: return@LaunchedEffect
-        if (connection == ConnectionState.NotPaired && route != Routes.PAIRING) {
-            navController.navigate(Routes.PAIRING) { popUpTo(0) }
+        val target = pairingRedirect(connection, route) ?: return@LaunchedEffect
+        navController.navigate(target) {
+            popUpTo(navController.graph.id) { inclusive = true }
+            launchSingleTop = true
         }
     }
 
     NavHost(navController = navController, startDestination = start, modifier = modifier) {
         composable(Routes.PAIRING) {
             pairing {
-                navController.navigate(Routes.SESSIONS) { popUpTo(Routes.PAIRING) { inclusive = true } }
+                navController.navigate(Routes.SESSIONS) {
+                    popUpTo(Routes.PAIRING) { inclusive = true }
+                    launchSingleTop = true
+                }
             }
         }
         composable(Routes.SESSIONS) {

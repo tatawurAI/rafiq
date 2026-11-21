@@ -105,6 +105,7 @@ data class SessionActions(
     val onJump: (ApprovalCard) -> Unit = {},
     val onScrolledToKey: () -> Unit = {},
     val onDismissFeedback: () -> Unit = {},
+    val onPairAgain: () -> Unit = {},
 )
 
 /** What the session list can ask its state holder or the navigation to do. */
@@ -115,6 +116,7 @@ data class SessionListActions(
     val onFilter: (SessionFilter) -> Unit = {},
     val onApprove: (approvalId: String, optionId: String) -> Unit = { _, _ -> },
     val onDismissFeedback: () -> Unit = {},
+    val onPairAgain: () -> Unit = {},
 )
 
 /** What the "New session" form can ask its state holder or the navigation to do. */

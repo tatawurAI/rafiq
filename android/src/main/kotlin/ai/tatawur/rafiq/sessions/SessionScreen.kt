@@ -82,11 +82,12 @@ fun SessionRoute(
     viewModel: SessionViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onPairAgain: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dictation = rememberDictation(viewModel::appendDictation)
     val actions =
-        remember(viewModel, onBack) {
+        remember(viewModel, onBack, onPairAgain) {
             SessionActions(
                 onBack = onBack,
                 onSelectThread = viewModel::selectThread,
@@ -98,6 +99,7 @@ fun SessionRoute(
                 onJump = viewModel::jumpTo,
                 onScrolledToKey = viewModel::scrolledToKey,
                 onDismissFeedback = viewModel::dismissFeedback,
+                onPairAgain = onPairAgain,
             )
         }
     SessionScreen(state, actions, dictation, modifier, hinge = LocalHinge.current)
@@ -126,12 +128,14 @@ fun SessionScreen(
     modifier: Modifier = Modifier,
     hinge: Hinge? = null,
 ) {
+    // Held above the split: folding moves the timeline between panes, and it keeps its place.
+    val scroll = rememberTimelineScroll(state.selectedThread?.id)
     FoldSplit(
         hinge = hinge,
         modifier = modifier,
-        single = { SingleColumnSession(state, actions, dictation) },
+        single = { SingleColumnSession(state, actions, dictation, scroll) },
         top = {
-            Column(modifier = Modifier.fillMaxSize()) { TimelinePane(state, actions, compact = false) {} }
+            Column(modifier = Modifier.fillMaxSize()) { TimelinePane(state, actions, compact = false, scroll) {} }
         },
         bottom = { SessionBottomPane(state, actions, dictation) },
     )
@@ -143,6 +147,7 @@ private fun SingleColumnSession(
     state: SessionUiState,
     actions: SessionActions,
     dictation: DictationControl?,
+    scroll: TimelineScroll,
 ) {
     val spacing = RafiqTheme.spacing
     val imeVisible = WindowInsets.isImeVisible
@@ -156,7 +161,7 @@ private fun SingleColumnSession(
     ) {
         val compact = maxHeight < spacing.compactHeight
         Column(modifier = Modifier.fillMaxSize()) {
-            TimelinePane(state, actions, compact, onPinnedCardOnScreen = { pinnedCardOnScreen = it })
+            TimelinePane(state, actions, compact, scroll, onPinnedCardOnScreen = { pinnedCardOnScreen = it })
             HorizontalDivider(color = RafiqTheme.colors.border, thickness = spacing.hairline)
             Column(
                 modifier = Modifier.padding(horizontal = spacing.medium, vertical = spacing.small),

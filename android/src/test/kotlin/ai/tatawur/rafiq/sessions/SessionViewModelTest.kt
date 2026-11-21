@@ -172,6 +172,26 @@ class SessionViewModelTest {
             assertEquals(Feedback.Offline, viewModel.state.value.feedback)
         }
 
+    // 409 approval_gone: someone answered on another device or the approval was cancelled.
+    @Test
+    fun an_approval_the_bridge_says_is_gone_stays_disabled_until_its_resolution_clears_it() =
+        runTest(dispatcher) {
+            val repository =
+                FakeRepository(screen(AgentState.WAITING_ON_YOU, listOf(approval))).apply {
+                    approveResult = CommandResult.Gone
+                }
+            val viewModel = SessionViewModel(repository, "s-1")
+            backgroundScope.launch { viewModel.state.collect {} }
+
+            viewModel.approve("a-1", "once")
+
+            assertEquals(setOf("a-1"), viewModel.state.value.answering)
+            assertEquals(Feedback.AlreadyAnswered, viewModel.state.value.feedback)
+
+            repository.screen.update { it.copy(openApprovals = emptyList()) }
+            assertEquals(emptySet(), viewModel.state.value.answering)
+        }
+
     @Test
     fun the_view_falls_back_to_the_main_thread_when_the_open_tab_disappears() =
         runTest(dispatcher) {

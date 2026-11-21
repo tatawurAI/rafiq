@@ -44,6 +44,9 @@ fun FoldSplit(
     bottom: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Known only after the first layout. Zero is right for the first frame wherever the split fills
+    // its window, as every screen's does: the app draws edge to edge and the hinge comes in window
+    // coordinates, so the split does not jump once the real position arrives.
     var containerTopPx by remember { mutableIntStateOf(0) }
     BoxWithConstraints(
         modifier =

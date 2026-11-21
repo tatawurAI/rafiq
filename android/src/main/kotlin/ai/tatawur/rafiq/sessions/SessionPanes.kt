@@ -114,6 +114,7 @@ internal fun ColumnScope.TimelinePane(
     state: SessionUiState,
     actions: SessionActions,
     compact: Boolean,
+    scroll: TimelineScroll,
     onPinnedCardOnScreen: (Boolean) -> Unit,
 ) {
     SessionHeader(state, actions)
@@ -121,7 +122,7 @@ internal fun ColumnScope.TimelinePane(
         ThreadTabs(state.screen.threads, state.selectedThread?.id, actions.onSelectThread)
     }
     HorizontalDivider(color = RafiqTheme.colors.border, thickness = RafiqTheme.spacing.hairline)
-    ConnectionBanner(state.connection)
+    ConnectionBanner(state.connection, onPairAgain = actions.onPairAgain)
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         val threadId = state.selectedThread?.id
         if (!state.isLoaded) {
@@ -132,7 +133,7 @@ internal fun ColumnScope.TimelinePane(
             CenteredNote(stringResource(R.string.thread_empty))
         } else {
             // A list per thread, so each tab opens at its latest item.
-            key(threadId) { Timeline(state, actions, compact, onPinnedCardOnScreen) }
+            key(threadId) { Timeline(state, actions, compact, scroll, onPinnedCardOnScreen) }
         }
     }
 }

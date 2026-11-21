@@ -36,7 +36,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -73,6 +72,7 @@ import kotlinx.coroutines.launch
  * once you scroll up, with a button to jump back down. Items are keyed by id, so a message that is
  * replaced or grows keeps its place.
  *
+ * @param scroll the thread's scroll position, held by the screen.
  * @param onPinnedCardOnScreen told whether the tool card that carries the pinned approval is
  *   mostly on screen, so the screen can hide the pinned copy.
  */
@@ -81,12 +81,13 @@ internal fun Timeline(
     state: SessionUiState,
     actions: SessionActions,
     compact: Boolean,
+    scroll: TimelineScroll,
     onPinnedCardOnScreen: (Boolean) -> Unit = {},
 ) {
     val spacing = RafiqTheme.spacing
     val items = state.timeline
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = items.lastIndex.coerceAtLeast(0))
-    var follow by rememberSaveable { mutableStateOf(true) }
+    val listState = scroll.listState(items.lastIndex)
+    var follow by scroll::follow
     val scope = rememberCoroutineScope()
     FollowWhileAtBottom(listState) { follow = it }
     ReportPinnedCard(listState, items, state.pinned?.id, onPinnedCardOnScreen)

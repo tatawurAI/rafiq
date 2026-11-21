@@ -150,7 +150,11 @@ class SessionViewModel(
         }
     }
 
-    /** Answers an approval. Its buttons stay disabled until the repository drops it or the answer fails. */
+    /**
+     * Answers an approval. Its buttons stay disabled until the repository drops it. They come back
+     * only when the answer can be tried again: an approval that the bridge says is already answered
+     * or unknown stays disabled until its `approval_resolved` event clears it.
+     */
     fun approve(
         approvalId: String,
         optionId: String,
@@ -161,7 +165,7 @@ class SessionViewModel(
             val result = repository.approve(approvalId, optionId)
             local.update {
                 it.copy(
-                    answering = if (result is CommandResult.Ok) it.answering else it.answering - approvalId,
+                    answering = if (result.canRetryAnswer()) it.answering - approvalId else it.answering,
                     feedback = result.feedback(),
                 )
             }

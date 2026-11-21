@@ -18,9 +18,9 @@ compose-bom = "2026.06.01"
 activity-compose = "1.13.0"
 
 # App UI (screens and navigation). The newest releases that still accept compileSdk 36:
-# navigation-compose 2.10 and lifecycle 2.10.1 need compileSdk 37.
+# navigation-compose 2.10 and lifecycle 2.11 need compileSdk 37.
 navigation-compose = "2.9.8"
-lifecycle-compose = "2.10.0"
+lifecycle = "2.10.0"
 # Markdown in chat bubbles. Apache-2.0. Later releases need compileSdk 37. It brings no
 # Compose artifacts of its own, so the Compose BOM decides those versions.
 markdown-renderer = "0.41.0"
@@ -66,8 +66,8 @@ compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview"
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
 
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation-compose" }
-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle-compose" }
-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle-compose" }
+lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 

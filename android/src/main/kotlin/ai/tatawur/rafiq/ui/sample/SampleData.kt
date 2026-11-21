@@ -188,7 +188,7 @@ private fun weatherState(now: Long): SessionScreenState {
                             "weather-file-1",
                             7,
                             NoticeKind.FILE_CHANGED,
-                            "src/forecast/Units.kt changed",
+                            "src/forecast/Units.kt (modified)",
                             url = null,
                         ),
                     ),

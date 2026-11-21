@@ -56,6 +56,10 @@
   <string name="image_placeholder">Image: %1$s</string>
   <string name="image_placeholder_no_alt">Image</string>
   <string name="unknown_content">Content this version cannot show (%1$s)</string>
+  <string name="notice_auth_required">Sign in needed: %1$s. Tap to open the sign-in page.</string>
+  <string name="notice_preview">Preview ready: %1$s. Tap to open it.</string>
+  <string name="notice_file_changed">File changed: %1$s</string>
+  <string name="notice_unknown_event">An event this version cannot show: %1$s</string>
   <string name="unknown_content_untyped">Content this version cannot show</string>
 
   <!-- Tool cards -->

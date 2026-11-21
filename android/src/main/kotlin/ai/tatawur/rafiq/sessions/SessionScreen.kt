@@ -82,11 +82,12 @@ fun SessionRoute(
     viewModel: SessionViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onPairAgain: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dictation = rememberDictation(viewModel::appendDictation)
     val actions =
-        remember(viewModel, onBack) {
+        remember(viewModel, onBack, onPairAgain) {
             SessionActions(
                 onBack = onBack,
                 onSelectThread = viewModel::selectThread,
@@ -98,6 +99,7 @@ fun SessionRoute(
                 onJump = viewModel::jumpTo,
                 onScrolledToKey = viewModel::scrolledToKey,
                 onDismissFeedback = viewModel::dismissFeedback,
+                onPairAgain = onPairAgain,
             )
         }
     SessionScreen(state, actions, dictation, modifier, hinge = LocalHinge.current)

@@ -90,7 +90,11 @@ internal fun LazyListScope.sessionListItems(
         )
     }
     item(key = "connection") {
-        ConnectionBanner(state.connection, Modifier.padding(vertical = RafiqTheme.spacing.xSmall))
+        ConnectionBanner(
+            state.connection,
+            Modifier.padding(vertical = RafiqTheme.spacing.xSmall),
+            onPairAgain = actions.onPairAgain,
+        )
     }
     if (withChips) item(key = "filters") { FilterChips(state, actions.onFilter) }
     when {

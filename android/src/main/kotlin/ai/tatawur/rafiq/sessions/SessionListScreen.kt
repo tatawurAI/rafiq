@@ -80,16 +80,18 @@ fun SessionListRoute(
     onOpen: (sessionId: String) -> Unit,
     onNewSession: () -> Unit,
     modifier: Modifier = Modifier,
+    onPairAgain: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val actions =
-        remember(viewModel, onOpen, onNewSession) {
+        remember(viewModel, onOpen, onNewSession, onPairAgain) {
             SessionListActions(
                 onOpen = onOpen,
                 onNewSession = onNewSession,
                 onFilter = viewModel::selectFilter,
                 onApprove = viewModel::approve,
                 onDismissFeedback = viewModel::dismissFeedback,
+                onPairAgain = onPairAgain,
             )
         }
     SessionListScreen(state, actions, modifier, hinge = LocalHinge.current)

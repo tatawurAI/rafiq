@@ -26,11 +26,15 @@ import androidx.compose.ui.tooling.preview.Preview
 /**
  * One line about the link to your server. It shows nothing while the link is live. Offline is not
  * an error: the screen below it keeps showing cached state.
+ *
+ * When the server refuses the token it offers "Pair again", which calls [onPairAgain]. The app
+ * never unpairs on its own: a token rotated on the server should not wipe the cache unless you ask.
  */
 @Composable
 fun ConnectionBanner(
     connection: ConnectionState,
     modifier: Modifier = Modifier,
+    onPairAgain: () -> Unit = {},
 ) {
     val (textRes, color) =
         when (connection) {
@@ -43,18 +47,31 @@ fun ConnectionBanner(
         modifier = modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
         color = RafiqTheme.colors.surface,
     ) {
-        Text(
-            text = stringResource(textRes),
-            modifier =
-                Modifier.padding(
-                    horizontal = RafiqTheme.spacing.medium,
-                    vertical = RafiqTheme.spacing.small,
-                ),
-            style = MaterialTheme.typography.bodySmall,
-            color = color,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(textRes),
+                modifier =
+                    Modifier.weight(1f).padding(
+                        horizontal = RafiqTheme.spacing.medium,
+                        vertical = RafiqTheme.spacing.small,
+                    ),
+                style = MaterialTheme.typography.bodySmall,
+                color = color,
+            )
+            if (offersPairAgain(connection)) {
+                TextButton(
+                    onClick = onPairAgain,
+                    modifier = Modifier.heightIn(min = RafiqTheme.spacing.minTouchTarget),
+                ) {
+                    Text(stringResource(R.string.connection_pair_again))
+                }
+            }
+        }
     }
 }
+
+/** Only a refused token is fixed by pairing again. Offline and connecting fix themselves. */
+internal fun offersPairAgain(connection: ConnectionState): Boolean = connection == ConnectionState.Unauthorized
 
 /** The line a screen shows after a command did not go through, with a way to dismiss it. */
 @Composable

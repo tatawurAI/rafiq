@@ -27,7 +27,8 @@
   <!-- Connection -->
   <string name="connection_connecting">Connecting to your server</string>
   <string name="connection_offline">Offline. Showing what your phone last received.</string>
-  <string name="connection_unauthorized">Your server refused this phone\'s token. Pair again to reconnect.</string>
+  <string name="connection_unauthorized">Your server refused this phone\'s token.</string>
+  <string name="connection_pair_again">Pair again</string>
 
   <!-- New session -->
   <string name="new_session_title">New session</string>

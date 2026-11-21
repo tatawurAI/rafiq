@@ -17,6 +17,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 /** The app's single activity. It hosts the Compose UI and draws behind the system bars. */
 class MainActivity : ComponentActivity() {
@@ -39,6 +41,7 @@ class MainActivity : ComponentActivity() {
                         RafiqNavHost(
                             sessions = sessions,
                             pairing = { onPaired -> PairingScreen(container.pairing, onPaired) },
+                            onPairAgain = { lifecycleScope.launch { container.pairing.unpair() } },
                         )
                     }
                 }

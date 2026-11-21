@@ -122,7 +122,7 @@ internal fun ColumnScope.TimelinePane(
         ThreadTabs(state.screen.threads, state.selectedThread?.id, actions.onSelectThread)
     }
     HorizontalDivider(color = RafiqTheme.colors.border, thickness = RafiqTheme.spacing.hairline)
-    ConnectionBanner(state.connection)
+    ConnectionBanner(state.connection, onPairAgain = actions.onPairAgain)
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         val threadId = state.selectedThread?.id
         if (!state.isLoaded) {

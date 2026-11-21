@@ -43,11 +43,14 @@ import androidx.navigation.navArgument
  * comes in as a slot.
  *
  * @param pairing the pairing screen. It calls `onPaired` once a bridge is paired.
+ * @param onPairAgain forgets the refused pairing when you tap "Pair again". The connection then
+ *   reads as not paired and the app moves to [pairing].
  */
 @Composable
 fun RafiqNavHost(
     sessions: SessionRepository,
     pairing: @Composable (onPaired: () -> Unit) -> Unit,
+    onPairAgain: () -> Unit,
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
 ) {
@@ -78,6 +81,7 @@ fun RafiqNavHost(
                 viewModel = viewModel,
                 onOpen = { id -> navController.navigate(Routes.session(id)) },
                 onNewSession = { navController.navigate(Routes.NEW_SESSION) },
+                onPairAgain = onPairAgain,
             )
         }
         composable(Routes.NEW_SESSION) {
@@ -96,7 +100,7 @@ fun RafiqNavHost(
         ) { entry ->
             val sessionId = entry.arguments?.getString(Routes.SESSION_ID) ?: return@composable
             val viewModel = viewModel(key = sessionId) { SessionViewModel(sessions, sessionId) }
-            SessionRoute(viewModel = viewModel, onBack = { navController.popBackStack() })
+            SessionRoute(viewModel = viewModel, onBack = { navController.popBackStack() }, onPairAgain = onPairAgain)
         }
     }
 }

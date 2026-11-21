@@ -1,6 +1,8 @@
 package ai.tatawur.rafiq
 
-import ai.tatawur.rafiq.sessions.SessionsScreen
+import ai.tatawur.rafiq.data.RafiqApplication
+import ai.tatawur.rafiq.pairing.PairingScreen
+import ai.tatawur.rafiq.ui.navigation.RafiqNavHost
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import android.graphics.Color
 import android.os.Bundle
@@ -22,10 +24,15 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        // The screens see only the repository interfaces from :client.
+        val container = (application as RafiqApplication).container
         setContent {
             RafiqTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    SessionsScreen()
+                    RafiqNavHost(
+                        sessions = container.sessions,
+                        pairing = { onPaired -> PairingScreen(container.pairing, onPaired) },
+                    )
                 }
             }
         }

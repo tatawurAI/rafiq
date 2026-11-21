@@ -1,7 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="app_name">Rafiq</string>
+
+  <!-- Session list -->
   <string name="sessions_title">Sessions</string>
-  <string name="sessions_empty">No sessions yet. Connect to your server to start one.</string>
+  <string name="sessions_empty">No sessions yet. Start one with New session.</string>
+  <string name="sessions_empty_filtered">Nothing here right now.</string>
+  <string name="sessions_loading">Loading sessions</string>
   <string name="sessions_new">New session</string>
+  <string name="filter_all">All %1$d</string>
+  <string name="filter_needs_you">Needs you %1$d</string>
+  <string name="filter_working">Working %1$d</string>
+  <string name="filter_done">Done %1$d</string>
+  <string name="row_approve">Approve</string>
+  <string name="row_deny">Deny</string>
+  <string name="row_review">Review</string>
+  <string name="row_more_approvals">+%1$d more waiting</string>
+
+  <!-- Status -->
+  <string name="status_working">Working</string>
+  <string name="status_waiting_on_you">Waiting on you</string>
+  <string name="status_done">Done</string>
+  <string name="status_error">Error</string>
+  <string name="status_unknown">Idle</string>
+
+  <!-- Connection -->
+  <string name="connection_connecting">Connecting to your server</string>
+  <string name="connection_offline">Offline. Showing what your phone last received.</string>
+  <string name="connection_unauthorized">Your server refused this phone\'s token. Pair again to reconnect.</string>
+
+  <!-- New session -->
+  <string name="new_session_title">New session</string>
+  <string name="new_session_agent">Agent</string>
+  <string name="new_session_agents_loading">Loading agents</string>
+  <string name="new_session_agents_retry">Try again</string>
+  <string name="new_session_agents_none">Your server has no agents configured.</string>
+  <string name="new_session_project">Project folder on your server</string>
+  <string name="new_session_project_hint">/srv/weather-app</string>
+  <string name="new_session_name">Title (optional)</string>
+  <string name="new_session_start">Start session</string>
+
+  <!-- Session view -->
+  <string name="back">Back</string>
+  <string name="session_subtitle">%1$s · %2$s</string>
+  <string name="session_loading">Loading session</string>
+  <plurals name="thread_needs_you">
+    <item quantity="one">%1$d approval waiting on you</item>
+    <item quantity="other">%1$d approvals waiting on you</item>
+  </plurals>
+  <string name="thread_empty">Nothing in this thread yet.</string>
+  <string name="cancel_turn">Stop this thread</string>
+  <string name="jump_to_latest">Jump to latest</string>
+  <string name="streaming">Writing</string>
+  <string name="image_placeholder">Image: %1$s</string>
+  <string name="image_placeholder_no_alt">Image</string>
+  <string name="unknown_content">Content this version cannot show (%1$s)</string>
+  <string name="unknown_content_untyped">Content this version cannot show</string>
+
+  <!-- Tool cards -->
+  <string name="tool_edit">Edit</string>
+  <string name="tool_command">Command</string>
+  <string name="tool_search">Search</string>
+  <string name="tool_read">Read</string>
+  <string name="tool_fetch">Fetch</string>
+  <string name="tool_other">Tool</string>
+  <string name="tool_pending">Pending</string>
+  <string name="tool_in_progress">Running</string>
+  <string name="tool_completed">Done</string>
+  <string name="tool_failed">Failed</string>
+  <string name="tool_unknown">Unknown</string>
+  <string name="tool_no_output">No output.</string>
+  <string name="tool_expand">Show output</string>
+  <string name="tool_collapse">Hide output</string>
+
+  <!-- Approvals -->
+  <string name="approval_label">Waiting on you</string>
+  <string name="approval_pinned">Pinned · Agent asked</string>
+  <string name="approval_jump">Jump to it</string>
+  <string name="approval_expand">Answer</string>
+  <string name="approval_sending">Sending your answer</string>
+
+  <!-- Composer -->
+  <string name="composer_hint">Message %1$s</string>
+  <string name="composer_hint_busy">The agent is working</string>
+  <string name="composer_send">Send</string>
+  <string name="composer_dictate">Dictate</string>
+  <string name="composer_listening">Listening. Tap to stop.</string>
+  <string name="quick_reply_yes">Yes, go ahead</string>
+  <string name="quick_reply_explain">Explain first</string>
+  <string name="quick_reply_tests">Run the tests</string>
+  <string name="quick_reply_stop">Stop</string>
+
+  <!-- Feedback after a command -->
+  <string name="feedback_still_working">The agent is still working. Try again when it finishes.</string>
+  <string name="feedback_already_answered">That approval was already answered.</string>
+  <string name="feedback_offline">You are offline. Nothing was sent.</string>
+  <string name="feedback_not_found">Your server no longer has that session.</string>
+  <string name="feedback_unauthorized">Your server refused this phone\'s token.</string>
+  <string name="feedback_failed">Your server said: %1$s</string>
+  <string name="feedback_dismiss">Dismiss</string>
 </resources>

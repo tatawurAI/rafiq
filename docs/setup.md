@@ -80,8 +80,8 @@ The first gives `{"status":"ok","version":"..."}`. The first request after you t
 ## 6. Pair your phone
 
 1. Make sure Tailscale is connected on your phone.
-2. Open Rafiq and enter the bridge address, `https://box.example.ts.net`, with no port and no path.
-3. Paste the device token.
+2. Open Rafiq. Under **Server address**, enter `https://box.example.ts.net`, with no port and no path.
+3. Under **Device token**, paste the token.
 
 The app then connects and shows your sessions.
 

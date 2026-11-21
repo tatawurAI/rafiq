@@ -45,7 +45,7 @@ kotlin {
 }
 
 dependencies {
-    implementation(project(":protocol"))
+    implementation(project(":client"))
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material3)

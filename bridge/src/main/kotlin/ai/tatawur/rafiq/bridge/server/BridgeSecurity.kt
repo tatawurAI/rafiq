@@ -1,5 +1,7 @@
 package ai.tatawur.rafiq.bridge.server
 
+import ai.tatawur.rafiq.protocol.api.ApiError
+import ai.tatawur.rafiq.protocol.api.ApiErrorDetail
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application

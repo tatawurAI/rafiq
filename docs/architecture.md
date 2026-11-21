@@ -8,7 +8,8 @@ Rafiq is pre-alpha. Part of what follows is design, not code.
 
 | Part | Built |
 |---|---|
-| `:protocol` | The event types, with their serialisation and the unknown-type fallback |
+| `:protocol` | The event types, with their serialisation and the unknown-type fallback, and the request and response bodies of the bridge's routes |
+| `:client` | The repository interfaces and screen-state types the app's screens use |
 | Bridge | The SQLite event log, the session manager, the ACP adapter, `WS /events` with replay, the session routes, a flag-gated dev page, and a shared device token with host and origin checks. It binds to `127.0.0.1` by default. |
 | Android app | A themed shell with an empty session list |
 
@@ -32,7 +33,14 @@ Rafiq has three layers. The phone talks to a bridge server over a WebSocket. The
        \________________ Tailscale (WireGuard) ________________/
 ```
 
-The code is Kotlin on both ends, built by one Gradle build. A shared `:protocol` module holds the event model, so the bridge and the app cannot drift apart. See [ADR 0002](adr/0002-one-gradle-build-for-protocol-bridge-and-app.md) and [ADR 0003](adr/0003-kotlin-on-both-ends-with-a-shared-protocol-module.md).
+The code is Kotlin on both ends, built by one Gradle build. A shared `:protocol` module holds the event model, so the bridge and the app cannot drift apart. A pure Kotlin `:client` module holds the app's logic that needs no Android: the screen state, the reducer from events to that state, and the replay cursor. See [ADR 0011](adr/0011-a-pure-kotlin-client-module-for-app-logic.md) and [ADR 0003](adr/0003-kotlin-on-both-ends-with-a-shared-protocol-module.md).
+
+| Module | Kind | Depends on |
+|---|---|---|
+| `:protocol` | Kotlin/JVM library | nothing in the build |
+| `:client` | Kotlin/JVM library | `:protocol` |
+| `:bridge` | JVM application | `:protocol` |
+| `:android` | Android application | `:client` |
 
 ### Links
 
@@ -76,7 +84,7 @@ Output the app does not recognise falls back to a plain Message, so a new agent 
 
 ## Bridge server
 
-The bridge is one long-running JVM process built on Ktor. systemd manages it, and it listens only on the Tailscale interface.
+The bridge is one long-running JVM process built on Ktor. systemd manages it. It listens on `127.0.0.1`, and `tailscale serve` puts it behind HTTPS at your server's `*.ts.net` name. See [ADR 0012](adr/0012-https-through-tailscale-serve.md).
 
 ### Adapters
 
@@ -132,7 +140,7 @@ The bridge reads environment variables at start-up. Nothing reads a `.env` file.
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `RAFIQ_BIND_ADDRESS` | Address to listen on. Use your Tailscale address. | `127.0.0.1` |
+| `RAFIQ_BIND_ADDRESS` | Address to listen on. Keep the default and use `tailscale serve`. | `127.0.0.1` |
 | `RAFIQ_PORT` | Port to listen on | `8740` |
 | `RAFIQ_DATA_DIR` | Folder for the database and logs. Unset keeps events in memory only. | unset |
 | `RAFIQ_AGENTS` | Agents as `id=command` pairs separated by commas | unset |
@@ -154,7 +162,7 @@ The bridge watches for new listening ports under a session's processes. When one
 ### Storage and security
 
 - SQLite holds sessions, threads and the event log.
-- Tailscale ACLs restrict the bridge's port to your devices. A device token adds a second check, and the bridge enforces it now. The `Host` header must be the bind address, `localhost` or a listed name (421 otherwise), and a request with a foreign `Origin` is refused, so a web page cannot reach the bridge through DNS rebinding. Pairing, Keystore storage and revocation come with M3. See [ADR 0006](adr/0006-tailscale-only-network-with-a-per-device-token.md).
+- Tailscale ACLs restrict the bridge's port to your devices. A device token adds a second check, and the bridge enforces it now. The `Host` header must be the bind address, `localhost` or a listed name (421 otherwise), and a request with a foreign `Origin` is refused, so a web page cannot reach the bridge through DNS rebinding. Pairing, Keystore storage and revocation come with M3. See [ADR 0012](adr/0012-https-through-tailscale-serve.md).
 - The file API refuses paths outside the session's project root.
 - Approvals require a fresh biometric check on the phone.
 - Push payloads carry ids and short status only.

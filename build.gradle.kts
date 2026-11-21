@@ -14,7 +14,7 @@ apply(from = "gradle/changelog.gradle.kts")
 
 // Formatting and static analysis run once from the root over every module's
 // sources, so a new module is covered without extra setup.
-val moduleSourceDirs = listOf("protocol/src", "bridge/src", "android/src")
+val moduleSourceDirs = listOf("protocol/src", "client/src", "bridge/src", "android/src")
 
 spotless {
     val ktlintVersion = libs.versions.ktlint.get()

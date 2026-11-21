@@ -5,6 +5,12 @@ import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.bridge.store.SlowConsumerException
 import ai.tatawur.rafiq.protocol.Event
+import ai.tatawur.rafiq.protocol.api.Accepted
+import ai.tatawur.rafiq.protocol.api.ApiError
+import ai.tatawur.rafiq.protocol.api.ApiErrorDetail
+import ai.tatawur.rafiq.protocol.api.ApprovalAnswer
+import ai.tatawur.rafiq.protocol.api.CreateSessionRequest
+import ai.tatawur.rafiq.protocol.api.PromptRequest
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode

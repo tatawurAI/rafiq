@@ -3,12 +3,10 @@ package ai.tatawur.rafiq.client.sync
 import ai.tatawur.rafiq.client.ConnectionState
 import ai.tatawur.rafiq.client.SessionReducer
 import ai.tatawur.rafiq.protocol.Event
-import ai.tatawur.rafiq.protocol.api.SessionSummary
 import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
@@ -125,33 +123,5 @@ private class ScriptedSource(
             emit(SocketFrame.Text(line))
         }
         awaitCancellation()
-    }
-}
-
-private class FakeConditions : AppConditions {
-    override val foreground: StateFlow<Boolean> = MutableStateFlow(true)
-    val network = MutableStateFlow(true)
-    override val networkAvailable: StateFlow<Boolean> = network
-}
-
-private class InMemoryEventStore : EventStore {
-    private val events = sortedMapOf<Pair<String, Long>, Event>(compareBy({ it.first }, { it.second }))
-    private var summaries = emptyList<SessionSummary>()
-
-    override suspend fun events(sessionId: String) = events.values.filter { it.sessionId == sessionId }
-
-    override suspend fun append(event: Event) {
-        events[event.sessionId to event.seq] = event
-    }
-
-    override suspend fun summaries() = summaries
-
-    override suspend fun replaceSummaries(summaries: List<SessionSummary>) {
-        this.summaries = summaries
-    }
-
-    override suspend fun clear() {
-        events.clear()
-        summaries = emptyList()
     }
 }

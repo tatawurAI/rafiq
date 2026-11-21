@@ -15,4 +15,5 @@
   <string name="pairing_hint_not_a_bridge">Something answered, but it is not a Rafiq bridge. Check the address and port.</string>
   <string name="pairing_hint_host_rejected">The bridge refused this address. Add the name to RAFIQ_ALLOWED_HOSTS on your server and restart the bridge.</string>
   <string name="pairing_hint_token_rejected">The bridge refused the token. Paste the value of RAFIQ_DEVICE_TOKEN from your server.</string>
+  <string name="pairing_hint_not_saved">This phone could not finish pairing. Try again.</string>
 </resources>

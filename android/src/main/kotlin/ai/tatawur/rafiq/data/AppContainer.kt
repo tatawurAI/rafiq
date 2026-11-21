@@ -11,13 +11,19 @@ import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.util.Log
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.room.Room
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
-private val Context.pairingStore by preferencesDataStore(name = "pairing")
+// A damaged file reads as empty, which means pairing again, instead of failing every launch.
+private val Context.pairingStore by preferencesDataStore(
+    name = "pairing",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 /**
  * The app's object graph, built once per process. Screens take [sessions] and [pairing] and nothing
@@ -62,14 +68,21 @@ class AppContainer(
             scope = scope,
             nowMs = System::currentTimeMillis,
             onApplied = if (application.isDebuggable()) { event -> logApplied(event) } else { _ -> },
+            onRejected = if (application.isDebuggable()) { status -> logRejected(status) } else { _ -> },
         )
 
     private companion object {
         // The airplane-mode check compares this log with the bridge's: `adb logcat -s RafiqSeq`.
         const val SEQ_TAG = "RafiqSeq"
 
+        const val LINK_TAG = "RafiqLink"
+
         fun logApplied(event: Event) {
             Log.d(SEQ_TAG, "session=${event.sessionId} seq=${event.seq}")
+        }
+
+        fun logRejected(status: Int) {
+            Log.d(LINK_TAG, "The bridge refused the socket with HTTP $status: it does not accept this host or origin.")
         }
 
         fun Context.isDebuggable(): Boolean = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0

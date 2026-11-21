@@ -1,0 +1,1 @@
+The bridge serves `GET /sessions/summaries`, with each session's newest event number, a one-line preview of its latest message and its open approvals, and `GET /agents`, which lists the agents you can start a session with.

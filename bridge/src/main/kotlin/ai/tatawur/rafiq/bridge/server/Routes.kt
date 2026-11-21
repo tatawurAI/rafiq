@@ -6,6 +6,7 @@ import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.bridge.store.SlowConsumerException
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.api.Accepted
+import ai.tatawur.rafiq.protocol.api.AgentInfo
 import ai.tatawur.rafiq.protocol.api.ApiError
 import ai.tatawur.rafiq.protocol.api.ApiErrorDetail
 import ai.tatawur.rafiq.protocol.api.ApprovalAnswer
@@ -95,8 +96,8 @@ private suspend fun ApplicationCall.respondInvalidBody() {
 }
 
 /**
- * The session routes. They stay thin: parsing here, the work in [SessionManager]. Every route needs the
- * device token (see [BridgeSecurity]).
+ * The session and agent routes. They stay thin: parsing here, the work in [SessionManager]. Every route
+ * needs the device token (see [BridgeSecurity]).
  */
 internal fun Route.sessionRoutes(sessions: SessionManager) {
     post("/sessions") {
@@ -108,6 +109,12 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
     }
     get("/sessions") {
         call.respond(sessions.sessions())
+    }
+    get("/sessions/summaries") {
+        call.respond(sessions.summaries())
+    }
+    get("/agents") {
+        call.respond(sessions.agentIds.map(::AgentInfo))
     }
     get("/sessions/{id}/threads") {
         call.respond(sessions.threads(call.parameters.getOrFail("id")))

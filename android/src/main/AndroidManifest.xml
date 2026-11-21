@@ -26,8 +26,9 @@
     android:supportsRtl="true"
     android:theme="@style/Theme.Rafiq">
 
-    <!-- adjustResize: the app draws edge to edge and moves its own content above the keyboard
-         through window insets, so the system must not pan the window as well.
+    <!-- adjustResize: the app draws edge to edge, so the window keeps its size when the keyboard
+         opens. The keyboard reaches Compose as the IME window inset, and the screens pad their
+         content above it. This is the mode Android documents for apps that handle that inset.
          configChanges: folding, unfolding and moving to the cover screen reach Compose as a new
          configuration instead of restarting the activity, so lists keep their scroll position. -->
     <activity

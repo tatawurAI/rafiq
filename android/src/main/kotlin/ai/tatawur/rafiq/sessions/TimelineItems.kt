@@ -157,154 +157,19 @@ private const val CARET = "▍"
 private const val PULSE_MS = 600
 private const val PULSE_MIN_ALPHA = 0.2f
 
-@DrawableRes
-private fun toolIcon(kind: ToolCallKind): Int =
-    when (kind) {
-        ToolCallKind.EDIT -> R.drawable.ic_tool_edit
-        ToolCallKind.COMMAND -> R.drawable.ic_tool_command
-        ToolCallKind.SEARCH -> R.drawable.ic_tool_search
-        ToolCallKind.READ -> R.drawable.ic_tool_read
-        ToolCallKind.FETCH -> R.drawable.ic_tool_fetch
-        ToolCallKind.OTHER -> R.drawable.ic_tool_other
-    }
-
 @StringRes
-private fun toolLabel(kind: ToolCallKind): Int =
+private fun noticeSentence(kind: NoticeKind): Int =
     when (kind) {
-        ToolCallKind.EDIT -> R.string.tool_edit
-        ToolCallKind.COMMAND -> R.string.tool_command
-        ToolCallKind.SEARCH -> R.string.tool_search
-        ToolCallKind.READ -> R.string.tool_read
-        ToolCallKind.FETCH -> R.string.tool_fetch
-        ToolCallKind.OTHER -> R.string.tool_other
-    }
-
-@StringRes
-private fun toolStatusLabel(status: ToolCallStatus): Int =
-    when (status) {
-        ToolCallStatus.PENDING -> R.string.tool_pending
-        ToolCallStatus.IN_PROGRESS -> R.string.tool_in_progress
-        ToolCallStatus.COMPLETED -> R.string.tool_completed
-        ToolCallStatus.FAILED -> R.string.tool_failed
-        ToolCallStatus.UNKNOWN -> R.string.tool_unknown
+        NoticeKind.AUTH_REQUIRED -> R.string.notice_auth_required
+        NoticeKind.PREVIEW -> R.string.notice_preview
+        NoticeKind.FILE_CHANGED -> R.string.notice_file_changed
+        NoticeKind.UNKNOWN_EVENT -> R.string.notice_unknown_event
     }
 
 /**
- * A tool call as a card: an icon for its kind, what it acts on, and its status. Tapping the header
- * shows the output. While an approval for the call is open, the card carries it inline.
- *
- * @param expanded whether the output shows. The screen keeps it, so it survives recomposition.
- */
-@Composable
-fun ToolCard(
-    tool: TimelineItem.Tool,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    answering: Boolean,
-    onAnswer: (optionId: String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val spacing = RafiqTheme.spacing
-    val colors = RafiqTheme.colors
-    val approval = tool.approval
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = colors.surface,
-        border = BorderStroke(spacing.hairline, if (approval != null) colors.needsYou else colors.border),
-    ) {
-        Column(modifier = Modifier.animateContentSize()) {
-            ToolCardHeader(tool, expanded, onToggle)
-            if (expanded) {
-                HorizontalDivider(color = colors.border, thickness = spacing.hairline)
-                Text(
-                    text = tool.output ?: stringResource(R.string.tool_no_output),
-                    modifier = Modifier.padding(horizontal = spacing.smallMedium, vertical = spacing.small),
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = plexMono),
-                    color = colors.textSecondary,
-                )
-            }
-            if (approval != null) {
-                HorizontalDivider(color = colors.border, thickness = spacing.hairline)
-                Column(
-                    modifier = Modifier.padding(spacing.smallMedium),
-                    verticalArrangement = Arrangement.spacedBy(spacing.small),
-                ) {
-                    Text(
-                        text = stringResource(R.string.approval_label),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.needsYou,
-                    )
-                    Text(
-                        text = approval.description,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        color = colors.text,
-                    )
-                    ApprovalOptions(approval.options, answering, onAnswer)
-                }
-            }
-        }
-    }
-}
-
-/** The tappable first line of a tool card: kind icon, summary, status and the expand chevron. */
-@Composable
-private fun ToolCardHeader(
-    tool: TimelineItem.Tool,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-) {
-    val spacing = RafiqTheme.spacing
-    val colors = RafiqTheme.colors
-    val statusColor =
-        when {
-            tool.approval != null -> colors.needsYou
-            tool.status == ToolCallStatus.FAILED -> colors.deletion
-            tool.status == ToolCallStatus.COMPLETED || tool.status == ToolCallStatus.IN_PROGRESS -> colors.accent
-            else -> colors.textMuted
-        }
-    val stateLabel = stringResource(if (expanded) R.string.tool_collapse else R.string.tool_expand)
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = spacing.minTouchTarget)
-                .clickable(role = Role.Button, onClickLabel = stateLabel, onClick = onToggle)
-                .padding(horizontal = spacing.smallMedium, vertical = spacing.small),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(spacing.small),
-    ) {
-        Icon(
-            painter = painterResource(toolIcon(tool.kind)),
-            contentDescription = stringResource(toolLabel(tool.kind)),
-            modifier = Modifier.size(spacing.icon),
-            tint = if (tool.kind == ToolCallKind.EDIT) colors.accent else colors.textMuted,
-        )
-        Text(
-            text = tool.inputSummary,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = plexMono),
-            color = colors.textSecondary,
-            maxLines = if (expanded) Int.MAX_VALUE else 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = stringResource(toolStatusLabel(tool.status)),
-            style = MaterialTheme.typography.bodySmall,
-            color = statusColor,
-        )
-        Icon(
-            painter = painterResource(if (expanded) R.drawable.ic_chevron_up else R.drawable.ic_chevron_down),
-            contentDescription = null,
-            modifier = Modifier.size(spacing.icon),
-            tint = colors.textMuted,
-        )
-    }
-}
-
-/**
- * A sign-in request, preview, file change or unknown event, as one plain line. A notice with a
- * URL, such as a sign-in page, opens it in the browser when tapped.
+ * A sign-in request, preview, file change or unknown event, as one plain line. The notice carries
+ * only the event's own words, such as a path or a provider, and the line puts them in a sentence
+ * for its kind. A notice with a URL, such as a sign-in page, opens it in the browser when tapped.
  */
 @Composable
 fun NoticeLine(
@@ -327,7 +192,7 @@ fun NoticeLine(
             Modifier
         }
     Text(
-        text = notice.text,
+        text = stringResource(noticeSentence(notice.kind), notice.text),
         modifier = modifier.fillMaxWidth().then(tappable).padding(vertical = RafiqTheme.spacing.xSmall),
         style = MaterialTheme.typography.labelMedium,
         color = color,
@@ -406,7 +271,9 @@ private fun TimelineItemsPreview() {
                 previewTools.forEachIndexed { index, tool ->
                     ToolCard(tool, expanded = index == 0, onToggle = {}, answering = false, onAnswer = {})
                 }
-                NoticeLine(TimelineItem.Notice("n", 0, NoticeKind.FILE_CHANGED, "src/forecast/Units.kt changed", null))
+                NoticeLine(
+                    TimelineItem.Notice("n", 0, NoticeKind.FILE_CHANGED, "src/forecast/Units.kt (modified)", null),
+                )
             }
         }
     }

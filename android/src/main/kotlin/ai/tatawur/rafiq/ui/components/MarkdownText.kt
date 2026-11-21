@@ -35,6 +35,9 @@ fun MarkdownText(
     val colors = RafiqTheme.colors
     val body = type.bodyLarge.copy(color = color)
     val code = type.bodyMedium.copy(fontFamily = plexMono, color = colors.text)
+    // Inline code is a size smaller than the body and inherits the body's line height, so its fill
+    // sits inside the line instead of filling it edge to edge and clipping the glyphs.
+    val inlineCode = type.bodyMedium.copy(fontFamily = plexMono, color = color, lineHeight = body.lineHeight)
     val state = rememberMarkdownState(content = markdown, retainState = true)
     Markdown(
         markdownState = state,
@@ -43,7 +46,7 @@ fun MarkdownText(
             markdownColor(
                 text = color,
                 codeBackground = colors.ground,
-                inlineCodeBackground = colors.border,
+                inlineCodeBackground = colors.border.copy(alpha = INLINE_CODE_FILL_ALPHA),
                 dividerColor = colors.border,
                 tableBackground = colors.surface,
             ),
@@ -62,7 +65,7 @@ fun MarkdownText(
                 bullet = body,
                 list = body,
                 code = code,
-                inlineCode = body.copy(fontFamily = plexMono),
+                inlineCode = inlineCode,
                 quote = type.bodyMedium.copy(color = colors.textSecondary),
                 table = body,
                 textLink =
@@ -74,6 +77,9 @@ fun MarkdownText(
     )
 }
 
+// A low-contrast fill: enough to set code apart, never a dark slab over the text.
+private const val INLINE_CODE_FILL_ALPHA = 0.5f
+
 @Preview(name = "Markdown", widthDp = 360)
 @Composable
 private fun MarkdownTextPreview() {
@@ -83,7 +89,8 @@ private fun MarkdownTextPreview() {
                 markdown =
                     """
                     ### Findings
-                    The forecast client reads the API key in **two places**. See `forecast/Client.kt`.
+                    The forecast client reads the API key in **two places**. See `forecast/Client.kt`. The API returns
+                    `temperature_unit`, `wind_speed_unit` and `precipitation_unit` on every hourly entry.
 
                     - `Client.kt` holds the canonical value
                     - `Cache.kt` duplicates it

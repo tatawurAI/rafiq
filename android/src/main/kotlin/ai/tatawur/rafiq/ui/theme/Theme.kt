@@ -20,8 +20,14 @@ import androidx.compose.ui.unit.dp
  * @property icon icons inside buttons, cards and chips.
  * @property hairline borders on cards, chips and dividers.
  * @property bubbleMaxWidthFraction how much of the width a chat bubble may take.
- * @property compactHeight below this height, for example on a cover screen, a screen folds
- *   secondary panels into one line so the main content keeps its room.
+ * @property compactHeight below this height, for example on a cover screen (about 353dp tall on a
+ *   Z Flip) or a tall screen with the keyboard up, a screen tightens its padding and collapses the
+ *   "New session" button to an icon so the main content keeps its room.
+ * @property largeTouchTarget full-size action buttons: the half-folded bottom pane's approval
+ *   buttons and the compact pinned approval's height.
+ * @property hingeBand the inert band drawn over the hinge when the phone is half folded.
+ * @property tabIndicator the underline under the selected thread tab.
+ * @property fadingEdge how far a sideways-scrolling row fades out at an edge with more content.
  */
 @Immutable
 data class RafiqSpacing(
@@ -37,6 +43,10 @@ data class RafiqSpacing(
     val hairline: Dp = 1.dp,
     val bubbleMaxWidthFraction: Float = 0.85f,
     val compactHeight: Dp = 560.dp,
+    val largeTouchTarget: Dp = 56.dp,
+    val hingeBand: Dp = 16.dp,
+    val tabIndicator: Dp = 2.dp,
+    val fadingEdge: Dp = 32.dp,
 )
 
 /**

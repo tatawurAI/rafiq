@@ -22,6 +22,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 
@@ -52,15 +54,19 @@ fun statusLabel(state: AgentState): Int =
 /**
  * A small dot for [state]. Finished states draw a hollow ring, so a done session reads as quiet
  * next to a running one even without colour.
+ *
+ * @param describe reads the status word to screen readers, for a dot with no label beside it.
  */
 @Composable
 fun StatusDot(
     state: AgentState,
     modifier: Modifier = Modifier,
+    describe: Boolean = false,
 ) {
     val color = statusColor(state)
     val size = RafiqTheme.spacing.statusDot
-    val dot = modifier.size(size)
+    val label = stringResource(statusLabel(state))
+    val dot = modifier.size(size).then(if (describe) Modifier.semantics { contentDescription = label } else Modifier)
     val hollow = state == AgentState.DONE || state == AgentState.UNKNOWN
     Box(
         modifier =

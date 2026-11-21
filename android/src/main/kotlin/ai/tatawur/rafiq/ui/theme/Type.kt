@@ -21,7 +21,7 @@ private val plexSans =
         Font(R.font.plex_sans_semibold, FontWeight.SemiBold),
     )
 
-/** IBM Plex Mono, for labels and code. Public so code views can use it outside the Material roles. */
+/** IBM Plex Mono, for small labels and code. Public so code views can use it outside the Material roles. */
 val plexMono =
     FontFamily(
         Font(R.font.plex_mono_regular, FontWeight.Normal),
@@ -30,7 +30,9 @@ val plexMono =
 
 /**
  * Material's type scale with Rafiq's families: Archivo for display, headline and title roles,
- * IBM Plex Sans for body text, IBM Plex Mono for labels. Sizes and line heights stay Material's.
+ * IBM Plex Sans for body text and for the large and medium label roles that buttons, chips and tabs
+ * use, IBM Plex Mono for small labels such as paths and eyebrows. Mono buttons ran wide enough to
+ * wrap on a 360dp screen. Sizes and line heights stay Material's.
  */
 internal val rafiqTypography: Typography =
     Typography().run {
@@ -47,8 +49,8 @@ internal val rafiqTypography: Typography =
             bodyLarge = bodyLarge.copy(fontFamily = plexSans, fontWeight = FontWeight.Normal),
             bodyMedium = bodyMedium.copy(fontFamily = plexSans, fontWeight = FontWeight.Normal),
             bodySmall = bodySmall.copy(fontFamily = plexSans, fontWeight = FontWeight.Normal),
-            labelLarge = labelLarge.copy(fontFamily = plexMono, fontWeight = FontWeight.Medium),
-            labelMedium = labelMedium.copy(fontFamily = plexMono, fontWeight = FontWeight.Medium),
+            labelLarge = labelLarge.copy(fontFamily = plexSans, fontWeight = FontWeight.Medium),
+            labelMedium = labelMedium.copy(fontFamily = plexSans, fontWeight = FontWeight.Medium),
             labelSmall = labelSmall.copy(fontFamily = plexMono, fontWeight = FontWeight.Normal),
         )
     }

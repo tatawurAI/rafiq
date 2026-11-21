@@ -1,6 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+  <!-- Dictation in the composer, on-device only. Asked for the first time you tap the mic. -->
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+  <!-- Lets the app see the speech recognition service, which Android 11 and later hide. -->
+  <queries>
+    <intent>
+      <action android:name="android.speech.RecognitionService" />
+    </intent>
+  </queries>
+
   <application
     android:allowBackup="false"
     android:icon="@mipmap/ic_launcher"
@@ -11,7 +21,8 @@
 
     <activity
       android:name=".MainActivity"
-      android:exported="true">
+      android:exported="true"
+      android:resizeableActivity="true">
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />

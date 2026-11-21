@@ -1,0 +1,5 @@
+{"session_id":"ses_weather_app","seq":1,"ts_ms":1795165200000,"payload":{"type":"session_updated","session":{"id":"ses_weather_app","agent":"claude","project_path":"/home/user/weather-app","title":"weather-app","status":"done","created_at_ms":0,"updated_at_ms":0}}}
+{"session_id":"ses_weather_app","seq":2,"ts_ms":1795165200250,"payload":{"type":"thread_updated","thread":{"id":"main","session_id":"ses_weather_app","kind":"main","title":"weather-app","status":"done"}}}
+{"session_id":"ses_weather_app","seq":3,"ts_ms":1795165200500,"payload":{"type":"status_changed","thread_id":"main","state":"done","detail":"Resumed."}}
+{"session_id":"ses_weather_app","seq":4,"ts_ms":1795165200750,"payload":{"type":"message","id":"id-1","thread_id":"main","role":"agent","content":[{"type":"markdown","markdown":"Picking up where we left off."}],"streaming":true}}
+{"session_id":"ses_weather_app","seq":5,"ts_ms":1795165201000,"payload":{"type":"message","id":"id-1","thread_id":"main","role":"agent","content":[{"type":"markdown","markdown":"Picking up where we left off."}],"streaming":false}}

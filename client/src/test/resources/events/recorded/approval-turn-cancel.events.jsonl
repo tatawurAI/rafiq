@@ -1,0 +1,10 @@
+{"session_id":"ses_weather_app","seq":1,"ts_ms":1795165200000,"payload":{"type":"session_updated","session":{"id":"ses_weather_app","agent":"claude","project_path":"/home/user/weather-app","title":"weather-app","status":"done","created_at_ms":1795165200000,"updated_at_ms":1795165200000}}}
+{"session_id":"ses_weather_app","seq":2,"ts_ms":1795165200250,"payload":{"type":"thread_updated","thread":{"id":"main","session_id":"ses_weather_app","kind":"main","title":"weather-app","status":"done"}}}
+{"session_id":"ses_weather_app","seq":3,"ts_ms":1795165200500,"payload":{"type":"message","id":"user:00000000-0000-4000-8000-000000000001","thread_id":"main","role":"user","content":[{"type":"text","text":"Clean up."}],"streaming":false}}
+{"session_id":"ses_weather_app","seq":4,"ts_ms":1795165200750,"payload":{"type":"status_changed","thread_id":"main","state":"working"}}
+{"session_id":"ses_weather_app","seq":5,"ts_ms":1795165201000,"payload":{"type":"tool_call","id":"call_007","thread_id":"main","kind":"edit","input_summary":"Delete the build folder","status":"pending"}}
+{"session_id":"ses_weather_app","seq":6,"ts_ms":1795165201250,"payload":{"type":"tool_call","id":"call_007","thread_id":"main","kind":"edit","input_summary":"Delete the build folder","status":"pending"}}
+{"session_id":"ses_weather_app","seq":7,"ts_ms":1795165201500,"payload":{"type":"approval_request","id":"id-1","tool_call_id":"call_007","description":"Delete the build folder","options":[{"id":"allow-once","kind":"allow_once","label":"Allow once"},{"id":"reject-once","kind":"deny","label":"Reject"}]}}
+{"session_id":"ses_weather_app","seq":8,"ts_ms":1795165201750,"payload":{"type":"status_changed","thread_id":"main","state":"waiting_on_you"}}
+{"session_id":"ses_weather_app","seq":9,"ts_ms":1795165202000,"payload":{"type":"approval_resolved","id":"id-1","outcome":"cancelled"}}
+{"session_id":"ses_weather_app","seq":10,"ts_ms":1795165202250,"payload":{"type":"status_changed","thread_id":"main","state":"waiting_on_you","detail":"cancelled"}}

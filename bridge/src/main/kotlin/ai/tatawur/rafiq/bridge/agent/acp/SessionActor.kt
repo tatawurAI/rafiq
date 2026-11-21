@@ -9,11 +9,17 @@ import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import com.agentclientprotocol.model.AcpMethod
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import org.slf4j.LoggerFactory
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The one place a session's state changes: a single consumer of [Item]s that owns the mapper.
@@ -23,11 +29,19 @@ import org.slf4j.LoggerFactory
  * approval. Items are handled one at a time, so the mapper needs no lock and the [updates] keep the
  * agent's wire order. Callers that need an answer, such as a prompt that may be refused, pass a
  * reply that the consumer completes.
+ *
+ * A reply the agent sends on the main thread outside a turn, such as its follow-up once background
+ * helpers report back, has no prompt answer to end it. The mapper ends it on the agent's usage report
+ * when the agent sends one. As a fallback, the consumer ends it after [quietPeriod] with no new chunk.
+ *
+ * @param scheduler runs the quiet-period timer. Tests pass one driven by a virtual clock.
  */
 internal class SessionActor(
     private val mapper: AcpEventMapper,
     private val approvals: ApprovalDesk,
     private val newId: () -> String,
+    private val scheduler: Scheduler,
+    private val quietPeriod: Duration = DEFAULT_QUIET_PERIOD,
 ) {
     /** A change to the session, queued for the consumer. */
     sealed interface Item {
@@ -51,6 +65,11 @@ internal class SessionActor(
         data class Cancel(
             val threadId: String,
             val reply: CompletableDeferred<String>,
+        ) : Item
+
+        /** The quiet-period timer armed as [generation] ran out. Stale when a later chunk re-armed it. */
+        data class QuietPeriodOver(
+            val generation: Long,
         ) : Item
 
         /** The prompt request could not be written, so the turn it started is over. */
@@ -83,6 +102,9 @@ internal class SessionActor(
 
     // From a prompt until the agent answers it. ACP takes one prompt at a time per session.
     private var turnInFlight = false
+
+    private var quietTimer: DisposableHandle? = null
+    private var quietGeneration = 0L
 
     /** What the session reports, in order. Completes after [Item.Finish]. */
     val updates: Flow<EventPayload> = events.receiveAsFlow()
@@ -120,6 +142,7 @@ internal class SessionActor(
             }
         } finally {
             val ended = AgentUnavailableException("The agent session has ended.")
+            quietTimer?.dispose()
             items.close()
             failQueued(items, ended)
             // Approvals still open end with the session, and each is reported before the stream closes.
@@ -150,6 +173,13 @@ internal class SessionActor(
 
             is Item.Cancel -> {
                 item.reply.answer { onCancel(item.threadId) }
+            }
+
+            is Item.QuietPeriodOver -> {
+                // Inside a turn the prompt's answer ends the reply, so a pause there ends nothing.
+                if (item.generation == quietGeneration && !turnInFlight) {
+                    events.sendAll(mapper.quietPeriodOver(MAIN_THREAD_ID))
+                }
             }
 
             Item.PromptNotSent -> {
@@ -253,10 +283,27 @@ internal class SessionActor(
         val queue = early
         val update = params["update"] as? JsonObject
         when {
-            queue != null -> queue += acpSessionId to params
-            replaying && acpSessionId == mapper.threads.rootAcpSessionId -> Unit
-            update != null -> events.sendAll(mapper.sessionUpdate(acpSessionId, update, params["_meta"]))
+            queue != null -> {
+                queue += acpSessionId to params
+            }
+
+            replaying && acpSessionId == mapper.threads.rootAcpSessionId -> {
+                Unit
+            }
+
+            update != null -> {
+                val mapped = mapper.sessionUpdate(acpSessionId, update, params["_meta"])
+                events.sendAll(mapped)
+                if (mapped.any(::streamsOnMain)) armQuietTimer()
+            }
         }
+    }
+
+    /** Starts the quiet period again from now. Only the newest timer counts, see [Item.QuietPeriodOver]. */
+    private fun armQuietTimer() {
+        quietTimer?.dispose()
+        val generation = ++quietGeneration
+        quietTimer = scheduler.schedule(quietPeriod) { offer(Item.QuietPeriodOver(generation)) }
     }
 
     /** Maps a permission request and files it for the SDK handler to answer. */
@@ -299,6 +346,34 @@ internal class SessionActor(
         val logger = LoggerFactory.getLogger(SessionActor::class.java)
     }
 }
+
+/** Runs an action after a delay. The bridge runs it on a coroutine, and tests drive a virtual clock. */
+internal fun interface Scheduler {
+    /** Runs [action] once [after] has passed, unless the returned handle is disposed first. */
+    fun schedule(
+        after: Duration,
+        action: () -> Unit,
+    ): DisposableHandle
+}
+
+/** A [Scheduler] whose timers are coroutines in this scope, so they end with it. */
+internal fun CoroutineScope.scheduler(): Scheduler =
+    Scheduler { after, action ->
+        val timer =
+            launch {
+                delay(after)
+                action()
+            }
+        DisposableHandle { timer.cancel() }
+    }
+
+/** True for a chunk of a message streaming on the main thread: a start, a delta or a resumed message. */
+private fun streamsOnMain(payload: EventPayload): Boolean =
+    when (payload) {
+        is EventPayload.MessageDelta -> payload.threadId == MAIN_THREAD_ID
+        is EventPayload.Message -> payload.isStreaming && payload.threadId == MAIN_THREAD_ID
+        else -> false
+    }
 
 /**
  * Refuses whoever waits on an [item] that failed: the caller of a prompt or cancel, and the SDK
@@ -383,6 +458,12 @@ private inline fun <T> CompletableDeferred<T>.answer(block: () -> T) {
         completeExceptionally(e)
     }
 }
+
+/**
+ * How long a reply outside a turn may go without a new chunk before it is taken as complete. Long
+ * enough for a pause inside one reply, short enough that a finished reply soon stops showing as typing.
+ */
+internal val DEFAULT_QUIET_PERIOD = 5.seconds
 
 /** The start of the status detail when the agent process exits on its own. */
 internal const val EXITED = "The agent process exited with code"

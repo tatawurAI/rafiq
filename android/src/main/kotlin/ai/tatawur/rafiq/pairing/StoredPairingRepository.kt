@@ -60,12 +60,13 @@ class StoredPairingRepository(
     }
 
     override suspend fun unpair() {
+        // Drop the credentials first, so no socket can add events to the cache after it is cleared.
+        publish(null)
         withContext(io) {
             prefs.edit { it.clear() }
             cipher.forget()
             cache.clear()
         }
-        publish(null)
     }
 
     private suspend fun save(pairing: Pairing) {

@@ -32,6 +32,51 @@ class ColdStartTest {
             assertNotEquals(ConnectionState.NotPaired, repository.connection.value)
         }
 
+    @Test
+    fun with_no_network_the_app_shows_the_cached_session_and_list_and_waits_for_the_network() =
+        runTest {
+            val log = recordedLog()
+            val store = InMemoryEventStore()
+            log.forEach { store.append(it) }
+            val session = SessionReducer.fold(log.first().sessionId, log)
+            val summaries = listOf(SessionSummary(checkNotNull(session.session), lastSeq = session.lastSeq))
+            store.replaceSummaries(summaries)
+            val repository =
+                repository(
+                    source = { _, _ -> flow { throw IOException("Network is unreachable") } },
+                    store = store,
+                    conditions = FakeConditions(network = false),
+                )
+
+            assertEquals(session, repository.session(session.sessionId).first())
+            assertEquals(summaries.toListItems(), repository.sessions().first())
+            backgroundScope.launch { repository.session(session.sessionId).collect {} }
+            repository.connection.first { it == ConnectionState.Offline(retryAtMs = null) }
+        }
+
+    @Test
+    fun a_socket_refused_with_401_reads_as_unauthorized_and_is_not_opened_again() =
+        runTest {
+            val source = RejectingSource(status = 401)
+            val repository = repository(source = source)
+
+            openAndWait(repository)
+
+            assertEquals(ConnectionState.Unauthorized, repository.connection.value)
+            assertEquals(1, source.opens)
+        }
+
+    @Test
+    fun a_socket_refused_with_503_is_retried() =
+        runTest {
+            val source = RejectingSource(status = 503)
+            val repository = repository(source = source)
+
+            openAndWait(repository)
+
+            assertTrue(source.opens > 1, "opened ${source.opens} times")
+        }
+
     private fun TestScope.repository(
         source: EventSource,
         store: EventStore = InMemoryEventStore(),

@@ -9,9 +9,9 @@ Rafiq is pre-alpha. Part of what follows is design, not code.
 | Part | Built |
 |---|---|
 | `:protocol` | The event types, with their serialisation and the unknown-type fallback, and the request and response bodies of the bridge's routes |
-| `:client` | The repository interfaces and screen-state types the app's screens use |
+| `:client` | The repository interfaces and screen-state types the app's screens use, the reducer that folds events into screen state, and the sync loop that resumes each session's socket from the last cached `seq` |
 | Bridge | The SQLite event log, the session manager, the ACP adapter, `WS /events` with replay, the session, summary and agent routes, a flag-gated dev page, and a shared device token with host and origin checks. It binds to `127.0.0.1` by default. |
-| Android app | A themed shell with an empty session list |
+| Android app | Pairing with a typed URL and token (the token is encrypted with a Keystore key), an offline event cache in Room, the session list, the session view with thread tabs, tool cards and approvals, and a composer with quick replies and on-device voice input. Half-folded, the session view and the list split at the hinge. |
 
 Everything else on this page, including the file and git routes, per-device tokens, the auth relay and push, is planned. Milestones are tracked on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
 

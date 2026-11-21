@@ -55,7 +55,7 @@ Read [docs/architecture.md](docs/architecture.md) for the full picture.
 
 ## Status
 
-Rafiq is pre-alpha and nothing is released. Today the bridge answers `GET /health`, the protocol types exist, and the app is a themed shell. Plans and progress are on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
+Rafiq is pre-alpha and nothing is released. Today the bridge runs Claude Code sessions over ACP and replays their events, and the app pairs with it, lists your sessions, streams a session's threads and lets you answer approvals and send prompts. Setup is still manual; see [docs/setup.md](docs/setup.md). Plans and progress are on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
 
 ## Requirements
 

@@ -1,0 +1,22 @@
+{"session_id":"ses_weather","seq":1,"ts_ms":1763600000000,"payload":{"type":"session_updated","session":{"id":"ses_weather","agent":"claude-code","project_path":"/work/weather-app","title":"weather-app","status":"done","created_at_ms":1763600000000,"updated_at_ms":1763600000000}}}
+{"session_id":"ses_weather","seq":2,"ts_ms":1763600000001,"payload":{"type":"thread_updated","thread":{"id":"main","session_id":"ses_weather","kind":"main","title":"weather-app","status":"done"}}}
+{"session_id":"ses_weather","seq":3,"ts_ms":1763600001000,"payload":{"type":"message","id":"user:0001","thread_id":"main","role":"user","content":[{"type":"text","text":"Add a five-day forecast."}]}}
+{"session_id":"ses_weather","seq":4,"ts_ms":1763600001001,"payload":{"type":"status_changed","thread_id":"main","state":"working"}}
+{"session_id":"ses_weather","seq":5,"ts_ms":1763600001002,"payload":{"type":"status_changed","state":"working"}}
+{"session_id":"ses_weather","seq":6,"ts_ms":1763600001100,"payload":{"type":"message","id":"msg_1","thread_id":"main","role":"agent","content":[{"type":"markdown","markdown":"I will "}],"streaming":true}}
+{"session_id":"ses_weather","seq":7,"ts_ms":1763600001200,"payload":{"type":"message_delta","message_id":"msg_1","thread_id":"main","text":"read the "}}
+{"session_id":"ses_weather","seq":8,"ts_ms":1763600001300,"payload":{"type":"message_delta","message_id":"msg_1","thread_id":"main","text":"forecast module first."}}
+{"session_id":"ses_weather","seq":9,"ts_ms":1763600001400,"payload":{"type":"message","id":"msg_1","thread_id":"main","role":"agent","content":[{"type":"markdown","markdown":"I will read the forecast module first."}],"streaming":false}}
+{"session_id":"ses_weather","seq":10,"ts_ms":1763600001500,"payload":{"type":"tool_call","id":"call_1","thread_id":"main","kind":"read","input_summary":"src/forecast.kt","status":"completed","output":"42 lines"}}
+{"session_id":"ses_weather","seq":11,"ts_ms":1763600001600,"payload":{"type":"tool_call","id":"call_2","thread_id":"main","kind":"edit","input_summary":"src/forecast.kt","status":"pending"}}
+{"session_id":"ses_weather","seq":12,"ts_ms":1763600001700,"payload":{"type":"approval_request","id":"appr_1","tool_call_id":"call_2","description":"Edit src/forecast.kt","options":[{"id":"deny","kind":"deny","label":"Deny"},{"id":"once","kind":"allow_once","label":"Allow once"}]}}
+{"session_id":"ses_weather","seq":13,"ts_ms":1763600001701,"payload":{"type":"status_changed","thread_id":"main","state":"waiting_on_you"}}
+{"session_id":"ses_weather","seq":14,"ts_ms":1763600002000,"payload":{"type":"approval_resolved","id":"appr_1","outcome":"selected","option_id":"once"}}
+{"session_id":"ses_weather","seq":15,"ts_ms":1763600002001,"payload":{"type":"status_changed","thread_id":"main","state":"working"}}
+{"session_id":"ses_weather","seq":16,"ts_ms":1763600002100,"payload":{"type":"tool_call","id":"call_2","thread_id":"main","kind":"edit","input_summary":"src/forecast.kt","status":"completed","output":"+18 -2"}}
+{"session_id":"ses_weather","seq":17,"ts_ms":1763600002200,"payload":{"type":"file_changed","path":"src/forecast.kt","change_type":"modified","git_status":" M"}}
+{"session_id":"ses_weather","seq":18,"ts_ms":1763600002300,"payload":{"type":"message","id":"msg_2","thread_id":"main","role":"agent","content":[{"type":"markdown","markdown":"Done. "}],"streaming":true}}
+{"session_id":"ses_weather","seq":19,"ts_ms":1763600002400,"payload":{"type":"message_delta","message_id":"msg_2","thread_id":"main","text":"The forecast shows five days."}}
+{"session_id":"ses_weather","seq":20,"ts_ms":1763600002500,"payload":{"type":"message","id":"msg_2","thread_id":"main","role":"agent","content":[{"type":"markdown","markdown":"Done. The forecast shows five days."}],"streaming":false}}
+{"session_id":"ses_weather","seq":21,"ts_ms":1763600002600,"payload":{"type":"status_changed","thread_id":"main","state":"done"}}
+{"session_id":"ses_weather","seq":22,"ts_ms":1763600002601,"payload":{"type":"status_changed","state":"done"}}

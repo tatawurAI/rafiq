@@ -1,0 +1,16 @@
+{"session_id":"ses_docs","seq":1,"ts_ms":1763600100000,"payload":{"type":"session_updated","session":{"id":"ses_docs","agent":"claude-code","project_path":"/work/docs-site","title":"docs-site","status":"done","created_at_ms":1763600100000,"updated_at_ms":1763600100000}}}
+{"session_id":"ses_docs","seq":2,"ts_ms":1763600100001,"payload":{"type":"thread_updated","thread":{"id":"main","session_id":"ses_docs","kind":"main","title":"docs-site","status":"done"}}}
+{"session_id":"ses_docs","seq":3,"ts_ms":1763600101000,"payload":{"type":"message","id":"user:0001","thread_id":"main","role":"user","content":[{"type":"text","text":"Check every link in the guide."}]}}
+{"session_id":"ses_docs","seq":4,"ts_ms":1763600101001,"payload":{"type":"status_changed","thread_id":"main","state":"working"}}
+{"session_id":"ses_docs","seq":5,"ts_ms":1763600101100,"payload":{"type":"tool_call","id":"call_task","thread_id":"main","kind":"other","input_summary":"Launch a helper to check links","status":"in_progress"}}
+{"session_id":"ses_docs","seq":6,"ts_ms":1763600101200,"payload":{"type":"thread_updated","thread":{"id":"t_links","session_id":"ses_docs","parent_thread_id":"main","kind":"subagent","title":"Check links","status":"working"}}}
+{"session_id":"ses_docs","seq":7,"ts_ms":1763600101300,"payload":{"type":"message","id":"plan:main","thread_id":"main","role":"agent","content":[{"type":"markdown","markdown":"- [ ] Check links"}]}}
+{"session_id":"ses_docs","seq":8,"ts_ms":1763600101400,"payload":{"type":"message","id":"msg_s1","thread_id":"t_links","role":"agent","content":[{"type":"markdown","markdown":"Checking "}],"streaming":true}}
+{"session_id":"ses_docs","seq":9,"ts_ms":1763600101500,"payload":{"type":"message_delta","message_id":"msg_s1","thread_id":"t_links","text":"12 links."}}
+{"session_id":"ses_docs","seq":10,"ts_ms":1763600101600,"payload":{"type":"terminal_output","thread_id":"t_links","bytes":"aGVsbG8="}}
+{"session_id":"ses_docs","seq":11,"ts_ms":1763600101700,"payload":{"type":"message","id":"msg_s1","thread_id":"t_links","role":"agent","content":[{"type":"markdown","markdown":"Checking 12 links."}],"streaming":false,"tokens":31}}
+{"session_id":"ses_docs","seq":12,"ts_ms":1763600101800,"payload":{"type":"preview_available","id":"prev_1","url":"https://server.example.ts.net:8443/","label":"docs-site dev server","port":4000}}
+{"session_id":"ses_docs","seq":13,"ts_ms":1763600101900,"payload":{"type":"status_changed","thread_id":"t_links","state":"done"}}
+{"session_id":"ses_docs","seq":14,"ts_ms":1763600102000,"payload":{"type":"tool_call","id":"call_task","thread_id":"main","kind":"other","input_summary":"Launch a helper to check links","status":"completed","output":"All 12 links work."}}
+{"session_id":"ses_docs","seq":15,"ts_ms":1763600102100,"payload":{"type":"message","id":"plan:main","thread_id":"main","role":"agent","content":[{"type":"markdown","markdown":"- [x] Check links"}]}}
+{"session_id":"ses_docs","seq":16,"ts_ms":1763600102200,"payload":{"type":"status_changed","thread_id":"main","state":"done"}}

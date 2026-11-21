@@ -120,6 +120,7 @@ fun SessionRoute(
  *
  * @param hinge where the half-folded hinge crosses the window, or null to keep one column.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SessionScreen(
     state: SessionUiState,
@@ -130,12 +131,18 @@ fun SessionScreen(
 ) {
     // Held above the split: folding moves the timeline between panes, and it keeps its place.
     val scroll = rememberTimelineScroll(state.selectedThread?.id)
+    // The bottom pane drops the pinned approval while you type, so the timeline's card then keeps
+    // its own buttons.
+    val answeredBelow = !WindowInsets.isImeVisible
     FoldSplit(
         hinge = hinge,
         modifier = modifier,
+        fitBottomToKeyboard = true,
         single = { SingleColumnSession(state, actions, dictation, scroll) },
         top = {
-            Column(modifier = Modifier.fillMaxSize()) { TimelinePane(state, actions, compact = false, scroll) {} }
+            Column(modifier = Modifier.fillMaxSize()) {
+                TimelinePane(state, actions, compact = false, scroll, pinnedAnsweredBelow = answeredBelow) {}
+            }
         },
         bottom = { SessionBottomPane(state, actions, dictation) },
     )
@@ -161,7 +168,14 @@ private fun SingleColumnSession(
     ) {
         val compact = maxHeight < spacing.compactHeight
         Column(modifier = Modifier.fillMaxSize()) {
-            TimelinePane(state, actions, compact, scroll, onPinnedCardOnScreen = { pinnedCardOnScreen = it })
+            TimelinePane(
+                state,
+                actions,
+                compact,
+                scroll,
+                pinnedAnsweredBelow = false,
+                onPinnedCardOnScreen = { pinnedCardOnScreen = it },
+            )
             HorizontalDivider(color = RafiqTheme.colors.border, thickness = spacing.hairline)
             Column(
                 modifier = Modifier.padding(horizontal = spacing.medium, vertical = spacing.small),

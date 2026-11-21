@@ -73,6 +73,8 @@ import kotlinx.coroutines.launch
  * replaced or grows keeps its place.
  *
  * @param scroll the thread's scroll position, held by the screen.
+ * @param pinnedAnsweredBelow true when the pinned approval's options show below the hinge, so its
+ *   card here shows the request without them.
  * @param onPinnedCardOnScreen told whether the tool card that carries the pinned approval is
  *   mostly on screen, so the screen can hide the pinned copy.
  */
@@ -82,6 +84,7 @@ internal fun Timeline(
     actions: SessionActions,
     compact: Boolean,
     scroll: TimelineScroll,
+    pinnedAnsweredBelow: Boolean,
     onPinnedCardOnScreen: (Boolean) -> Unit = {},
 ) {
     val spacing = RafiqTheme.spacing
@@ -120,7 +123,8 @@ internal fun Timeline(
             verticalArrangement = Arrangement.spacedBy(spacing.smallMedium),
         ) {
             items(items, key = { it.key }, contentType = { it::class }) { item ->
-                TimelineEntry(item, state.answering, actions.onApprove)
+                val answerBelow = answersBelow(pinnedAnsweredBelow, item, state.pinned?.id)
+                TimelineEntry(item, state.answering, actions.onApprove, answerBelow)
             }
         }
         if (!follow) {
@@ -140,6 +144,7 @@ private fun TimelineEntry(
     item: TimelineItem,
     answering: Set<String>,
     onApprove: (approvalId: String, optionId: String) -> Unit,
+    answerBelow: Boolean,
 ) {
     when (item) {
         is TimelineItem.Message -> {
@@ -154,6 +159,7 @@ private fun TimelineEntry(
                 onToggle = { expanded = !expanded },
                 answering = item.approval?.id in answering,
                 onAnswer = { optionId -> item.approval?.let { onApprove(it.id, optionId) } },
+                answerBelow = answerBelow,
             )
         }
 
@@ -248,3 +254,13 @@ private suspend fun LazyListState.scrollToEnd(lastIndex: Int) {
     // An offset past the item's height clamps to the end, so a tall last message shows its bottom.
     scrollToItem(lastIndex, Int.MAX_VALUE)
 }
+
+/**
+ * Whether [item]'s card leaves its options to the bottom pane: only the card of the pinned approval
+ * [pinnedId], and only while the bottom pane shows it. Older open approvals keep their buttons.
+ */
+internal fun answersBelow(
+    pinnedAnsweredBelow: Boolean,
+    item: TimelineItem,
+    pinnedId: String?,
+): Boolean = pinnedAnsweredBelow && pinnedId != null && (item as? TimelineItem.Tool)?.approval?.id == pinnedId

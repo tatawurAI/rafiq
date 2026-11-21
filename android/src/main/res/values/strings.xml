@@ -85,6 +85,7 @@
 
   <!-- Approvals -->
   <string name="approval_label">Waiting on you</string>
+  <string name="approval_label_answer_below">Waiting on you, answer below</string>
   <string name="approval_jump">Jump to it</string>
   <string name="approval_expand">Answer</string>
   <string name="approval_sending">Sending your answer</string>

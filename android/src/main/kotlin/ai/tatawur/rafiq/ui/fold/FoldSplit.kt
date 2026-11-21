@@ -5,11 +5,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -35,7 +37,13 @@ import kotlin.math.roundToInt
  * In the split, the top pane takes the status bar inset and the bottom pane takes the navigation
  * bar and keyboard insets, so the keyboard only ever pushes the bottom pane's content up.
  * [single] handles its own insets.
+ *
+ * With [fitBottomToKeyboard], while the keyboard is up the bottom pane takes its content's natural
+ * height above the keyboard and the top pane shrinks to what is left. A tall keyboard would
+ * otherwise squash the bottom pane's content to a sliver. The panes stay where they are in the
+ * composition, so a focused text field keeps its focus and the keyboard stays up.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun FoldSplit(
     hinge: Hinge?,
@@ -43,7 +51,9 @@ fun FoldSplit(
     top: @Composable () -> Unit,
     bottom: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    fitBottomToKeyboard: Boolean = false,
 ) {
+    val fitToKeyboard = fitBottomToKeyboard && WindowInsets.isImeVisible
     // Known only after the first layout. Zero is right for the first frame wherever the split fills
     // its window, as every screen's does: the app draws edge to edge and the hinge comes in window
     // coordinates, so the split does not jump once the real position arrives.
@@ -68,33 +78,45 @@ fun FoldSplit(
                     )
                 }
             }
-        if (split == null) {
-            single()
-        } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Box(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .height(with(density) { split.topPx.toDp() })
-                            .windowInsetsPadding(
-                                WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
-                            ),
-                ) { top() }
-                HingeBand(Modifier.height(with(density) { split.bandPx.toDp() }))
-                Box(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .height(with(density) { split.bottomPx.toDp() })
-                            .windowInsetsPadding(
-                                WindowInsets.safeDrawing.only(
-                                    WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal,
-                                ),
-                            ),
-                ) { bottom() }
-            }
-        }
+        if (split == null) single() else SplitPanes(split, fitToKeyboard, top, bottom)
+    }
+}
+
+/**
+ * The two panes and the band. Sized by [split], or with [fitToKeyboard] the bottom pane wraps its
+ * content above the keyboard and the top pane takes the rest.
+ */
+@Composable
+private fun SplitPanes(
+    split: PaneSplit,
+    fitToKeyboard: Boolean,
+    top: @Composable () -> Unit,
+    bottom: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    Column(modifier = Modifier.fillMaxSize()) {
+        val topSize = if (fitToKeyboard) Modifier.weight(1f) else Modifier.height(with(density) { split.topPx.toDp() })
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .then(topSize)
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                    ),
+        ) { top() }
+        val bandHeight = if (fitToKeyboard) RafiqTheme.spacing.hairline else with(density) { split.bandPx.toDp() }
+        HingeBand(Modifier.height(bandHeight))
+        val bottomSize = if (fitToKeyboard) Modifier else Modifier.height(with(density) { split.bottomPx.toDp() })
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .then(bottomSize)
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
+                    ),
+        ) { bottom() }
     }
 }
 

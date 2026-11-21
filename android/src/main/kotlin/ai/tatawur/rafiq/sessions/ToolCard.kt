@@ -87,6 +87,8 @@ private fun toolStatusLabel(status: ToolCallStatus): Int =
  * shows the output. While an approval for the call is open, the card carries it inline.
  *
  * @param expanded whether the output shows. The screen keeps it, so it survives recomposition.
+ * @param answerBelow shows the approval without its options, because the half-folded bottom pane
+ *   already carries them. The same buttons never show twice on one screen.
  */
 @Composable
 fun ToolCard(
@@ -96,6 +98,7 @@ fun ToolCard(
     answering: Boolean,
     onAnswer: (optionId: String) -> Unit,
     modifier: Modifier = Modifier,
+    answerBelow: Boolean = false,
 ) {
     val spacing = RafiqTheme.spacing
     val colors = RafiqTheme.colors
@@ -124,7 +127,10 @@ fun ToolCard(
                     verticalArrangement = Arrangement.spacedBy(spacing.small),
                 ) {
                     Text(
-                        text = stringResource(R.string.approval_label),
+                        text =
+                            stringResource(
+                                if (answerBelow) R.string.approval_label_answer_below else R.string.approval_label,
+                            ),
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.needsYou,
                     )
@@ -133,7 +139,7 @@ fun ToolCard(
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                         color = colors.text,
                     )
-                    ApprovalOptions(approval.options, answering, onAnswer)
+                    if (!answerBelow) ApprovalOptions(approval.options, answering, onAnswer)
                 }
             }
         }

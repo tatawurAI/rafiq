@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -78,6 +79,9 @@ import kotlinx.coroutines.launch
 /**
  * Below the hinge: the pinned approval at full size, scrolling if it runs long, then the quick
  * replies when nothing waits, then the composer on the bottom edge.
+ *
+ * While you type it holds only the feedback line and the composer, at their natural height, so
+ * [FoldSplit] can give the pane exactly that much above the keyboard.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -89,19 +93,25 @@ internal fun SessionBottomPane(
     val spacing = RafiqTheme.spacing
     val imeVisible = WindowInsets.isImeVisible
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = spacing.medium, vertical = spacing.small),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .then(if (imeVisible) Modifier else Modifier.fillMaxHeight())
+                .padding(horizontal = spacing.medium, vertical = spacing.small),
         verticalArrangement = Arrangement.spacedBy(spacing.small),
     ) {
         FeedbackBar(state.feedback, actions.onDismissFeedback)
-        Box(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-            val pinned = state.pinned
-            if (pinned != null && !imeVisible) {
-                PinnedApprovalFull(
-                    approval = pinned,
-                    answering = pinned.id in state.answering,
-                    onAnswer = { optionId -> actions.onApprove(pinned.id, optionId) },
-                    onJump = pinned.threadId?.let { { actions.onJump(pinned) } },
-                )
+        if (!imeVisible) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                val pinned = state.pinned
+                if (pinned != null) {
+                    PinnedApprovalFull(
+                        approval = pinned,
+                        answering = pinned.id in state.answering,
+                        onAnswer = { optionId -> actions.onApprove(pinned.id, optionId) },
+                        onJump = pinned.threadId?.let { { actions.onJump(pinned) } },
+                    )
+                }
             }
         }
         SessionComposer(state, actions, dictation, showQuickReplies = !imeVisible)
@@ -115,6 +125,7 @@ internal fun ColumnScope.TimelinePane(
     actions: SessionActions,
     compact: Boolean,
     scroll: TimelineScroll,
+    pinnedAnsweredBelow: Boolean,
     onPinnedCardOnScreen: (Boolean) -> Unit,
 ) {
     SessionHeader(state, actions)
@@ -133,7 +144,7 @@ internal fun ColumnScope.TimelinePane(
             CenteredNote(stringResource(R.string.thread_empty))
         } else {
             // A list per thread, so each tab opens at its latest item.
-            key(threadId) { Timeline(state, actions, compact, scroll, onPinnedCardOnScreen) }
+            key(threadId) { Timeline(state, actions, compact, scroll, pinnedAnsweredBelow, onPinnedCardOnScreen) }
         }
     }
 }

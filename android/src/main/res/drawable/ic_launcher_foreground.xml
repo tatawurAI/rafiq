@@ -1,17 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Two overlapping rings: two companions side by side. Drawn inside the adaptive icon's
-     66dp safe zone (18 to 90 on the 108 viewport), so no launcher mask clips it. -->
+<!-- The Rafiq cat, sitting. Drawn inside the adaptive icon's 66dp safe zone on the 108 viewport,
+     so no launcher mask clips it. The eyes, nose and mouth are holes (even-odd fill), so the
+     themed monochrome icon keeps the face. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
   android:width="108dp"
   android:height="108dp"
   android:viewportWidth="108"
   android:viewportHeight="108">
-  <path
-    android:pathData="M30,54a14,14 0,1 0,28 0a14,14 0,1 0,-28 0z"
-    android:strokeWidth="6"
-    android:strokeColor="@color/rafiq_accent" />
-  <path
-    android:pathData="M50,54a14,14 0,1 0,28 0a14,14 0,1 0,-28 0z"
-    android:strokeWidth="6"
-    android:strokeColor="@color/rafiq_accent" />
+  <group android:translateX="-1.5">
+    <path
+      android:fillColor="@color/rafiq_accent"
+      android:pathData="M63,83 C74,83 82,76 81.5,66 A2.25,2.25 0 0 0 77,66 C77.5,73.5 72,78.5 63,78.5 Z" />
+    <path
+      android:fillColor="@color/rafiq_accent"
+      android:pathData="M46,65 C43.5,71 41.5,76 42,80 Q42.5,83 46,83 L52.5,83 L52.5,79 Q54,76.6 55.5,79 L55.5,83 L62,83 Q65.5,83 66,80 C66.5,76 64.5,71 62,65 Z" />
+    <path
+      android:fillColor="@color/rafiq_accent"
+      android:pathData="M34.5,42 L37.3,30.6 Q38.5,27.8 40.6,29.6 L48,33 Z M73.5,42 L70.7,30.6 Q69.5,27.8 67.4,29.6 L60,33 Z" />
+    <path
+      android:fillColor="@color/rafiq_accent"
+      android:fillType="evenOdd"
+      android:pathData="M76,49 A22,18 0 1 1 32,49 A22,18 0 1 1 76,49 Z M49.5,50 A4,4.6 0 1 1 41.5,50 A4,4.6 0 1 1 49.5,50 Z M46.4,50.3 A0.9,3 0 1 1 44.6,50.3 A0.9,3 0 1 1 46.4,50.3 Z M66.5,50 A4,4.6 0 1 1 58.5,50 A4,4.6 0 1 1 66.5,50 Z M63.4,50.3 A0.9,3 0 1 1 61.6,50.3 A0.9,3 0 1 1 63.4,50.3 Z M52.2,56.8 L55.8,56.8 L54,59 Z M50.4,60.8 Q52.2,64.2 54,62.1 Q55.8,64.2 57.6,60.8 Q55.8,62.7 54,60.6 Q52.2,62.7 50.4,60.8 Z" />
+  </group>
 </vector>

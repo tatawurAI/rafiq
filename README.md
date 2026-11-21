@@ -1,5 +1,7 @@
 <a id="readme-top"></a>
 
+<p align="center"><img src="docs/assets/rafiq-logo.svg" width="128" height="128" alt="Rafiq logo: a sitting cat"></p>
+
 # Rafiq
 
 Run and steer coding-agent sessions on your own server from your phone, in a chat interface and not a terminal.

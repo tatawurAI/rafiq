@@ -76,6 +76,25 @@ enum class ApprovalOptionKind {
     UNKNOWN,
 }
 
+/** How an [EventPayload.ApprovalResolved] approval went away. */
+@Serializable
+enum class ApprovalOutcome {
+    /** You chose an option. */
+    @SerialName("selected")
+    SELECTED,
+
+    /** The turn or thread was cancelled, or the session ended, before anyone chose. */
+    @SerialName("cancelled")
+    CANCELLED,
+
+    /** The agent stopped waiting, for example because its turn ended. */
+    @SerialName("withdrawn")
+    WITHDRAWN,
+
+    @SerialName("unknown")
+    UNKNOWN,
+}
+
 /** How a provider sign-in works. */
 @Serializable
 enum class AuthKind {

@@ -46,7 +46,14 @@ sealed interface EventPayload {
         @SerialName("thread") val thread: AgentThread,
     ) : Known
 
-    /** A complete message, or the first snapshot of one that is still streaming. */
+    /**
+     * A complete message, or the first snapshot of one that is still streaming.
+     *
+     * The same [id] can arrive more than once, and the later one replaces the earlier. A streaming
+     * message starts with [isStreaming] set, grows by [MessageDelta]s, and ends with this payload sent
+     * again under the same id with the whole content and [isStreaming] cleared. A thread's plan is a
+     * message with the id `plan:<thread id>`, sent again in full whenever the plan changes.
+     */
     @Serializable
     @SerialName("message")
     data class Message(
@@ -57,7 +64,10 @@ sealed interface EventPayload {
         @SerialName("streaming") val isStreaming: Boolean = false,
     ) : Known
 
-    /** Text appended to a streaming message. The app concatenates deltas in [Event.seq] order. */
+    /**
+     * Text appended to a streaming message. The app concatenates deltas in [Event.seq] order onto the
+     * message's first snapshot, until the final [Message] with the same id replaces the result.
+     */
     @Serializable
     @SerialName("message_delta")
     data class MessageDelta(
@@ -95,6 +105,22 @@ sealed interface EventPayload {
         @SerialName("description") val description: String,
         @SerialName("options") val options: List<ApprovalOption>,
         @SerialName("expires_at_ms") val expiresAtMs: Long? = null,
+    ) : Known
+
+    /**
+     * An approval is no longer waiting on you. The app removes its card when this arrives, whoever
+     * answered it: you on this phone, you on another device, a cancel, or the agent. The bridge sends
+     * exactly one per [ApprovalRequest].
+     *
+     * @property id the [ApprovalRequest.id] it resolves.
+     * @property optionId the option chosen, set when [outcome] is [ApprovalOutcome.SELECTED] and null otherwise.
+     */
+    @Serializable
+    @SerialName("approval_resolved")
+    data class ApprovalResolved(
+        @SerialName("id") val id: String,
+        @SerialName("outcome") val outcome: ApprovalOutcome = ApprovalOutcome.UNKNOWN,
+        @SerialName("option_id") val optionId: String? = null,
     ) : Known
 
     /**

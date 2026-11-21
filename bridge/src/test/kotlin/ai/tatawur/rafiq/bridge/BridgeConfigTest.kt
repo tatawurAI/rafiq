@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class BridgeConfigTest {
     @Test
@@ -29,5 +30,53 @@ class BridgeConfigTest {
         val config = BridgeConfig.fromEnvironment(mapOf("RAFIQ_DEVICE_TOKEN" to "test-token-0000"))
 
         assertFalse("test-token-0000" in config.toString())
+    }
+
+    @Test
+    fun agents_and_the_dev_page_flag_are_read_and_a_bad_value_names_its_variable() {
+        val config =
+            BridgeConfig.fromEnvironment(
+                mapOf(
+                    "RAFIQ_AGENTS" to "claude-code=claude-agent-acp, codex=codex-acp --flag",
+                    "RAFIQ_DEV_PAGE" to "1",
+                    "RAFIQ_DEVICE_TOKEN" to TEST_TOKEN,
+                    "RAFIQ_ALLOWED_HOSTS" to "Box.tail1234.ts.net, ",
+                ),
+            )
+
+        assertEquals(listOf("claude-code", "codex"), config.agents.map { it.id })
+        assertEquals(listOf("codex-acp", "--flag"), config.agents[1].command)
+        assertTrue(config.devPage)
+        assertEquals(listOf("box.tail1234.ts.net"), config.allowedHosts)
+        assertFalse(BridgeConfig.fromEnvironment(emptyMap()).devPage)
+        assertTrue(
+            "RAFIQ_AGENTS" in
+                assertFailsWith<IllegalArgumentException> {
+                    BridgeConfig.fromEnvironment(mapOf("RAFIQ_AGENTS" to "no-command"))
+                }.message.orEmpty(),
+        )
+        assertTrue(
+            "RAFIQ_DEV_PAGE" in
+                assertFailsWith<IllegalArgumentException> {
+                    BridgeConfig.fromEnvironment(mapOf("RAFIQ_DEV_PAGE" to "yes"))
+                }.message.orEmpty(),
+        )
+    }
+
+    @Test
+    fun agents_without_a_long_enough_device_token_refuse_to_start_and_say_how_to_make_one() {
+        val agents = mapOf("RAFIQ_AGENTS" to "claude-code=claude-agent-acp")
+
+        for (environment in listOf(agents, agents + ("RAFIQ_DEVICE_TOKEN" to "too-short"))) {
+            val message =
+                assertFailsWith<IllegalArgumentException> {
+                    BridgeConfig.fromEnvironment(
+                        environment,
+                    )
+                }.message
+            assertTrue("RAFIQ_DEVICE_TOKEN" in message.orEmpty() && "openssl rand -hex 32" in message.orEmpty())
+        }
+        // The bridge never prints the token, and a bridge with no agents has nothing to protect yet.
+        assertNull(BridgeConfig.fromEnvironment(emptyMap()).deviceToken)
     }
 }

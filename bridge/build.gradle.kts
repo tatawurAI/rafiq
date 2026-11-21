@@ -26,15 +26,24 @@ application {
 
 dependencies {
     implementation(project(":protocol"))
+    implementation(libs.kotlinx.coroutines.core)
     implementation(libs.ktor.server.core)
     // CIO is Ktor's pure-Kotlin engine: fewer dependencies and a smaller footprint than Netty,
     // which suits one long-running process on a small server.
     implementation(libs.ktor.server.cio)
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.ktor.server.websockets)
+    implementation(libs.ktor.server.status.pages)
+    implementation(libs.ktor.server.body.limit)
+    // Plain JDBC on one connection: the event log is one writer and a few readers, so an ORM adds nothing.
+    implementation(libs.sqlite.jdbc)
+    // The ACP Kotlin SDK: JSON-RPC over the agent process's stdio, and ACP's typed messages.
+    implementation(libs.acp)
     runtimeOnly(libs.logback.classic)
 
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.websockets)
     testImplementation(libs.kotlin.test)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

@@ -88,6 +88,7 @@ class EventSerializationTest {
                     ),
                 expiresAtMs = 1_767_225_900_000,
             ),
+            EventPayload.ApprovalResolved(id = "a-1", outcome = ApprovalOutcome.SELECTED, optionId = "o-1"),
             EventPayload.StatusChanged(
                 threadId = "t-1",
                 state = AgentState.WAITING_ON_YOU,
@@ -181,18 +182,15 @@ class EventSerializationTest {
     }
 
     @Test
-    fun unknown_fields_are_ignored() {
-        val json =
+    fun a_newer_peer_adding_fields_and_enum_values_still_decodes() {
+        val extraField =
             """{"session_id":"s-1","seq":2,"ts_ms":0,"origin":"elsewhere",""" +
                 """"payload":{"type":"message_delta","message_id":"m-1","thread_id":"t-1","text":"hi","tokens":1}}"""
+        val newEnumValue =
+            """{"session_id":"s-1","seq":3,"ts_ms":0,""" +
+                """"payload":{"type":"status_changed","state":"sleeping"}}"""
 
-        assertEquals(EventPayload.MessageDelta("m-1", "t-1", "hi"), decode(json).payload)
-    }
-
-    @Test
-    fun unknown_enum_value_falls_back_to_the_default() {
-        val json = """{"session_id":"s-1","seq":3,"ts_ms":0,"payload":{"type":"status_changed","state":"sleeping"}}"""
-
-        assertEquals(EventPayload.StatusChanged(state = AgentState.UNKNOWN), decode(json).payload)
+        assertEquals(EventPayload.MessageDelta("m-1", "t-1", "hi"), decode(extraField).payload)
+        assertEquals(EventPayload.StatusChanged(state = AgentState.UNKNOWN), decode(newEnumValue).payload)
     }
 }

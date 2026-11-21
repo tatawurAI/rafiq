@@ -20,7 +20,7 @@ Clone the repository and use the Gradle wrapper for everything. Do not install G
 | Build the bridge as an installed program | `./gradlew :bridge:installDist`, then `bridge/build/install/rafiq-bridge/bin/rafiq-bridge` |
 | Install the debug app on a connected device | `./gradlew :android:installDebug` |
 
-The bridge is configured through environment variables, not a `.env` file. Export `RAFIQ_BIND_ADDRESS`, `RAFIQ_PORT`, `RAFIQ_DATA_DIR` and `RAFIQ_DEVICE_TOKEN` as needed. See the [README](README.md#configuration).
+The bridge is configured through environment variables, not a `.env` file. Export `RAFIQ_BIND_ADDRESS`, `RAFIQ_PORT`, `RAFIQ_DATA_DIR` and `RAFIQ_DEVICE_TOKEN` as needed. The device token is enforced: with `RAFIQ_AGENTS` set, the bridge will not start without one of at least 32 characters (`openssl rand -hex 32`). See the [README](README.md#configuration).
 
 Run `./gradlew spotlessApply` before you commit. Run the check line before you mark a pull request ready.
 

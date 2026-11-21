@@ -1,0 +1,1 @@
+The bridge now keeps every session's events in a SQLite log, so your phone can reconnect and replay exactly what it missed over `WS /events`, and it can create, list, prompt, cancel and approve sessions over HTTP.

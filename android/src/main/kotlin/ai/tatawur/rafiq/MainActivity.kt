@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // The screens see only the repository interfaces from :client.
         val container = (application as RafiqApplication).container
+        val sessions = sessionsForLaunch(intent, container.sessions)
         setContent {
             // Folding is handled as a configuration change (see the manifest), so the hinge updates
             // in place and the screens keep their scroll position.
@@ -36,7 +37,7 @@ class MainActivity : ComponentActivity() {
                 RafiqTheme {
                     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                         RafiqNavHost(
-                            sessions = container.sessions,
+                            sessions = sessions,
                             pairing = { onPaired -> PairingScreen(container.pairing, onPaired) },
                         )
                     }

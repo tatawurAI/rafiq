@@ -350,8 +350,8 @@ internal object SampleIds {
 }
 
 /**
- * The process-wide sample. One per process, so folding or unfolding the phone, which recreates the
- * activity, does not restart it.
+ * The process-wide sample. One per process, so a configuration change that recreates the activity
+ * does not restart it.
  */
 val sampleSessionRepository: SampleSessionRepository by lazy {
     SampleSessionRepository(CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))

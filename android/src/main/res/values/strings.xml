@@ -102,7 +102,7 @@
 
   <!-- Feedback after a command -->
   <string name="feedback_still_working">The agent is still working. Try again when it finishes.</string>
-  <string name="feedback_already_answered">That approval was already answered.</string>
+  <string name="feedback_already_answered">That approval was already answered or is no longer open.</string>
   <string name="feedback_offline">You are offline. Nothing was sent.</string>
   <string name="feedback_not_found">Your server no longer has that session.</string>
   <string name="feedback_unauthorized">Your server refused this phone\'s token.</string>

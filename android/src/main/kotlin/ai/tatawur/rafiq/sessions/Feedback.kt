@@ -52,3 +52,14 @@ fun CommandResult<*>.feedback(): Feedback? =
         CommandResult.Unauthorized -> Feedback.Unauthorized
         is CommandResult.Failed -> Feedback.Failed(message)
     }
+
+/**
+ * Whether an approval's buttons come back after this answer. Not after Ok, and not after Gone or
+ * NotFound: the bridge holds no open approval with that id, so a second tap could only fail the same
+ * way. The approval leaves the screen when its `approval_resolved` event arrives.
+ */
+internal fun CommandResult<*>.canRetryAnswer(): Boolean =
+    when (this) {
+        is CommandResult.Ok, CommandResult.Gone, CommandResult.NotFound -> false
+        CommandResult.Busy, CommandResult.Offline, CommandResult.Unauthorized, is CommandResult.Failed -> true
+    }

@@ -1,6 +1,5 @@
 package ai.tatawur.rafiq.sessions
 
-import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.ConnectionState
 import ai.tatawur.rafiq.client.SessionListItem
 import ai.tatawur.rafiq.client.SessionRepository
@@ -24,7 +23,7 @@ import kotlinx.coroutines.launch
  * @property oldestWaiting the session that has waited on you longest, whatever the filter. The
  *   half-folded layout shows it below the hinge with full-size buttons.
  * @property answering approval ids whose answer is on its way. Their buttons are disabled until the
- *   repository drops the approval, or until the answer fails.
+ *   repository drops the approval, or until an answer fails in a way that can be tried again.
  */
 data class SessionListUiState(
     val isLoaded: Boolean = false,
@@ -83,7 +82,7 @@ class SessionListViewModel(
         answering.update { it + approvalId }
         viewModelScope.launch {
             val result = repository.approve(approvalId, optionId)
-            if (result !is CommandResult.Ok) answering.update { it - approvalId }
+            if (result.canRetryAnswer()) answering.update { it - approvalId }
             feedback.value = result.feedback()
         }
     }

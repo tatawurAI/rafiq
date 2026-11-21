@@ -35,9 +35,10 @@ fun MarkdownText(
     val colors = RafiqTheme.colors
     val body = type.bodyLarge.copy(color = color)
     val code = type.bodyMedium.copy(fontFamily = plexMono, color = colors.text)
-    // Inline code is a size smaller than the body and inherits the body's line height, so its fill
-    // sits inside the line instead of filling it edge to edge and clipping the glyphs.
-    val inlineCode = type.bodyMedium.copy(fontFamily = plexMono, color = color, lineHeight = body.lineHeight)
+    // Inline code has no fill. A span background covers the whole line box, so on wrapped text
+    // each box ran into the line below. The mono face in the accent colour sets it apart instead,
+    // and without an underline it does not read as a link.
+    val inlineCode = type.bodyMedium.copy(fontFamily = plexMono, color = colors.accent, lineHeight = body.lineHeight)
     val state = rememberMarkdownState(content = markdown, retainState = true)
     Markdown(
         markdownState = state,
@@ -46,7 +47,7 @@ fun MarkdownText(
             markdownColor(
                 text = color,
                 codeBackground = colors.ground,
-                inlineCodeBackground = colors.border.copy(alpha = INLINE_CODE_FILL_ALPHA),
+                inlineCodeBackground = Color.Transparent,
                 dividerColor = colors.border,
                 tableBackground = colors.surface,
             ),
@@ -76,9 +77,6 @@ fun MarkdownText(
         dimens = markdownDimens(codeBackgroundCornerSize = RafiqTheme.spacing.small),
     )
 }
-
-// A low-contrast fill: enough to set code apart, never a dark slab over the text.
-private const val INLINE_CODE_FILL_ALPHA = 0.5f
 
 @Preview(name = "Markdown", widthDp = 360)
 @Composable

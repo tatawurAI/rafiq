@@ -1,6 +1,9 @@
 package ai.tatawur.rafiq
 
-import ai.tatawur.rafiq.sessions.SessionsScreen
+import ai.tatawur.rafiq.client.SessionRepository
+import ai.tatawur.rafiq.ui.navigation.PairingPlaceholder
+import ai.tatawur.rafiq.ui.navigation.RafiqNavHost
+import ai.tatawur.rafiq.ui.sample.sampleSessionRepository
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import android.graphics.Color
 import android.os.Bundle
@@ -15,6 +18,9 @@ import androidx.compose.ui.Modifier
 
 /** The app's single activity. It hosts the Compose UI and draws behind the system bars. */
 class MainActivity : ComponentActivity() {
+    // The screens see only this interface. The sample stands in until the data layer is wired here.
+    private val sessions: SessionRepository get() = sampleSessionRepository
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // The app is dark only, so the system bars always get light icons, whatever the system theme.
         enableEdgeToEdge(
@@ -25,7 +31,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             RafiqTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    SessionsScreen()
+                    RafiqNavHost(
+                        sessions = sessions,
+                        pairing = { _ -> PairingPlaceholder() },
+                    )
                 }
             }
         }

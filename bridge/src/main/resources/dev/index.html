@@ -159,11 +159,16 @@ function apply(event) {
       const thread = threadPane(payload.thread.id);
       thread.title = payload.thread.title;
       thread.status = payload.thread.status;
+      thread.isMain = payload.thread.kind === "main";
       break;
     }
     case "status_changed": {
-      if (payload.thread_id) threadPane(payload.thread_id).status = payload.state;
-      else setStatus("Session " + payload.state + (payload.detail ? ": " + payload.detail : ""));
+      const thread = payload.thread_id ? threadPane(payload.thread_id) : null;
+      if (thread) thread.status = payload.state;
+      // The session's status follows its main thread, so a main thread that recovers replaces an old error.
+      if (!thread || thread.isMain) {
+        setStatus("Session " + payload.state + (payload.detail ? ": " + payload.detail : ""), payload.state === "error");
+      }
       scheduleRefresh();
       break;
     }

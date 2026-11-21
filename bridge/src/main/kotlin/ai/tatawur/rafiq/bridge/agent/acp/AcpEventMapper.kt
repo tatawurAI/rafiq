@@ -40,13 +40,18 @@ import com.agentclientprotocol.model.ContentBlock as AcpContentBlock
  *   already has it, and the root's side carries the agent's internal hand-off notes.
  * - `user_message_chunk` is dropped. The bridge logs your prompt itself before it reaches the adapter,
  *   so an agent's echo of it would show twice.
- * - Thoughts, commands, modes, config, session info and usage are not part of the conversation the
- *   app shows, so they map to nothing.
+ * - A root `usage_update` that carries `cost` ends the main thread's open message. `claude-agent-acp`
+ *   sends one at the end of every model cycle, including a follow-up the agent starts on its own
+ *   after a turn, which has no `session/prompt` answer to end it. The end can be resumed, see
+ *   [MessageStreams], in case another agent sends cost at other times.
+ * - Thoughts, commands, modes, config, session info and other usage are not part of the conversation
+ *   the app shows, so they map to nothing.
  * - Anything else, or a known update that fails to decode, becomes a plain system message.
  *
  * Not thread-safe. It is owned by a [SessionActor], whose single consumer calls it in the agent's wire
  * order.
  */
+@Suppress("TooManyFunctions") // One entry point per thing a session reports, plus the helpers they share.
 internal class AcpEventMapper(
     rafiqSessionId: String,
     projectPath: Path,
@@ -71,6 +76,10 @@ internal class AcpEventMapper(
         val out = mutableListOf<EventPayload>()
         val type = update.string("sessionUpdate")
         when {
+            type == "usage_update" && acpSessionId == threads.rootAcpSessionId && update["cost"] != null -> {
+                messages.end(MAIN_THREAD_ID, out, canResume = true)
+            }
+
             type in IGNORED_UPDATES -> {}
 
             type in SESSION_MESSAGES && acpSessionId == threads.rootAcpSessionId -> {}
@@ -185,6 +194,13 @@ internal class AcpEventMapper(
         out += EventPayload.StatusChanged(threadId = threadId, state = AgentState.WAITING_ON_YOU)
         return Approval(threadId, out)
     }
+
+    /**
+     * Nothing new has streamed on [threadId] for a while outside a turn, so its open message is taken
+     * as complete. The end can be resumed if the same message continues later.
+     */
+    fun quietPeriodOver(threadId: String): List<EventPayload> =
+        mutableListOf<EventPayload>().also { messages.end(threadId, it, canResume = true) }
 
     /** The agent process is gone. Ends the messages that were still streaming. */
     fun sessionEnded(): List<EventPayload> = mutableListOf<EventPayload>().also(messages::endAll)

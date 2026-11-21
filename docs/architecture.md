@@ -10,7 +10,7 @@ Rafiq is pre-alpha. Part of what follows is design, not code.
 |---|---|
 | `:protocol` | The event types, with their serialisation and the unknown-type fallback, and the request and response bodies of the bridge's routes |
 | `:client` | The repository interfaces and screen-state types the app's screens use |
-| Bridge | The SQLite event log, the session manager, the ACP adapter, `WS /events` with replay, the session routes, a flag-gated dev page, and a shared device token with host and origin checks. It binds to `127.0.0.1` by default. |
+| Bridge | The SQLite event log, the session manager, the ACP adapter, `WS /events` with replay, the session, summary and agent routes, a flag-gated dev page, and a shared device token with host and origin checks. It binds to `127.0.0.1` by default. |
 | Android app | A themed shell with an empty session list |
 
 Everything else on this page, including the file and git routes, per-device tokens, the auth relay and push, is planned. Milestones are tracked on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
@@ -101,7 +101,7 @@ A generic ACP adapter spawns any ACP agent and maps ACP updates to events. The a
 
 ### API
 
-The health, session, thread, prompt, cancel, approval and event routes are implemented. The file, git and auth routes are planned. Every route except `GET /health` and `GET /dev` needs `Authorization: Bearer <RAFIQ_DEVICE_TOKEN>`. `WS /events` also accepts the token as a `Sec-WebSocket-Protocol` value next to `rafiq.v1`, because a browser cannot set headers on a WebSocket. A token in the query string is never accepted. Errors always have the shape `{"error":{"code":"...","message":"..."}}`.
+The health, session, summary, agent, thread, prompt, cancel, approval and event routes are implemented. The file, git and auth routes are planned. Every route except `GET /health` and `GET /dev` needs `Authorization: Bearer <RAFIQ_DEVICE_TOKEN>`. `WS /events` also accepts the token as a `Sec-WebSocket-Protocol` value next to `rafiq.v1`, because a browser cannot set headers on a WebSocket. A token in the query string is never accepted. Errors always have the shape `{"error":{"code":"...","message":"..."}}`.
 
 | Method and path | Purpose |
 |---|---|
@@ -111,6 +111,8 @@ The health, session, thread, prompt, cancel, approval and event routes are imple
 | `WS /events?session=&after=` | Stream a session's events, replaying from sequence `after` |
 | `POST /sessions` | Start a session (agent, project) |
 | `GET /sessions` | List sessions |
+| `GET /sessions/summaries` | List sessions with what the session list shows: the newest event `seq`, a one-line preview of the newest agent or user message on the main thread, and the approvals still open, oldest first. Read from small summary tables kept with the log, so polling it is cheap. |
+| `GET /agents` | The agents you can start a session with, as `{"id": ...}` objects |
 | `GET /sessions/{id}/threads` | List a session's threads |
 | `POST /sessions/{id}/prompt` | Send a prompt. Prompts go to the main thread, and a helper thread is refused. |
 | `POST /sessions/{id}/threads/{threadId}/cancel` | Stop the current turn on a thread |
@@ -161,8 +163,8 @@ The bridge watches for new listening ports under a session's processes. When one
 
 ### Storage and security
 
-- SQLite holds sessions, threads and the event log.
-- Tailscale ACLs restrict the bridge's port to your devices. A device token adds a second check, and the bridge enforces it now. The `Host` header must be the bind address, `localhost` or a listed name (421 otherwise), and a request with a foreign `Origin` is refused, so a web page cannot reach the bridge through DNS rebinding. Pairing, Keystore storage and revocation come with M3. See [ADR 0012](adr/0012-https-through-tailscale-serve.md).
+- SQLite holds sessions, threads and the event log, plus two small summary tables (the newest message preview and the open approvals per session) written in the same transaction as each event.
+- Tailscale ACLs restrict the bridge's port to your devices. A device token adds a second check, and the bridge enforces it now. The `Host` header must be the bind address, `localhost` or a listed name (421 otherwise), and a request with a foreign `Origin` is refused, so a web page cannot reach the bridge through DNS rebinding. Pairing, Keystore storage and revocation come with M3. See [ADR 0012](adr/0012-https-through-tailscale-serve.md), and [setup.md](setup.md) for the `tailscale serve` steps.
 - The file API refuses paths outside the session's project root.
 - Approvals require a fresh biometric check on the phone.
 - Push payloads carry ids and short status only.

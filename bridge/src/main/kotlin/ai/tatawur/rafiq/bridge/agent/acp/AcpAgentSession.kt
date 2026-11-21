@@ -67,7 +67,7 @@ internal class AcpAgentSession(
     private val drainTimeout: Duration = 5.seconds,
 ) : AgentSession {
     private val approvals = ApprovalDesk()
-    private val actor = SessionActor(mapper, approvals, newId)
+    private val actor = SessionActor(mapper, approvals, newId, scope.scheduler())
     private val wire = WireOrder { actor.offer(SessionActor.Item.Wire(it)) }
 
     /** The JSON-RPC connection to the agent. */

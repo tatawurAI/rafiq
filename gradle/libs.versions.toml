@@ -32,9 +32,11 @@ junit = "5.14.4"
 # The app's data layer: event cache, network, token storage and app lifecycle.
 ksp = "2.3.13"
 room = "2.8.5"
-okhttp = "5.5.1"
+# OkHttp and lifecycle are the newest releases that still accept compileSdk 36. OkHttp 5.5 and
+# lifecycle 2.11 require compileSdk 37.
+okhttp = "5.4.0"
 datastore = "1.3.0"
-lifecycle = "2.11.0"
+lifecycle = "2.10.0"
 
 spotless = "8.11.0"
 ktlint = "1.8.0"

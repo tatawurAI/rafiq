@@ -10,6 +10,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,12 +25,14 @@ import kotlinx.coroutines.withContext
  *
  * The stored pairing is read once, when this is created, so the first screen already knows whether the
  * app is paired and never flashes the pairing screen. It is a small file and one Keystore operation.
+ * A pairing that cannot be read, for any reason, is cleared, and the app starts on the pairing screen
+ * instead of crashing on every launch.
  *
  * @param cache cleared on unpair, and when pairing with a different server.
  */
 class StoredPairingRepository(
     private val prefs: DataStore<Preferences>,
-    private val cipher: TokenCipher,
+    private val cipher: TokenSeal,
     private val probe: PairingProbe,
     private val cache: EventStore,
     private val io: CoroutineDispatcher,
@@ -84,15 +87,39 @@ class StoredPairingRepository(
         currentCredentials.value = pairing?.credentials
     }
 
-    private suspend fun load(): Pairing? {
-        val stored = prefs.data.first()
-        val baseUrl = stored[BASE_URL]
-        val token = stored[TOKEN]?.let(cipher::decrypt)
-        // A token that no longer decrypts (its key is gone) means pairing again.
-        return if (baseUrl == null || token == null) {
+    @Suppress("TooGenericExceptionCaught") // DataStore and vendor Keystores throw more than they document.
+    private suspend fun load(): Pairing? =
+        try {
+            read()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            forgetBroken()
             null
-        } else {
-            Pairing(PairedServer(baseUrl, stored[BRIDGE_VERSION].orEmpty()), BridgeCredentials(baseUrl, token))
+        }
+
+    private suspend fun read(): Pairing? {
+        val stored = prefs.data.first()
+        val baseUrl = stored[BASE_URL] ?: return null
+        // A token that no longer decrypts (its key is gone) means pairing again.
+        val token = stored[TOKEN]?.let(cipher::decrypt)
+        if (token == null) {
+            forgetBroken()
+            return null
+        }
+        return Pairing(PairedServer(baseUrl, stored[BRIDGE_VERSION].orEmpty()), BridgeCredentials(baseUrl, token))
+    }
+
+    /** Clears a pairing that cannot be read, so the next launch does not trip over it again. */
+    @Suppress("TooGenericExceptionCaught", "SwallowedException") // Best effort: pairing again overwrites it.
+    private suspend fun forgetBroken() {
+        cipher.forget()
+        try {
+            prefs.edit { it.clear() }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // The file cannot be written either. Pairing again replaces it.
         }
     }
 

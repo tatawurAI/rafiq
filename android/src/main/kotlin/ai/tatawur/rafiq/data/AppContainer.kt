@@ -11,13 +11,19 @@ import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.util.Log
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.room.Room
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
-private val Context.pairingStore by preferencesDataStore(name = "pairing")
+// A damaged file reads as empty, which means pairing again, instead of failing every launch.
+private val Context.pairingStore by preferencesDataStore(
+    name = "pairing",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 /**
  * The app's object graph, built once per process. Screens take [sessions] and [pairing] and nothing

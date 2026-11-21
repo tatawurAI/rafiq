@@ -35,6 +35,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -53,43 +54,70 @@ fun PairingScreen(
     var token by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<PairingResult?>(null) }
+    var notSaved by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     PairingForm(
         url = url,
         token = token,
         busy = busy,
         failure = failure,
+        notSaved = notSaved,
         onUrlChange = {
             url = it
             failure = null
+            notSaved = false
         },
         onTokenChange = {
             token = it
             failure = null
+            notSaved = false
         },
         onConnect = {
             busy = true
             scope.launch {
-                val result =
-                    try {
-                        pairing.pair(url, token)
-                    } finally {
-                        busy = false
-                    }
-                if (result is PairingResult.Paired) onPaired() else failure = result
+                val result = pairOrNull(pairing, url, token)
+                busy = false
+                when {
+                    result is PairingResult.Paired -> onPaired()
+                    result == null -> notSaved = true
+                    else -> failure = result
+                }
             }
         },
         modifier = modifier,
     )
 }
 
-/** The pairing form itself, stateless so every failure hint can be previewed. */
+/**
+ * Pairs, or returns null when pairing failed on the phone itself, for example when the Keystore cannot
+ * store the token. Either way the app keeps running and the form stays filled in.
+ */
+@Suppress("TooGenericExceptionCaught") // DataStore and vendor Keystores throw more than they document.
+private suspend fun pairOrNull(
+    pairing: PairingRepository,
+    url: String,
+    token: String,
+): PairingResult? =
+    try {
+        pairing.pair(url, token)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+
+/**
+ * The pairing form itself, stateless so every failure hint can be previewed.
+ *
+ * @param notSaved pairing failed on the phone itself, not on your server.
+ */
 @Composable
 private fun PairingForm(
     url: String,
     token: String,
     busy: Boolean,
     failure: PairingResult?,
+    notSaved: Boolean,
     onUrlChange: (String) -> Unit,
     onTokenChange: (String) -> Unit,
     onConnect: () -> Unit,
@@ -132,7 +160,7 @@ private fun PairingForm(
             modifier = Modifier.fillMaxWidth(),
         )
         TokenField(token = token, enabled = !busy, onTokenChange = onTokenChange)
-        failure?.let { hintFor(it) }?.let { hint ->
+        (if (notSaved) stringResource(R.string.pairing_hint_not_saved) else failure?.let { hintFor(it) })?.let { hint ->
             Text(text = hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
         Button(
@@ -233,6 +261,7 @@ private fun PairingPreview(
                 token,
                 busy = false,
                 failure = failure,
+                notSaved = false,
                 onUrlChange = {},
                 onTokenChange = {},
                 onConnect = {},

@@ -60,8 +60,7 @@ fun PairingScreen(
         url = url,
         token = token,
         busy = busy,
-        failure = failure,
-        notSaved = notSaved,
+        hint = if (notSaved) stringResource(R.string.pairing_hint_not_saved) else failure?.let { hintFor(it) },
         onUrlChange = {
             url = it
             failure = null
@@ -109,15 +108,14 @@ private suspend fun pairOrNull(
 /**
  * The pairing form itself, stateless so every failure hint can be previewed.
  *
- * @param notSaved pairing failed on the phone itself, not on your server.
+ * @param hint why the last attempt failed, or null to show none.
  */
 @Composable
 private fun PairingForm(
     url: String,
     token: String,
     busy: Boolean,
-    failure: PairingResult?,
-    notSaved: Boolean,
+    hint: String?,
     onUrlChange: (String) -> Unit,
     onTokenChange: (String) -> Unit,
     onConnect: () -> Unit,
@@ -160,8 +158,8 @@ private fun PairingForm(
             modifier = Modifier.fillMaxWidth(),
         )
         TokenField(token = token, enabled = !busy, onTokenChange = onTokenChange)
-        (if (notSaved) stringResource(R.string.pairing_hint_not_saved) else failure?.let { hintFor(it) })?.let { hint ->
-            Text(text = hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        hint?.let {
+            Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
         Button(
             onClick = onConnect,
@@ -260,8 +258,7 @@ private fun PairingPreview(
                 url,
                 token,
                 busy = false,
-                failure = failure,
-                notSaved = false,
+                hint = failure?.let { hintFor(it) },
                 onUrlChange = {},
                 onTokenChange = {},
                 onConnect = {},

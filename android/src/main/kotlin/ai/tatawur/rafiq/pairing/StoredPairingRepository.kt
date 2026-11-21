@@ -104,11 +104,10 @@ class StoredPairingRepository(
         val baseUrl = stored[BASE_URL] ?: return null
         // A token that no longer decrypts (its key is gone) means pairing again.
         val token = stored[TOKEN]?.let(cipher::decrypt)
-        if (token == null) {
-            forgetBroken()
-            return null
+        if (token == null) forgetBroken()
+        return token?.let {
+            Pairing(PairedServer(baseUrl, stored[BRIDGE_VERSION].orEmpty()), BridgeCredentials(baseUrl, it))
         }
-        return Pairing(PairedServer(baseUrl, stored[BRIDGE_VERSION].orEmpty()), BridgeCredentials(baseUrl, token))
     }
 
     /** Clears a pairing that cannot be read, so the next launch does not trip over it again. */

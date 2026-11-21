@@ -114,6 +114,7 @@ internal fun ColumnScope.TimelinePane(
     state: SessionUiState,
     actions: SessionActions,
     compact: Boolean,
+    scroll: TimelineScroll,
     onPinnedCardOnScreen: (Boolean) -> Unit,
 ) {
     SessionHeader(state, actions)
@@ -132,7 +133,7 @@ internal fun ColumnScope.TimelinePane(
             CenteredNote(stringResource(R.string.thread_empty))
         } else {
             // A list per thread, so each tab opens at its latest item.
-            key(threadId) { Timeline(state, actions, compact, onPinnedCardOnScreen) }
+            key(threadId) { Timeline(state, actions, compact, scroll, onPinnedCardOnScreen) }
         }
     }
 }

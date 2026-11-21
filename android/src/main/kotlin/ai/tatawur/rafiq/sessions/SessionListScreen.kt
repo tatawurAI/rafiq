@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -114,13 +115,17 @@ fun SessionListScreen(
     modifier: Modifier = Modifier,
     hinge: Hinge? = null,
 ) {
+    // One list state for both layouts. Rows are keyed, so the first row you can see stays first
+    // when folding adds or drops the chips row and the bottom pane's card.
+    val listState = rememberLazyListState()
     FoldSplit(
         hinge = hinge,
         modifier = modifier,
-        single = { SingleColumnList(state, actions) },
+        single = { SingleColumnList(state, actions, listState) },
         top = {
             val spacing = RafiqTheme.spacing
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(spacing.medium),
                 verticalArrangement = Arrangement.spacedBy(spacing.smallMedium),
@@ -136,11 +141,11 @@ fun SessionListScreen(
 private fun SingleColumnList(
     state: SessionListUiState,
     actions: SessionListActions,
+    listState: LazyListState,
 ) {
     val spacing = RafiqTheme.spacing
     val insets = WindowInsets.safeDrawing.asPaddingValues()
     val direction = LocalLayoutDirection.current
-    val listState = rememberLazyListState()
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compact = maxHeight < spacing.compactHeight
         val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }

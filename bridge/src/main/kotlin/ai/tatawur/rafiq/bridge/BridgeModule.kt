@@ -1,12 +1,14 @@
 package ai.tatawur.rafiq.bridge
 
 import ai.tatawur.rafiq.bridge.hook.HookSetup
+import ai.tatawur.rafiq.bridge.server.AuditLog
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import ai.tatawur.rafiq.bridge.server.DevicePrincipalKey
 import ai.tatawur.rafiq.bridge.server.DeviceService
 import ai.tatawur.rafiq.bridge.server.EventStreamer
 import ai.tatawur.rafiq.bridge.server.InMemoryConnectionRegistry
+import ai.tatawur.rafiq.bridge.server.LoggingAuditLog
 import ai.tatawur.rafiq.bridge.server.devRoutes
 import ai.tatawur.rafiq.bridge.server.deviceRoutes
 import ai.tatawur.rafiq.bridge.server.eventsRoute
@@ -45,6 +47,7 @@ import kotlinx.coroutines.runBlocking
  * @param connections where every `/events` and `/terminal` socket registers, so revoking a device closes its
  *   sockets at once.
  * @param hooks the hook installer for tmux sessions, which adds `/sessions/{id}/hooks`. Null keeps it out.
+ * @param audit where each Chat prompt and approval answer from a phone is recorded.
  * @param deviceOf names the device a call came from, for the connection registry and the per-device terminal
  *   limit. By default it is the device the security plugin authenticated the call as.
  */
@@ -58,6 +61,7 @@ fun Application.bridgeModule(
     connections: ConnectionRegistry = InMemoryConnectionRegistry(),
     devices: DeviceService? = null,
     hooks: HookSetup? = null,
+    audit: AuditLog = LoggingAuditLog(),
     deviceOf: (ApplicationCall) -> String = { it.attributes.getOrNull(DevicePrincipalKey)?.deviceId ?: UNKNOWN_DEVICE },
 ) {
     install(ContentNegotiation) {
@@ -76,7 +80,7 @@ fun Application.bridgeModule(
     installSecurity(security)
     monitor.subscribe(ApplicationStopping) { runBlocking { sessions.shutdown() } }
     routing {
-        sessionRoutes(sessions)
+        sessionRoutes(sessions, audit, deviceOf)
         eventsRoute(log, EventStreamer(log), sessions::isVisible, connections, deviceOf)
         terminal?.routes(this, connections, deviceOf)
         devices?.let { deviceRoutes(it) }

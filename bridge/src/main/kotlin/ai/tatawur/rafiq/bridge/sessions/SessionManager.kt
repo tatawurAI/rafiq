@@ -164,6 +164,7 @@ class SessionManager(
         sessionId: String,
         threadId: String?,
         text: String,
+        @Suppress("UNUSED_PARAMETER") clientId: String? = null,
     ) {
         if (text.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
         // One prompt at a time per session, from the checks to the adapter call, so two racing prompts
@@ -225,13 +226,14 @@ class SessionManager(
      *
      * @throws SessionException.NotFound when the bridge never saw a request with this id.
      * @throws SessionException.Invalid when [optionId] is not one of the request's options.
+     * @return the id of the session the approval belongs to.
      * @throws SessionException.Conflict when the request is already resolved, or the session is no
      *   longer running.
      */
     suspend fun respondToApproval(
         approvalId: String,
         optionId: String,
-    ) {
+    ): String {
         val pending = pendingApproval(approvalId)
         if (optionId !in pending.optionIds) {
             throw SessionException.Invalid("invalid_option", "That is not one of the approval's options.")
@@ -252,6 +254,7 @@ class SessionManager(
         } finally {
             if (raised && !delivered) turnsInFlight.remove(turn)
         }
+        return pending.sessionId
     }
 
     private fun pendingApproval(approvalId: String): PendingApproval =

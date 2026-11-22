@@ -104,9 +104,14 @@ private suspend fun ApplicationCall.respondInvalidBody() {
 
 /**
  * The session and agent routes. They stay thin: parsing here, the work in [SessionManager]. Every route
- * needs the device token (see [BridgeSecurity]).
+ * needs the device token (see [BridgeSecurity]). Each accepted prompt and approval answer gets an [audit] line
+ * with the device it came from, which [deviceOf] names.
  */
-internal fun Route.sessionRoutes(sessions: SessionManager) {
+internal fun Route.sessionRoutes(
+    sessions: SessionManager,
+    audit: AuditLog = LoggingAuditLog(),
+    deviceOf: (ApplicationCall) -> String = { "unknown" },
+) {
     post("/sessions") {
         val request = call.receive<CreateSessionRequest>()
         call.respond(
@@ -129,7 +134,9 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
     // Prompts go to the main thread. A thread_id naming a helper thread is rejected with invalid_thread.
     post("/sessions/{id}/prompt") {
         val request = call.receive<PromptRequest>()
-        sessions.prompt(call.parameters.getOrFail("id"), request.threadId, request.text)
+        val sessionId = call.parameters.getOrFail("id")
+        sessions.prompt(sessionId, request.threadId, request.text, request.clientId)
+        audit.chatPrompt(deviceOf(call), sessionId, LoggingAuditLog.sha256Hex(request.text))
         call.respond(HttpStatusCode.Accepted, Accepted())
     }
     post("/sessions/{id}/threads/{threadId}/cancel") {
@@ -138,7 +145,9 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
     }
     post("/approvals/{id}") {
         val answer = call.receive<ApprovalAnswer>()
-        sessions.respondToApproval(call.parameters.getOrFail("id"), answer.optionId)
+        val approvalId = call.parameters.getOrFail("id")
+        val sessionId = sessions.respondToApproval(approvalId, answer.optionId)
+        audit.approvalAnswer(deviceOf(call), sessionId, approvalId, answer.optionId)
         call.respond(HttpStatusCode.Accepted, Accepted())
     }
 }

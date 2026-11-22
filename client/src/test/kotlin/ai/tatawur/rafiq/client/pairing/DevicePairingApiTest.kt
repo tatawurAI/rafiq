@@ -31,7 +31,7 @@ class DevicePairingApiTest {
                     .pair("bridge.example.ts.net", " ABCD-EFGH ")
 
             assertEquals(
-                CodePairResult.Paired(PairedServer("https://bridge.example.ts.net", "0.9.0"), "rfqd_test"),
+                CodePairResult.Paired(PairedServer("https://bridge.example.ts.net", "0.9.0"), "dev_1", "rfqd_test"),
                 result,
             )
             val post = sent.last()

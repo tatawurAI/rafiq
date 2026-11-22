@@ -19,6 +19,7 @@ sealed interface CodePairResult {
     /** The bridge issued a token for this phone. [deviceToken] is shown to nobody and stored encrypted. */
     data class Paired(
         val server: PairedServer,
+        val deviceId: String,
         val deviceToken: String,
     ) : CodePairResult {
         // Holds a secret, so it must never print one.
@@ -112,7 +113,15 @@ class DevicePairingApi(
     ): CodePairResult =
         try {
             val answer = protocolJson.decodeFromString(PairResponse.serializer(), response.body)
-            if (answer.token.isBlank()) CodePairResult.NotABridge else CodePairResult.Paired(server, answer.token)
+            if (answer.token.isBlank()) {
+                CodePairResult.NotABridge
+            } else {
+                CodePairResult.Paired(
+                    server,
+                    answer.deviceId,
+                    answer.token,
+                )
+            }
         } catch (_: IllegalArgumentException) {
             CodePairResult.NotABridge
         }
@@ -141,6 +150,24 @@ class DevicePairingApi(
         const val MISDIRECTED = 421
         const val TOO_MANY = 429
     }
+}
+
+/** Asks the bridge to revoke the calling device: `DELETE /devices/me`. Used when the user unpairs. */
+fun interface DeviceRevoker {
+    /** Revokes the device that owns [token] at [baseUrl]. A network failure is a result, not an exception. */
+    suspend fun revokeSelf(
+        baseUrl: String,
+        token: String,
+    ): RevokeSelfResult
+}
+
+/** What [DeviceRevoker.revokeSelf] achieved. */
+enum class RevokeSelfResult {
+    /** The bridge no longer accepts this device's token: revoked now, or it already refused the token. */
+    GONE,
+
+    /** The bridge could not be reached or did not answer as expected. The device stays paired there. */
+    UNCONFIRMED,
 }
 
 /** Recognises the answer a revoked device gets, so the app can clear its token and ask to pair again. */

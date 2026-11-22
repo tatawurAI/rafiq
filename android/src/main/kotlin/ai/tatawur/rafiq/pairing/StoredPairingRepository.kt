@@ -5,6 +5,8 @@ import ai.tatawur.rafiq.client.PairingRepository
 import ai.tatawur.rafiq.client.PairingResult
 import ai.tatawur.rafiq.client.pairing.CodePairResult
 import ai.tatawur.rafiq.client.pairing.DevicePairingApi
+import ai.tatawur.rafiq.client.pairing.DeviceRevoker
+import ai.tatawur.rafiq.client.pairing.RevokeSelfResult
 import ai.tatawur.rafiq.client.sync.BridgeCredentials
 import ai.tatawur.rafiq.client.sync.EventStore
 import ai.tatawur.rafiq.client.sync.PairingProbe
@@ -20,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The app's [PairingRepository]. The server URL and bridge version are stored in DataStore in the
@@ -33,13 +36,16 @@ import kotlinx.coroutines.withContext
  * @param probe pairs with a device token the user already holds, which is how a phone paired before
  *   per-device tokens still works.
  * @param api pairs with a code from `rafiq-bridge pair`.
+ * @param revoker tells the bridge to revoke this device when the user unpairs.
  * @param cache cleared on unpair, and when pairing with a different server.
  */
+@Suppress("LongParameterList", "TooManyFunctions") // One class owns pairing, its two notices and unpair.
 class StoredPairingRepository(
     private val prefs: DataStore<Preferences>,
     private val cipher: TokenSeal,
     private val probe: PairingProbe,
     private val api: DevicePairingApi,
+    private val revoker: DeviceRevoker,
     private val cache: EventStore,
     private val io: CoroutineDispatcher,
 ) : DevicePairing {
@@ -47,6 +53,7 @@ class StoredPairingRepository(
     private val currentServer = MutableStateFlow(paired.value?.server)
     private val currentCredentials = MutableStateFlow(paired.value?.credentials)
     private val revoked = MutableStateFlow(false)
+    private val unpairNote = MutableStateFlow<UnpairNotice?>(null)
 
     override val server: StateFlow<PairedServer?> = currentServer.asStateFlow()
 
@@ -72,8 +79,9 @@ class StoredPairingRepository(
     ): CodePairResult {
         val result = api.pair(baseUrl, code)
         if (result is CodePairResult.Paired) {
-            save(Pairing(result.server, BridgeCredentials(result.server.baseUrl, result.deviceToken)))
+            save(Pairing(result.server, BridgeCredentials(result.server.baseUrl, result.deviceToken), result.deviceId))
             revoked.value = false
+            unpairNote.value = null
         }
         return result
     }
@@ -84,6 +92,12 @@ class StoredPairingRepository(
         revoked.value = false
     }
 
+    override val unpairNotice: StateFlow<UnpairNotice?> = unpairNote.asStateFlow()
+
+    override fun dismissUnpairNotice() {
+        unpairNote.value = null
+    }
+
     /**
      * The bridge answered [usedToken] with `device_revoked`. Clears the token, the cached sessions and the
      * pairing, and raises the notice. Ignored when [usedToken] is no longer the stored token, for example
@@ -92,10 +106,26 @@ class StoredPairingRepository(
     suspend fun deviceRevoked(usedToken: String) {
         if (currentCredentials.value?.token != usedToken) return
         revoked.value = true
-        unpair()
+        clearLocal()
     }
 
+    /**
+     * Asks the bridge to revoke this device first, then clears everything here. If the bridge cannot be
+     * reached within a few seconds, it still clears here and raises [unpairNotice], because the device
+     * stays paired on your server until you revoke it there.
+     */
     override suspend fun unpair() {
+        val credentials = currentCredentials.value
+        val deviceId = paired.value?.deviceId
+        val result =
+            credentials?.let {
+                withTimeoutOrNull(REVOKE_TIMEOUT_MS) { revoker.revokeSelf(it.baseUrl, it.token) }
+            }
+        clearLocal()
+        if (credentials != null && result != RevokeSelfResult.GONE) unpairNote.value = UnpairNotice(deviceId)
+    }
+
+    private suspend fun clearLocal() {
         // Drop the credentials first, so no socket can add events to the cache after it is cleared.
         publish(null)
         withContext(io) {
@@ -113,6 +143,7 @@ class StoredPairingRepository(
                 it[BASE_URL] = pairing.server.baseUrl
                 it[BRIDGE_VERSION] = pairing.server.bridgeVersion
                 it[TOKEN] = sealed
+                if (pairing.deviceId != null) it[DEVICE_ID] = pairing.deviceId else it.remove(DEVICE_ID)
             }
         }
         publish(pairing)
@@ -142,7 +173,11 @@ class StoredPairingRepository(
         val token = stored[TOKEN]?.let(cipher::decrypt)
         if (token == null) forgetBroken()
         return token?.let {
-            Pairing(PairedServer(baseUrl, stored[BRIDGE_VERSION].orEmpty()), BridgeCredentials(baseUrl, it))
+            Pairing(
+                PairedServer(baseUrl, stored[BRIDGE_VERSION].orEmpty()),
+                BridgeCredentials(baseUrl, it),
+                stored[DEVICE_ID],
+            )
         }
     }
 
@@ -162,11 +197,14 @@ class StoredPairingRepository(
     private data class Pairing(
         val server: PairedServer,
         val credentials: BridgeCredentials,
+        val deviceId: String? = null,
     )
 
     private companion object {
         val BASE_URL = stringPreferencesKey("base_url")
         val BRIDGE_VERSION = stringPreferencesKey("bridge_version")
         val TOKEN = stringPreferencesKey("token_ciphertext")
+        val DEVICE_ID = stringPreferencesKey("device_id")
+        const val REVOKE_TIMEOUT_MS = 5_000L
     }
 }

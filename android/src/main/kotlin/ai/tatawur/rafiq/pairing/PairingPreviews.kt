@@ -1,10 +1,12 @@
 package ai.tatawur.rafiq.pairing
 
+import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.pairing.CodePairResult
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 
 @Preview(name = "Pairing, empty", showSystemUi = true)
@@ -48,10 +50,15 @@ private fun PairingPreview(
     RafiqTheme {
         Surface(color = MaterialTheme.colorScheme.background) {
             PairingForm(
-                PairingFormState(url, code, revoked = revoked, hint = failure?.let { hintFor(it) }),
+                PairingFormState(
+                    url,
+                    code,
+                    notice = if (revoked) stringResource(R.string.pair_revoked_notice) else null,
+                    hint = failure?.let { hintFor(it) },
+                ),
                 onUrlChange = {},
                 onCodeChange = {},
-                onDismissRevoked = {},
+                onDismissNotice = {},
                 onConnect = {},
             )
         }

@@ -2,6 +2,8 @@ package ai.tatawur.rafiq.pairing
 
 import ai.tatawur.rafiq.client.pairing.CodePairResult
 import ai.tatawur.rafiq.client.pairing.DevicePairingApi
+import ai.tatawur.rafiq.client.pairing.DeviceRevoker
+import ai.tatawur.rafiq.client.pairing.RevokeSelfResult
 import ai.tatawur.rafiq.client.sync.EventStore
 import ai.tatawur.rafiq.client.sync.HttpResponse
 import ai.tatawur.rafiq.client.sync.HttpTransport
@@ -90,15 +92,45 @@ class StoredPairingRepositoryTest {
             assertEquals(false, repository.revokedNotice.value)
         }
 
+    @Test
+    fun unpair_tells_the_bridge_first_and_clears_locally_even_when_it_cannot() =
+        runBlocking {
+            val calls = mutableListOf<String>()
+            val prefs = FakePrefs(storedPairing(token = "sealed:rfqd_old"))
+            val reached =
+                repository(prefs, PlainSeal, revoker = { url, token ->
+                    calls += "$url $token"
+                    RevokeSelfResult.GONE
+                })
+
+            reached.unpair()
+
+            assertEquals(listOf("https://bridge.example.ts.net rfqd_old"), calls)
+            assertNull(reached.server.value)
+            assertNull(reached.unpairNotice.value)
+
+            val offline = FakePrefs(storedPairing(token = "sealed:rfqd_old"))
+            val cannot = repository(offline, PlainSeal, revoker = { _, _ -> RevokeSelfResult.UNCONFIRMED })
+
+            cannot.unpair()
+
+            assertNull(cannot.server.value)
+            assertNull(cannot.credentials.value)
+            assertEquals(emptyPreferences(), offline.current.value)
+            assertEquals(UnpairNotice(deviceId = null), cannot.unpairNotice.value)
+        }
+
     private fun repository(
         prefs: DataStore<Preferences>,
         seal: TokenSeal,
         api: DevicePairingApi = DevicePairingApi { throw IOException("This test makes no calls.") },
+        revoker: DeviceRevoker = DeviceRevoker { _, _ -> throw IOException("This test makes no calls.") },
     ) = StoredPairingRepository(
         prefs = prefs,
         cipher = seal,
         probe = PairingProbe { throw IOException("This test makes no calls.") },
         api = api,
+        revoker = revoker,
         cache = NoCache,
         io = Dispatchers.Unconfined,
     )

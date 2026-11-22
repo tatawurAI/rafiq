@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
 /**
  * Pairs the app with your server: its `tailscale serve` address and the code `rafiq-bridge pair` printed.
  * On success it calls [onPaired]. On failure it shows the hint for that kind of failure and keeps what you
- * typed. After the bridge revoked this phone it also shows why you are here.
+ * typed. After the bridge revoked this phone, or an unpair the bridge never heard about, it also says so.
  *
  * The code is held only in memory while you type, never in saved instance state.
  */
@@ -61,6 +61,7 @@ fun PairingScreen(
     var failure by remember { mutableStateOf<CodePairResult?>(null) }
     var notSaved by remember { mutableStateOf(false) }
     val revoked by pairing.revokedNotice.collectAsState()
+    val notice = noticeText(pairing)
     val scope = rememberCoroutineScope()
     KeepOutOfAutofill()
     PairingForm(
@@ -69,7 +70,7 @@ fun PairingScreen(
                 url = url,
                 code = code,
                 busy = busy,
-                revoked = revoked,
+                notice = notice,
                 hint = if (notSaved) stringResource(R.string.pairing_hint_not_saved) else failure?.let { hintFor(it) },
             ),
         onUrlChange = {
@@ -82,7 +83,10 @@ fun PairingScreen(
             failure = null
             notSaved = false
         },
-        onDismissRevoked = pairing::dismissRevokedNotice,
+        onDismissNotice = {
+            pairing.dismissRevokedNotice()
+            pairing.dismissUnpairNotice()
+        },
         onConnect = {
             busy = true
             scope.launch {
@@ -97,6 +101,20 @@ fun PairingScreen(
         },
         modifier = modifier,
     )
+}
+
+/** Why you are on this screen when it is not a first pairing, or null. */
+@Composable
+private fun noticeText(pairing: DevicePairing): String? {
+    val revoked by pairing.revokedNotice.collectAsState()
+    val unpaired by pairing.unpairNotice.collectAsState()
+    val deviceId = unpaired?.deviceId
+    return when {
+        deviceId != null -> stringResource(R.string.pair_unpaired_unconfirmed, deviceId)
+        unpaired != null -> stringResource(R.string.pair_unpaired_unconfirmed_unknown_id)
+        revoked -> stringResource(R.string.pair_revoked_notice)
+        else -> null
+    }
 }
 
 /**
@@ -135,13 +153,13 @@ private suspend fun pairOrNull(
  * What the pairing form shows.
  *
  * @property hint why the last attempt failed, or null to show none.
- * @property revoked whether to explain that the bridge removed this phone.
+ * @property notice why you are on this screen when it is not a first pairing, or null to show none.
  */
 internal data class PairingFormState(
     val url: String,
     val code: String,
     val busy: Boolean = false,
-    val revoked: Boolean = false,
+    val notice: String? = null,
     val hint: String? = null,
 )
 
@@ -151,7 +169,7 @@ internal fun PairingForm(
     state: PairingFormState,
     onUrlChange: (String) -> Unit,
     onCodeChange: (String) -> Unit,
-    onDismissRevoked: () -> Unit,
+    onDismissNotice: () -> Unit,
     onConnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -170,7 +188,7 @@ internal fun PairingForm(
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        if (state.revoked) RevokedNotice(onDismiss = onDismissRevoked)
+        state.notice?.let { Notice(text = it, onDismiss = onDismissNotice) }
         Text(
             text = stringResource(R.string.pair_intro),
             style = MaterialTheme.typography.bodyLarge,
@@ -240,13 +258,16 @@ private fun CodeField(
     )
 }
 
-/** Says why you are on this screen after the bridge removed the phone. */
+/** Says why you are on this screen, with a way to dismiss it. */
 @Composable
-private fun RevokedNotice(onDismiss: () -> Unit) {
+private fun Notice(
+    text: String,
+    onDismiss: () -> Unit,
+) {
     val spacing = RafiqTheme.spacing
     Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
         Text(
-            text = stringResource(R.string.pair_revoked_notice),
+            text = text,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.error,
         )

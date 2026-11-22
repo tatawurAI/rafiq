@@ -23,4 +23,22 @@ interface DevicePairing : PairingRepository {
 
     /** Hides the revoked notice. */
     fun dismissRevokedNotice()
+
+    /**
+     * Set when [unpair] cleared this phone but could not tell the bridge, so the bridge still lists the
+     * device. Carries the device id for `rafiq-bridge revoke <id>`, or null when it is not known.
+     */
+    val unpairNotice: StateFlow<UnpairNotice?>
+
+    /** Hides the unpair notice. */
+    fun dismissUnpairNotice()
 }
+
+/**
+ * This phone is unpaired here, but your server still lists it.
+ *
+ * @property deviceId for `rafiq-bridge revoke`, or null for a phone paired with a pasted token.
+ */
+data class UnpairNotice(
+    val deviceId: String?,
+)

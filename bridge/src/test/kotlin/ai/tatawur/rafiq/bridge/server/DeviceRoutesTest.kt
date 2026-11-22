@@ -5,6 +5,7 @@ import ai.tatawur.rafiq.protocol.api.PairResponse
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -104,6 +105,34 @@ class DeviceRoutesTest {
                 ) { header(HttpHeaders.SecWebSocketProtocol, "rafiq.v1, ${response.token}") }
             assertEquals(HttpStatusCode.Unauthorized, handshake.status)
             assertTrue(""""code":"device_revoked"""" in handshake.bodyAsText())
+        }
+
+    @Test
+    fun deleting_me_revokes_only_the_caller_and_needs_a_valid_token() =
+        testApplication {
+            module()
+            val http = createClient { }
+            val (mine, myToken) = devices.pair("phone")
+            val (other, otherToken) = devices.pair("tablet")
+            val closed = mutableListOf<String>()
+            devices.registry.register(mine, "events") { closed += "mine" }
+            devices.registry.register(other, "events") { closed += "other" }
+
+            assertEquals(HttpStatusCode.Unauthorized, http.delete("/devices/me").status)
+            assertEquals(
+                HttpStatusCode.Unauthorized,
+                http.delete("/devices/me") { header(HttpHeaders.Authorization, "Bearer ${myToken}x") }.status,
+            )
+            assertEquals(DeviceCheck.Active(mine), devices.service.verify(myToken))
+
+            val done = http.delete("/devices/me") { header(HttpHeaders.Authorization, "Bearer $myToken") }
+            assertEquals(HttpStatusCode.NoContent, done.status)
+
+            assertEquals(DeviceCheck.Revoked, devices.service.verify(myToken))
+            assertEquals(DeviceCheck.Active(other), devices.service.verify(otherToken))
+            assertEquals(listOf("mine"), closed)
+            val again = http.delete("/devices/me") { header(HttpHeaders.Authorization, "Bearer $myToken") }
+            assertEquals(HttpStatusCode.Unauthorized, again.status)
         }
 
     @Test

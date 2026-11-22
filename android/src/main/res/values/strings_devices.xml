@@ -7,4 +7,6 @@
   <string name="pair_hint_too_many">Too many wrong codes. Wait a few minutes, then try again.</string>
   <string name="pair_revoked_notice">Your server removed this phone. Pair it again to carry on.</string>
   <string name="pair_revoked_dismiss">Dismiss</string>
+  <string name="pair_unpaired_unconfirmed">This phone is unpaired, but your server could not be reached, so it still lists this device. Remove it there with rafiq-bridge revoke %1$s.</string>
+  <string name="pair_unpaired_unconfirmed_unknown_id">This phone is unpaired, but your server could not be reached, so it still lists this device. Run rafiq-bridge devices, then rafiq-bridge revoke with its id.</string>
 </resources>

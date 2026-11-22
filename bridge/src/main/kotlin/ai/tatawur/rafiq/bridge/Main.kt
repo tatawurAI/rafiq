@@ -32,20 +32,12 @@ fun main(args: Array<String>) {
     }
     val config = BridgeConfig.fromEnvironment(System.getenv())
     val version = bridgeVersion()
-    if (config.dataDir == null) {
-        LoggerFactory
-            .getLogger("ai.tatawur.rafiq.bridge")
-            .warn("RAFIQ_DATA_DIR is not set, so sessions and events are lost when the bridge stops.")
-    }
-    if (config.deviceToken == null) {
-        LoggerFactory
-            .getLogger("ai.tatawur.rafiq.bridge")
-            .warn("RAFIQ_DEVICE_TOKEN is not set, so every route except /health answers 401.")
-    }
+    warnAboutMissingSettings(config)
     val eventLog = EventLog.open(config.dataDir, Dispatchers.IO.limitedParallelism(1))
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val connections = InMemoryConnectionRegistry()
-    val devices = DeviceService(DeviceStore.open(config.dataDir, Dispatchers.IO.limitedParallelism(1)), connections)
+    val deviceStore = DeviceStore.open(config.dataDir, Dispatchers.IO.limitedParallelism(1))
+    val devices = DeviceService(deviceStore, connections)
     // The shared token from RAFIQ_DEVICE_TOKEN stays valid as the device "legacy" until it is revoked.
     config.deviceToken?.let { token -> runBlocking { devices.adoptLegacyToken(token) } }
     val security = BridgeSecurity(config.bindAddress, config.allowedHosts, devices)
@@ -80,6 +72,7 @@ fun main(args: Array<String>) {
         }.start(wait = true)
     } finally {
         adminServer?.close()
+        deviceStore.close()
         scope.cancel()
         eventLog.close()
     }
@@ -90,4 +83,14 @@ internal fun bridgeVersion(): String {
     val properties = Properties()
     BridgeConfig::class.java.getResourceAsStream("version.properties")?.use(properties::load)
     return properties.getProperty("version") ?: error("version.properties is missing from the bridge resources.")
+}
+
+private fun warnAboutMissingSettings(config: BridgeConfig) {
+    val log = LoggerFactory.getLogger("ai.tatawur.rafiq.bridge")
+    if (config.dataDir == null) {
+        log.warn("RAFIQ_DATA_DIR is not set, so events are lost when the bridge stops, and pairing needs it.")
+    }
+    if (config.deviceToken == null) {
+        log.warn("RAFIQ_DEVICE_TOKEN is not set. Pair a phone with: rafiq-bridge pair --name <device>")
+    }
 }

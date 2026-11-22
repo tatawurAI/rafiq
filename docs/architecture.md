@@ -10,8 +10,8 @@ Rafiq is pre-alpha. Part of what follows is design, not code.
 |---|---|
 | `:protocol` | The event types, with their serialisation and the unknown-type fallback, the request and response bodies of the bridge's routes, and the messages of the terminal socket |
 | `:client` | The repository interfaces and screen-state types the app's screens use, the reducer that folds events into screen state, and the sync loop that resumes each session's socket from the last cached `seq` |
-| Bridge | The SQLite event log, the session manager, the ACP adapter, `WS /events` with replay, the session, summary and agent routes, a flag-gated dev page, and a shared device token with host and origin checks. It binds to `127.0.0.1` by default. Behind a gate that is off by default, it also lists allowed tmux sessions and mirrors one to the phone over `WS /terminal`. |
-| Android app | Pairing with a typed URL and token (the token is encrypted with a Keystore key), an offline event cache in Room, the session list, the session view with thread tabs, tool cards and approvals, and a composer with quick replies and on-device voice input. Half-folded, the session view and the list split at the hinge. |
+| Bridge | The SQLite event log, the session manager, the ACP adapter, `WS /events` with replay, the session, summary and agent routes, a flag-gated dev page, and per-device tokens with revocation, and host and origin checks. It binds to `127.0.0.1` by default. Behind a gate that is off by default, it also lists allowed tmux sessions and mirrors one to the phone over `WS /terminal`. |
+| Android app | Pairing with your server address and a one-time code (the device token it receives is encrypted with a Keystore key), an offline event cache in Room, the session list, the session view with thread tabs, tool cards and approvals, and a composer with quick replies and on-device voice input. Half-folded, the session view and the list split at the hinge. |
 
 Everything else on this page, including the file and git routes, per-device tokens, the auth relay and push, is planned. Milestones are tracked on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
 
@@ -114,8 +114,8 @@ The health, session, summary, agent, thread, prompt, cancel, approval and event 
 | `GET /sessions` | List sessions. With Terminal on, this includes the allowed tmux sessions. |
 | `GET /sessions/summaries` | List sessions with what the session list shows: the newest event `seq`, a one-line preview of the newest agent or user message on the main thread, and the approvals still open, oldest first. Read from small summary tables kept with the log, so polling it is cheap. |
 | `GET /agents` | The agents you can start a session with, as `{"id": ...}` objects |
-| `POST /pair` | Trade a pairing code for a device token. Needs no token. Wrong codes are counted across all callers, and after 5 in 5 minutes every attempt is refused for a while. |
-| `DELETE /devices/me` | Revoke the calling device and close its sockets. It cannot touch another device. |
+| `POST /pair` | Trade a pairing code for this phone's device token. Needs no token, because it is where a phone gets one. Host and origin checks still apply. A wrong, expired or used code is 401 `invalid_pairing_code`. After five wrong codes in five minutes, every attempt is 429 `too_many_attempts` with `Retry-After`. |
+| `DELETE /devices/me` | Revoke the calling device and close its open sockets. Answers 204. Used when you unpair in the app. It cannot affect another device. |
 | `GET /sessions/{id}/threads` | List a session's threads |
 | `POST /sessions/{id}/prompt` | Send a prompt. Prompts go to the main thread, and a helper thread is refused. A tmux session answers `409` with `terminal_only`, because it opens in Terminal. |
 | `POST /sessions/{id}/threads/{threadId}/cancel` | Stop the current turn on a thread |
@@ -147,10 +147,10 @@ The bridge reads environment variables at start-up. Nothing reads a `.env` file.
 |---|---|---|
 | `RAFIQ_BIND_ADDRESS` | Address to listen on. Keep the default and use `tailscale serve`. | `127.0.0.1` |
 | `RAFIQ_PORT` | Port to listen on | `8740` |
-| `RAFIQ_DATA_DIR` | Folder for the database and logs. Unset keeps events in memory only. | unset |
+| `RAFIQ_DATA_DIR` | Folder for the database and logs. Unset keeps events in memory only. Required for pairing. | unset |
 | `RAFIQ_AGENTS` | Agents as `id=command` pairs separated by commas | unset |
 | `RAFIQ_DEV_PAGE` | `1` serves a plain test page at `/dev` | unset |
-| `RAFIQ_DEVICE_TOKEN` | A shared secret, accepted as the device `legacy` until you revoke it, so an existing pairing keeps working. At least 32 characters, and required when `RAFIQ_AGENTS` is set. Treat as sensitive. New phones pair with a code instead. | unset |
+| `RAFIQ_DEVICE_TOKEN` | Optional. Creates the device `legacy`, so a phone paired before per-device tokens keeps working. At least 32 characters when set. Treat as sensitive. New phones pair with a code. | unset |
 | `RAFIQ_ALLOWED_HOSTS` | Extra `Host` values to accept, for example your Tailscale name | unset |
 | `RAFIQ_TERMINAL` | `1` turns on Terminal and tmux sessions. See [Terminal](#terminal). | unset (off) |
 | `RAFIQ_TMUX_SESSIONS` | The exact names of the tmux sessions the phone may see and open, separated by commas. No wildcard. | unset |
@@ -182,15 +182,17 @@ Terminal shows the real screen of a tmux session on your server in the app, and 
 
 **Keys.** The bridge passes on only what a person typing could send: printable text, Enter, Tab, Backspace, Ctrl keys, Escape, Alt plus a key, arrows, Home, End, Insert, Delete, page keys, function keys with their modifiers, and the bracketed paste markers. Everything else is dropped, including the replies a terminal emulator makes to the program's questions. tmux already answers those, so a reply that reached the pane would be read as typing.
 
-### Devices
+### Devices and tokens
 
-Each phone pairs once and gets a token of its own.
+Each phone is a device with its own token. The bridge keeps devices and one-time pairing codes in `rafiq.db`, as SHA-256 digests. It never stores a token or a code. Tokens and codes are random, so a plain digest is enough, and the fetched digest is compared in constant time.
 
-- `rafiq-bridge pair --name <device>` prints a pairing code and, when `RAFIQ_ALLOWED_HOSTS` names your server, the address to enter in the app. The code has 8 characters, works once and expires in about 10 minutes. The app trades it at `POST /pair` for a token, which it keeps in the Keystore.
-- The bridge stores only a digest of each token and each code, in a `devices` table in the same SQLite file as the event log. A token is 256 random bits.
-- `RAFIQ_DEVICE_TOKEN` keeps working as one device called `legacy`, so an existing pairing needs no change.
-- `rafiq-bridge devices` lists devices with when each was last seen. `rafiq-bridge revoke <id>` revokes one. The next request from it gets `401` with `device_revoked`, and its open `/events` and `/terminal` sockets close at once.
-- These commands talk to the running bridge over a Unix socket in `<RAFIQ_DATA_DIR>/admin/`, in a folder only your user can enter. They never use the network port, and they need the same `RAFIQ_DATA_DIR` as the bridge.
+- **Pairing.** `rafiq-bridge pair --name <device>` makes a code of 8 characters, valid for 10 minutes and spent by the first `POST /pair` that uses it. The device and the spend happen in one transaction, so two requests with one code make one device. Wrong codes are counted across all callers, because behind `tailscale serve` every caller is `127.0.0.1`.
+- **Checking.** The security plugin looks the token up in the device store on every request and every socket handshake. Nothing is cached, so a revocation applies to the next call. It sets `DevicePrincipal` on the call, and routes read the device id from it. A token of a revoked device gets 401 `device_revoked`. A wrong one gets 401 `unauthorized`.
+- **Revoking.** `rafiq-bridge revoke <id>` (or `DELETE /devices/me`) marks the device revoked, then closes its sockets through the `ConnectionRegistry`. Every `/events` and `/terminal` socket registers there. A socket that registers just after a revoke is closed at once, so a handshake racing the revoke cannot stay open. A revoked device stays in the table, so the app can tell "removed" from "wrong token".
+- **The CLI.** `rafiq-bridge pair --name <device>`, `rafiq-bridge devices` and `rafiq-bridge revoke <id>` talk to the running bridge over a Unix socket at `$RAFIQ_DATA_DIR/admin/ctl.sock`, never over the network port. The folder is created with mode 0700 and the bridge refuses to start if it is a symbolic link, belongs to another user or has any other mode. The socket file is 0600. Java has no portable peer-credential check, so that folder is the access control, as it is for the database beside it.
+- **The legacy token.** `RAFIQ_DEVICE_TOKEN` becomes the device `legacy` at start, so a phone paired before per-device tokens keeps working. Revoking `legacy` is permanent, even if the variable is still set.
+
+This does not cover anyone with a shell as the bridge's user. See [SECURITY.md](../SECURITY.md) and ADR 0012.
 
 ### Auth relay
 
@@ -206,7 +208,7 @@ The bridge watches for new listening ports under a session's processes. When one
 ### Storage and security
 
 - SQLite holds sessions, threads and the event log, plus two small summary tables (the newest message preview and the open approvals per session) written in the same transaction as each event.
-- Tailscale ACLs restrict the bridge's port to your devices. Each phone has a device token of its own, checked against the device store on every request and every socket handshake. The `Host` header must be the bind address, `localhost` or a listed name (421 otherwise), and a request with a foreign `Origin` is refused, so a web page cannot reach the bridge through DNS rebinding. See [Devices](#devices) for pairing and revoking. See [ADR 0012](adr/0012-https-through-tailscale-serve.md), and [setup.md](setup.md) for the `tailscale serve` steps.
+- Tailscale ACLs restrict the bridge's port to your devices. Each phone has a device token of its own, checked against the device store on every request and every socket handshake. The `Host` header must be the bind address, `localhost` or a listed name (421 otherwise), and a request with a foreign `Origin` is refused, so a web page cannot reach the bridge through DNS rebinding. See [Devices and tokens](#devices-and-tokens) for pairing and revoking. See [ADR 0012](adr/0012-https-through-tailscale-serve.md), and [setup.md](setup.md) for the `tailscale serve` steps.
 - The file API refuses paths outside the session's project root.
 - Approvals require a fresh biometric check on the phone.
 - Push payloads carry ids and short status only.

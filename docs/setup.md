@@ -8,7 +8,8 @@ The examples use `box.example.ts.net` for your server's name. Use your own.
 
 - Tailscale on your server, signed in to the same tailnet as your phone. The commands here were checked against Tailscale 1.98. Older versions used a different `tailscale serve` syntax, so update first if a command below is refused.
 - Tailscale on your phone, connected.
-- The bridge built and configured as in the [README](../README.md#quickstart), with a device token in `RAFIQ_DEVICE_TOKEN`.
+- The bridge built and configured as in the [README](../README.md#quickstart), with `RAFIQ_DATA_DIR` set, because pairing needs it.
+- To build the app: it compiles against Android SDK Platform 37 (`platforms;android-37.0`) with Build-Tools 37.0.0, and still targets API 36.
 - `claude-agent-acp` installed on your server, as the [README](../README.md#requirements) shows, and Claude Code signed in there.
 
 ## 1. Turn on HTTPS certificates for your tailnet
@@ -35,7 +36,6 @@ This prints a name such as `box.example.ts.net.`. Drop the final dot.
 Keep the default bind address and port, and add your server's name to `RAFIQ_ALLOWED_HOSTS`:
 
 ```sh
-export RAFIQ_DEVICE_TOKEN=replace-with-a-long-random-value   # openssl rand -hex 32
 export RAFIQ_AGENTS=claude-code=claude-agent-acp
 export RAFIQ_DATA_DIR=/var/lib/rafiq
 export RAFIQ_ALLOWED_HOSTS=box.example.ts.net
@@ -73,21 +73,33 @@ From any device on your tailnet, such as your laptop:
 
 ```sh
 curl https://box.example.ts.net/health
-curl -H "Authorization: Bearer $RAFIQ_DEVICE_TOKEN" https://box.example.ts.net/sessions
+curl -H "Authorization: Bearer $DEVICE_TOKEN" https://box.example.ts.net/sessions   # a token from pairing, or the legacy token
 ```
 
 The first gives `{"status":"ok","version":"..."}`. The first request after you turn on HTTPS can take a few seconds while Tailscale gets the certificate.
 
 ## 6. Pair your phone
 
-1. Make sure Tailscale is connected on your phone.
-2. On your server, with the same `RAFIQ_DATA_DIR` as the bridge, run `rafiq-bridge pair --name my-phone`. It prints a code such as `ABCD-EFGH`. The code works once and expires in about 10 minutes.
-3. Open Rafiq. Under **Server address**, enter `https://box.example.ts.net`, with no port and no path.
-4. Under **Pairing code**, enter the code.
+Run this on your server, in the same environment as the bridge (it needs the same `RAFIQ_DATA_DIR`):
 
-The app then connects and shows your sessions. To see your phones, run `rafiq-bridge devices`. To cut one off, run `rafiq-bridge revoke <id>`. It stops working at once, and the app asks you to pair again.
+```sh
+rafiq-bridge pair --name pixel
+```
 
-If you set `RAFIQ_DEVICE_TOKEN`, that token still works and shows as the device `legacy`, so an existing pairing carries on.
+It prints a pairing code like `ABCD-EFGH` and the address to enter. The code works once and expires after 10 minutes. After five wrong codes the bridge refuses every code for five minutes. In the app, enter your server address (your https `*.ts.net` name) and the code. The phone gets its own token and keeps it in the Android Keystore. Nobody, including you, can read it again.
+
+### List and revoke phones
+
+```sh
+rafiq-bridge devices
+rafiq-bridge revoke <id>
+```
+
+`devices` shows each phone's id, name, when it last connected and whether it is active. `revoke` cuts that phone off at once: its open connections close and its next request is refused. The phone clears its token and shows the pairing screen. Revoking is permanent. Pair the phone again for a new token. Unpairing in the app does the same thing from the phone. If your server cannot be reached when you unpair, the app tells you the phone is still listed, and you run `rafiq-bridge revoke <id>` later. These commands talk to the running bridge over a Unix socket in `$RAFIQ_DATA_DIR/admin`, a folder only your user can open. They never use the network port.
+
+### Retire the old shared token
+
+If you set `RAFIQ_DEVICE_TOKEN` before this version, that token still works. The bridge lists it as the device `legacy`. Once your phone is paired with its own token, run `rafiq-bridge revoke legacy`, then remove `RAFIQ_DEVICE_TOKEN` from your service environment. The bridge no longer needs it.
 
 ## Terminal
 
@@ -126,7 +138,8 @@ A listed session shows in your session list with the agent that runs in it. Its 
 |---|---|
 | `421`, `misdirected_request` | The name is missing from `RAFIQ_ALLOWED_HOSTS`, or it does not match the name you used in the app. |
 | `401`, `unauthorized` | The phone's token is not one the bridge knows. Pair again. |
-| `401`, `device_revoked` | You revoked this phone with `rafiq-bridge revoke`. Pair it again. |
+| The app says your server removed the phone | The phone was revoked. Run `rafiq-bridge pair` again. |
+| The app says the code is wrong | Codes work once and expire after 10 minutes. Run `rafiq-bridge pair` for a new one. |
 | `403`, `forbidden_origin` | A browser page on another site called the bridge. The app sends no `Origin`, so this is not the app. |
 | `502` from `tailscale serve` | The bridge is not running, or not on `127.0.0.1:8740`. |
 | No answer at all | Tailscale is off on your phone, the phone is on another tailnet, or your tailnet's access rules block it from your server. |

@@ -64,8 +64,8 @@ class BridgeConfig(
 
             val agents = read("RAFIQ_AGENTS")?.let(::parseAgents).orEmpty()
             val token = read("RAFIQ_DEVICE_TOKEN")
-            require(agents.isEmpty() || (token != null && token.length >= MIN_TOKEN_LENGTH)) {
-                "RAFIQ_DEVICE_TOKEN must be set to at least $MIN_TOKEN_LENGTH characters when RAFIQ_AGENTS is set. " +
+            require(token == null || token.length >= MIN_TOKEN_LENGTH) {
+                "RAFIQ_DEVICE_TOKEN must be at least $MIN_TOKEN_LENGTH characters when it is set. " +
                     "Generate one with: openssl rand -hex 32"
             }
 

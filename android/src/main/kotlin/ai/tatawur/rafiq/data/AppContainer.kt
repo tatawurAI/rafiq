@@ -1,9 +1,11 @@
 package ai.tatawur.rafiq.data
 
-import ai.tatawur.rafiq.client.PairingRepository
 import ai.tatawur.rafiq.client.SessionRepository
+import ai.tatawur.rafiq.client.pairing.DevicePairingApi
 import ai.tatawur.rafiq.client.sync.PairingProbe
 import ai.tatawur.rafiq.client.sync.SyncingSessionRepository
+import ai.tatawur.rafiq.pairing.DevicePairing
+import ai.tatawur.rafiq.pairing.OkHttpDeviceRevoker
 import ai.tatawur.rafiq.pairing.StoredPairingRepository
 import ai.tatawur.rafiq.pairing.TokenCipher
 import ai.tatawur.rafiq.protocol.Event
@@ -21,6 +23,8 @@ import androidx.room.Room
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 
 // A damaged file reads as empty, which means pairing again, instead of failing every launch.
 private val Context.pairingStore by preferencesDataStore(
@@ -44,7 +48,10 @@ class AppContainer(
     application: Application,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val restClient = BridgeClients.rest()
+    private val restClient: OkHttpClient =
+        BridgeClients.rest { token ->
+            scope.launch { storedPairing.deviceRevoked(token) }
+        }
     private val transport = OkHttpTransport(restClient)
     private val cache =
         RoomEventStore(
@@ -54,17 +61,19 @@ class AppContainer(
                 .build()
                 .cache(),
         )
-    private val storedPairing =
+    private val storedPairing: StoredPairingRepository =
         StoredPairingRepository(
             prefs = application.pairingStore,
             cipher = TokenCipher(),
             probe = PairingProbe(transport),
+            api = DevicePairingApi(transport),
+            revoker = OkHttpDeviceRevoker(restClient),
             cache = cache,
             io = Dispatchers.IO,
         )
 
     /** Pairs the app with your server. */
-    val pairing: PairingRepository = storedPairing
+    val pairing: DevicePairing = storedPairing
 
     /** Settings that guard what the phone can do on your server. */
     val security = SecuritySettings(application.settingsStore)

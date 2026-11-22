@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.bridge.tmux
 
 import ai.tatawur.rafiq.bridge.BridgeFixture
+import ai.tatawur.rafiq.bridge.FakeAdapter
 import ai.tatawur.rafiq.bridge.TEST_TOKEN
 import ai.tatawur.rafiq.bridge.bridgeModule
 import ai.tatawur.rafiq.bridge.testSecurity
@@ -47,6 +48,7 @@ class RealBridge(
     dir: Path,
     val gate: TerminalGate?,
     agents: AgentDetector = AgentDetector(claudeCommand = "rafiq-no-such-claude"),
+    adapter: FakeAdapter = FakeAdapter(),
     deviceOf: (
         io.ktor.server.application.ApplicationCall,
     ) -> String = { it.request.header("X-Test-Device") ?: "phone" },
@@ -61,7 +63,7 @@ class RealBridge(
     init {
         lateinit var created: TmuxSessionSource
         fixture =
-            BridgeFixture(dir) { id -> gate == null || !id.startsWith("tmux-") || created.isVisible(id) }
+            BridgeFixture(dir, adapter) { id -> gate == null || !id.startsWith("tmux-") || created.isVisible(id) }
         tmuxSource = gate?.let { TmuxSessionSource(it, fixture.log, agents).also { source -> created = source } }
         val service = gate?.let { TerminalService(it, tmuxSource!!) }
         server =
@@ -102,6 +104,20 @@ class RealBridge(
             HttpRequest
                 .newBuilder(URI("http://127.0.0.1:$port$path"))
                 .header("Authorization", "Bearer $TEST_TOKEN")
+                .build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+
+    fun post(
+        path: String,
+        json: String,
+    ): HttpResponse<String> =
+        http.send(
+            HttpRequest
+                .newBuilder(URI("http://127.0.0.1:$port$path"))
+                .header("Authorization", "Bearer $TEST_TOKEN")
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
                 .build(),
             HttpResponse.BodyHandlers.ofString(),
         )

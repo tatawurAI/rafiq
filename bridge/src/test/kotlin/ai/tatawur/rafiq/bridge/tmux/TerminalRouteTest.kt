@@ -56,15 +56,26 @@ class TerminalRouteTest {
     @Test
     fun the_view_takes_the_phone_size_and_leaving_hands_the_desk_its_size_back() {
         tmux.newSession("weather-app")
-        tmux.attachDesk("weather-app", 120, 40)
+        val desk = tmux.attachDesk("weather-app", 120, 40)
         eventuallyEquals("the desk claims its size", 120 to 40) { tmux.windowSize("weather-app") }
         val socket = bridgeFor("weather-app").terminal("weather-app")
         socket.sendResize(60, 20)
         socket.snapshot()
         eventuallyEquals("the window takes the phone's size", 60 to 20) { tmux.windowSize("weather-app") }
         assertFalse(noViewSession(), "a view session exists while the socket is open")
+
+        // The desk types, so the window follows the desk. A phone resize must win it back, not only ask.
+        desk.typeSomething()
+        eventuallyEquals("the desk wins the size while it types", 120 to 40) { tmux.windowSize("weather-app") }
         socket.sendResize(70, 25)
-        eventuallyEquals("a later resize is followed", 70 to 25) { tmux.windowSize("weather-app") }
+        eventuallyEquals("a later resize wins the size back", 70 to 25) { tmux.windowSize("weather-app") }
+
+        // And so must the phone typing, once the throttle since the last claim has passed.
+        desk.typeSomething()
+        eventuallyEquals("the desk wins the size again", 120 to 40) { tmux.windowSize("weather-app") }
+        Thread.sleep(CLAIM_THROTTLE_MS)
+        socket.sendKeys("x".toByteArray())
+        eventuallyEquals("typing on the phone wins the size back", 70 to 25) { tmux.windowSize("weather-app") }
 
         socket.close()
 
@@ -245,5 +256,6 @@ class TerminalRouteTest {
     private companion object {
         val LINE = Regex("L(\\d+)\r?\n")
         val SCREEN_LINE = Regex("L(\\d+)")
+        const val CLAIM_THROTTLE_MS = 1100L
     }
 }

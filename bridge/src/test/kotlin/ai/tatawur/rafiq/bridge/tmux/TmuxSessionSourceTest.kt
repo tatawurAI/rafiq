@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.bridge.tmux
 
+import ai.tatawur.rafiq.bridge.FakeAdapter
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.EventPayload
 import kotlinx.coroutines.runBlocking
@@ -44,6 +45,8 @@ class TmuxSessionSourceTest {
             .map { it.groupValues[1] }
             .toList()
             .sorted()
+
+    private fun RealBridge.post(path: String) = post(path, """{"text":"hello"}""")
 
     private fun RealBridge.refresh() = runBlocking { tmuxSource!!.refresh() }
 
@@ -119,6 +122,27 @@ class TmuxSessionSourceTest {
                     .status
             },
         )
+    }
+
+    @Test
+    fun a_tmux_session_does_not_take_a_chat_prompt_and_starts_no_agent() {
+        tmux.newSession("weather-app")
+        // An agent named like the session's own, so an unguarded prompt would start it through the adapter.
+        val adapter = FakeAdapter("terminal")
+        val settings = TerminalSettings(true, setOf("weather-app"), tmux.socket)
+        val bridge =
+            RealBridge(
+                dir.resolve("data"),
+                TerminalGate(settings, tmux.server),
+                adapter = adapter,
+            ).also(bridges::add)
+        bridge.refresh()
+
+        val answer = bridge.post("/sessions/tmux-weather-app/prompt")
+
+        assertEquals(409, answer.statusCode())
+        assertTrue("terminal_only" in answer.body(), answer.body())
+        assertTrue(adapter.started.isEmpty(), "an agent was started for a tmux session")
     }
 
     @Test

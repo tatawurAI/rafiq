@@ -69,14 +69,28 @@ class TestTmux : AutoCloseable {
         session: String,
         cols: Int,
         rows: Int,
-    ) {
+    ): Desk {
         val process =
             ProcessBuilder("tmux", "-L", socket, "-C", "attach", "-t", "=$session").redirectErrorStream(true).start()
         desks += process
-        process.outputStream.write("refresh-client -C ${cols}x$rows\n".toByteArray())
-        process.outputStream.flush()
+        val desk = Desk(process, session)
+        desk.send("refresh-client -C ${cols}x$rows")
         // Drain its output so it never blocks on a full pipe.
         Thread { process.inputStream.readAllBytes() }.apply { isDaemon = true }.start()
+        return desk
+    }
+
+    /** The desk's client. [typeSomething] makes it the client `window-size latest` follows, as a keystroke does. */
+    class Desk(
+        private val process: Process,
+        private val session: String,
+    ) {
+        fun send(command: String) {
+            process.outputStream.write("$command\n".toByteArray())
+            process.outputStream.flush()
+        }
+
+        fun typeSomething() = send("switch-client -t '=$session'")
     }
 
     /** True while some process still runs a `tmux -C` client whose command line names [viewName]. */

@@ -60,12 +60,15 @@ private val CLAIM_INTERVAL = 1.seconds
 
 /** How often an open view checks that its session may still be opened. */
 private val ACCESS_CHECK_INTERVAL = 1.seconds
+
+/** Checks in a row the session must fail before the view ends, so one bad scan never ends a live view. */
+private const val ACCESS_MISSES_TO_END = 3
 private val FIRST_RESIZE_WAIT = 2.seconds
 private val TRY_AGAIN = CloseReason.Codes.TRY_AGAIN_LATER
 private val END_SEND_WAIT = 1.seconds
 private val RESIZE_RETRY = 100.milliseconds
 private val ESCAPE_WAIT = 60.milliseconds
-private const val HISTORY_RETRY_SECONDS = 2
+private const val HISTORY_RETRY_SECONDS = 1
 private const val DEFAULT_COLS = 80
 private const val DEFAULT_ROWS = 24
 
@@ -589,12 +592,16 @@ private class TerminalConnection(
 
     /**
      * The gate is checked at connect, and again here while the view is open: a scan can drop the session, for
-     * example when its agent exits and the session is not named as a shell. Then the view ends and detaches.
+     * example when its agent exits and the session is not named as a shell. The view ends and detaches only after
+     * [ACCESS_MISSES_TO_END] checks in a row find it dropped, because one failed tmux poll or one scan where agent
+     * detection flapped must not end every open view.
      */
     private suspend fun closeWhenNoLongerAllowed() {
+        var misses = 0
         while (socket.isActive) {
             delay(ACCESS_CHECK_INTERVAL)
-            if (gate.allowedName(TMUX_SESSION_PREFIX + sessionName) == null) {
+            misses = if (gate.allowedName(TMUX_SESSION_PREFIX + sessionName) == null) misses + 1 else 0
+            if (misses >= ACCESS_MISSES_TO_END) {
                 end("Terminal is no longer allowed for this session.")
                 return
             }

@@ -51,12 +51,18 @@ class TerminalHistoryTest {
         val bridge = bridgeFor("weather-app")
         val window = deskWindow()
 
-        val statuses = (1..6).map { bridge.get("/terminal/history?session=tmux-weather-app&window=$window&lines=40") }
+        // A burst of 10, refilling 2 a second: reads far faster than that hit 429 soon after the tenth.
+        val statuses = mutableListOf<java.net.http.HttpResponse<String>>()
+        while (statuses.size < MAX_TRIES && statuses.lastOrNull()?.statusCode() != 429) {
+            statuses += bridge.get("/terminal/history?session=tmux-weather-app&window=$window&lines=40")
+        }
 
-        assertEquals(List(5) { 200 } + 429, statuses.map { it.statusCode() })
+        val read = statuses.takeWhile { it.statusCode() == 200 }.size
+        assertEquals(429, statuses.last().statusCode(), "no read was refused in $MAX_TRIES tries")
+        assertTrue(read >= 10, "only $read reads were allowed before a 429")
         assertTrue("too_many_requests" in statuses.last().body())
         assertEquals(
-            "2",
+            "1",
             statuses
                 .last()
                 .headers()
@@ -65,7 +71,7 @@ class TerminalHistoryTest {
         )
         assertEquals(200, bridge.get("/terminal/history?session=tmux-weather-app", device = "tablet").statusCode())
         assertEquals(
-            List(5) { "Terminal history read: device=phone session=tmux-weather-app window=$window lines=40" } +
+            List(read) { "Terminal history read: device=phone session=tmux-weather-app window=$window lines=40" } +
                 "Terminal history read: device=tablet session=tmux-weather-app window=current lines=$MAX_HISTORY_LINES",
             auditLines,
         )
@@ -153,4 +159,8 @@ class TerminalHistoryTest {
 
     private fun deskWindow() =
         tmux.tmux("display-message", "-p", "-t", "=weather-app:", "#{window_index}").trim().toInt()
+
+    private companion object {
+        const val MAX_TRIES = 40
+    }
 }

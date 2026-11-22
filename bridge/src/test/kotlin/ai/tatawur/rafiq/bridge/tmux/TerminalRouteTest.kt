@@ -220,16 +220,22 @@ class TerminalRouteTest {
     }
 
     @Test
-    fun an_open_view_ends_and_detaches_when_a_scan_no_longer_allows_its_session() {
+    fun an_open_view_ends_and_detaches_only_when_its_session_stays_unallowed_for_three_checks() {
         tmux.newSession("weather-app")
         val bridge = bridgeFor("weather-app")
         val socket = bridge.terminal("weather-app")
         socket.sendResize(60, 20)
         socket.snapshot()
 
+        // One bad scan, or two, is not enough: the view stays open once the session is allowed again.
+        bridge.gate!!.updateOpenable(emptySet())
+        Thread.sleep(SHORT_DROP_MS)
+        bridge.gate!!.updateOpenable(setOf("weather-app"))
+        assertFalse(socket.closedWithin(4), "a short drop ended the view")
+
         bridge.gate!!.updateOpenable(emptySet())
 
-        val ended = socket.until(seconds = 5) { it is Received.Text && "\"ended\"" in it.text } as Received.Text
+        val ended = socket.until(seconds = 8) { it is Received.Text && "\"ended\"" in it.text } as Received.Text
         assertTrue("no longer allowed" in ended.text, ended.text)
         assertIs<Received.Closed>(socket.until(seconds = 5) { it is Received.Closed })
         eventually("the view session is gone", check = ::noViewSession)
@@ -540,5 +546,8 @@ class TerminalRouteTest {
         const val STALL_MS = 5000L
         const val REVOKE_SETTLE_MS = 400L
         const val SETTLE_MS = 2500L
+
+        /** Long enough for one or two access checks, short of the three that end a view. */
+        const val SHORT_DROP_MS = 1500L
     }
 }

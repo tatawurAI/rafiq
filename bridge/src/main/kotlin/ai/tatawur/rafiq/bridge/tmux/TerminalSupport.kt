@@ -123,8 +123,8 @@ class HistoryLimits(
     }
 
     private companion object {
-        const val HISTORY_BURST = 5
-        const val HISTORY_PER_SECOND = 0.5
+        const val HISTORY_BURST = 10
+        const val HISTORY_PER_SECOND = 2.0
         const val HISTORY_AT_ONCE = 2
     }
 }

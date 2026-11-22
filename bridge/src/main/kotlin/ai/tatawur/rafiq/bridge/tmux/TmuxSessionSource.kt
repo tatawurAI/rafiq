@@ -90,18 +90,25 @@ class TmuxSessionSource(
     fun start(scope: CoroutineScope) {
         scope.launch {
             while (true) {
-                @Suppress("TooGenericExceptionCaught") // A failed poll is retried on the next turn.
-                try {
-                    refresh()
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Exception) {
-                    visible = emptySet()
-                    gate.updateOpenable(emptySet())
-                    logger.warn("tmux poll failed: {}", failure.toString())
-                }
+                poll()
                 delay(interval)
             }
+        }
+    }
+
+    /**
+     * One poll. A failed one hides the sessions until the next good poll, but keeps which ones Terminal may open,
+     * so one slow `tmux` call does not take Terminal away from a phone that has it open.
+     */
+    @Suppress("TooGenericExceptionCaught") // A failed poll is retried on the next turn.
+    suspend fun poll() {
+        try {
+            refresh()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            visible = emptySet()
+            logger.warn("tmux poll failed: {}", failure.toString())
         }
     }
 

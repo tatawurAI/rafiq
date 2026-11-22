@@ -113,6 +113,68 @@ class ReviewFixesTest {
             assertFalse(latest.terminalAllowed)
         }
 
+    // N1. Before Enter the box must show the start of the paste.
+    @Test
+    fun a_dialog_line_that_starts_with_a_bang_gets_no_enter() =
+        runTest {
+            val reader = attached()
+            io.onPaste = { io.screen = "${"─".repeat(40)}\n! Warning: this folder is not trusted\n${"─".repeat(40)}\n" }
+
+            assertEquals(SendRefusal.STATE_UNKNOWN, reader.refusal("hello"))
+            assertTrue(io.enters.isEmpty())
+        }
+
+    @Test
+    fun a_shell_line_in_shell_mode_and_a_long_paste_placeholder_get_their_enter() =
+        runTest {
+            val reader = attached()
+            io.onPaste = { io.screen = "${"─".repeat(40)}\n! ls *.txt\n${"─".repeat(40)}\n" }
+            reader.prompt(SESSION, "!ls *.txt", "c-1")
+            settle()
+            io.onPaste = { io.screen = FakePaneIo.box("[Pasted text #1 +40 lines]") }
+            reader.prompt(SESSION, (1..40).joinToString("\n") { "line $it" }, "c-2")
+
+            assertEquals(2, io.enters.size)
+        }
+
+    // NEW-3. A reply written while the bridge was down is shown, even when an older reply has the same words.
+    @Test
+    fun a_new_reply_with_the_words_of_an_older_one_is_backfilled_after_a_restart() =
+        runTest {
+            val record = dir.resolve("record.jsonl").also { Files.createFile(it) }
+            val offsets = dir.resolve("offsets.json")
+            val path = "transcript_path" to record.toString()
+            val first = reader(log, io, statuses, offsets = ReaderOffsets(offsets), projectsDir = dir)
+            first.onEvent(hook(event("UserPromptSubmit", "prompt" to "one", "prompt_id" to "p-1", path)))
+            first.onEvent(hook(display("Done.", path)))
+            first.onEvent(hook(event("Stop", "last_assistant_message" to "Done.", path)))
+            settle(100)
+            // The record catches up after the hooks, before the reply check.
+            record.append(userPrompt("one", promptId = "p-1") + assistantText("Done."))
+            settle()
+            first.close()
+            record.append(userPrompt("two", promptId = "p-2") + assistantText("Done."))
+
+            val second = reader(log, io, statuses, offsets = ReaderOffsets(offsets), projectsDir = dir)
+            second.onEvent(hook(event("Notification", "message" to "Claude is waiting for your input", path)))
+            settle()
+
+            assertEquals(listOf("Done.", "Done."), log.agentTexts())
+        }
+
+    // NEW-5. A Claude Code config folder of its own under your home still has its records read.
+    @Test
+    fun a_record_under_a_claude_config_folder_in_your_home_is_read() {
+        val home = Files.createDirectory(dir.resolve("home"))
+        val folder = Files.createDirectories(home.resolve(".claude-work/projects/-work-weather-app"))
+        val record = folder.resolve("s-1.jsonl").also { Files.createFile(it) }
+        val notProjects = Files.createDirectories(home.resolve("notes")).resolve("s-1.jsonl")
+
+        assertEquals(record.toRealPath(), SessionRecord.safePath(record.toString(), dir.resolve("none"), home))
+        assertNull(SessionRecord.safePath(record.toString(), dir.resolve("none"), null))
+        assertNull(SessionRecord.safePath(notProjects.toString(), dir.resolve("none"), home))
+    }
+
     // 1. A project the installer cannot read counts as one without hooks.
     @Test
     fun a_project_the_installer_refuses_is_hooks_not_installed() =

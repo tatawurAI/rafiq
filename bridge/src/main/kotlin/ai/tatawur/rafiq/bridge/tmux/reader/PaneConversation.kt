@@ -37,6 +37,9 @@ internal class PaneConversation(
 
     /** The byte offset in [recordPath] up to which the record has been read. Null before the first read. */
     var recordOffset: Long? = null
+
+    /** The session's event `seq` when [recordOffset] last moved. See [RecordCheckpoint.seq]. */
+    var recordSeq: Long = 0
     var permissionMode: String? = null
     var lastHookAtMs: Long = 0
 
@@ -270,9 +273,16 @@ internal class PaneConversation(
             normalize(lastAssistantMessage) in turnTexts ||
             (!startedHere && normalize(lastAssistantMessage) in seededTexts)
 
-    /** Replies already in the log from an earlier run of the bridge. See [ReaderLog.recentAgentTexts]. */
-    fun seed(texts: List<String>) {
-        texts.mapTo(seededTexts, ::normalize)
+    /**
+     * Replies an earlier run of the bridge showed after it last read the record. See [ReaderLog.agentMessagesAfter].
+     * A reply filled from the record is known by its id, which holds the record key. A reply shown live has no
+     * record key yet, so it is known by its text, and only those after the checkpoint count, so an older reply with
+     * the same words does not hide a new one.
+     */
+    fun seed(messages: List<Pair<String, String>>) {
+        for ((id, text) in messages) {
+            if (id.startsWith(FILL_PREFIX)) remember(filledIds, id) else seededTexts += normalize(text)
+        }
     }
 
     /**
@@ -284,7 +294,7 @@ internal class PaneConversation(
         text: String,
         key: String? = null,
     ) {
-        val id = "claude:fill:" + (key ?: UUID.randomUUID().toString())
+        val id = FILL_PREFIX + (key ?: UUID.randomUUID().toString())
         if (normalize(text) in turnTexts || id in filledIds) return
         remember(filledIds, id)
         finishMessage(id, text)
@@ -413,6 +423,8 @@ internal class PaneConversation(
     }
 
     companion object {
+        private const val FILL_PREFIX = "claude:fill:"
+
         /** A batch this recent counts as the agent writing. */
         const val WRITING_MS = 2_000L
         private const val REMEMBERED = 200

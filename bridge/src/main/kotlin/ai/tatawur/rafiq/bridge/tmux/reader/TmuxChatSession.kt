@@ -77,6 +77,8 @@ internal class ReaderContext(
     val registry: ConnectionRegistry?,
     /** Adds the session fields the log does not store, such as `terminalAllowed`, to a `SessionUpdated`. */
     val present: (Session) -> Session = { it },
+    /** Your home folder, under which a Claude Code config folder of its own may keep records. Null allows none. */
+    val homeDir: Path? = null,
 )
 
 /** A Claude pane the tmux scan found, with what `claude agents --json` said about its process. */
@@ -117,6 +119,8 @@ internal class TmuxChatSession(
     private val ioDispatcher = context.ioDispatcher
     private val timing = context.timing
     private val recordRoot = context.recordRoot
+    private val homeDir = context.homeDir
+    private val warnedOutside = AtomicBoolean(false)
     private val registry = context.registry
 
     private sealed interface Input {
@@ -729,7 +733,6 @@ internal class TmuxChatSession(
         val main = panes.values.none { it.threadId == MAIN_THREAD }
         val threadId = if (main) MAIN_THREAD else "pane-" + nextWorker++
         val pane = PaneConversation(paneId, threadId) { log.append(sessionId, it) }
-        pane.seed(log.recentAgentTexts(sessionId))
         panes[paneId] = pane
         if (!main) {
             log.append(
@@ -765,28 +768,46 @@ internal class TmuxChatSession(
         if (claudeSessionId == null || claudeSessionId == pane.claudeSessionId) return
         if (pane.inTurn && eventName == ClaudeHook.SESSION_START) pane.endTurn(null)
         pane.claudeSessionId = claudeSessionId
-        val path = recordPath?.let { SessionRecord.safePath(it, recordRoot) } ?: return
+        val path = recordPath?.let { SessionRecord.safePath(it, recordRoot, homeDir) }
+        if (path == null) {
+            if (recordPath != null && warnedOutside.compareAndSet(false, true)) {
+                logger.warn(
+                    "The session record of {} is outside Claude Code's projects folder. Backfill is off.",
+                    sessionId,
+                )
+            }
+            return
+        }
         pane.recordPath = path
         val fresh = eventName == ClaudeHook.SESSION_START && source in NEW_RECORD_SOURCES
-        val offset = withContext(ioDispatcher) { startOffset(path, fresh) }
+        val saved = withContext(ioDispatcher) { offsets.get(path) }
+        // What an earlier run showed after its last read of this record is in the record again. Skip it.
+        if (saved != null) pane.seed(log.agentMessagesAfter(sessionId, saved.seq))
+        val offset = saved?.offset ?: withContext(ioDispatcher) { startOffset(path, fresh) }
         pane.recordOffset = offset
-        withContext(ioDispatcher) { offsets.put(path, offset) }
+        val checkpoint = RecordCheckpoint(offset, saved?.seq ?: log.lastSeq(sessionId))
+        pane.recordSeq = checkpoint.seq
+        withContext(ioDispatcher) { offsets.put(path, checkpoint) }
         if (!fresh) pane.backfill(readRecord(pane))
     }
 
-    /** Where reading [path] starts: where it stopped last time, at its end when it is new, or near its end. */
+    /** Where reading a record the bridge never read starts: at its end when it is new, or near its end. */
     private fun startOffset(
         path: Path,
         fresh: Boolean,
-    ): Long = offsets.get(path) ?: if (fresh) SessionRecord.size(path) ?: 0 else SessionRecord.tailOffset(path) ?: 0
+    ): Long = if (fresh) SessionRecord.size(path) ?: 0 else SessionRecord.tailOffset(path) ?: 0
 
     /** Reads what the record gained since the last read, and remembers how far it got. */
     private suspend fun readRecord(pane: PaneConversation): List<RecordEntry> {
         val path = pane.recordPath ?: return emptyList()
         val chunk = withContext(ioDispatcher) { SessionRecord.read(path, pane.recordOffset ?: 0) }
         if (chunk != null) {
+            // The checkpoint moves only with the offset: a reply shown while the record had nothing new is not in
+            // it yet, so after a restart it must still count as shown.
+            if (chunk.nextOffset != pane.recordOffset) pane.recordSeq = log.lastSeq(sessionId)
             pane.recordOffset = chunk.nextOffset
-            withContext(ioDispatcher) { offsets.put(path, chunk.nextOffset) }
+            val checkpoint = RecordCheckpoint(chunk.nextOffset, pane.recordSeq)
+            withContext(ioDispatcher) { offsets.put(path, checkpoint) }
         }
         return chunk?.entries.orEmpty()
     }

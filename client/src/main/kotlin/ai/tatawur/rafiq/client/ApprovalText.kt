@@ -28,6 +28,14 @@ data class ApprovalText(
     val sessionRule: String?,
     val needsFullView: Boolean,
 ) {
+    /**
+     * How many screen lines a compact card may give each line of the request. A request that fits a compact
+     * card wraps there and is never cut with an ellipsis, so what you answer is all on screen. One that
+     * does not fit gets one screen line per line, and the card offers "See full command" instead of answers.
+     */
+    val compactLinesEach: Int
+        get() = if (needsFullView) 1 else Int.MAX_VALUE
+
     /** True when the card says how many lines the request has. */
     val showsLineCount: Boolean
         get() = lineCount > 1
@@ -39,8 +47,11 @@ data class ApprovalText(
         /** Characters shown before you tap, so one very long line does not fill the screen. */
         const val COLLAPSED_CHARS = 400
 
-        /** The longest command line a compact card shows in full, in code characters on a narrow phone. */
-        const val COMPACT_COMMAND_CHARS = 40
+        /**
+         * The longest command line a compact card shows in full, in code characters: what fits on the cover
+         * screen, half folded, or in a row next to a button.
+         */
+        const val COMPACT_COMMAND_CHARS = 24
 
         /** The longest plain description a compact card shows in full: about three lines of body text. */
         const val COMPACT_PROSE_CHARS = 120

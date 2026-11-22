@@ -2,8 +2,9 @@ package ai.tatawur.rafiq.client
 
 /**
  * [text] with every invisible control made visible as `<U+XXXX>`: format characters (Unicode category Cf,
- * such as the right-to-left override U+202E and zero-width spaces), control characters (Cc) and the line
- * and paragraph separators. Text an agent or a pane controls can use them to make one thing read as
+ * such as the right-to-left override U+202E and zero-width spaces), control characters (Cc), the
+ * line and paragraph separators, and letters that draw nothing (the braille blank, the Hangul
+ * fillers). Text an agent or a pane controls can use them to make one thing read as
  * another, for example a command that displays backwards, so the app shows them instead of obeying them.
  *
  * @param keep characters to leave as they are, such as a tab.
@@ -29,9 +30,14 @@ fun visibleControls(
 }
 
 private fun isHidden(codePoint: Int): Boolean =
-    when (Character.getType(codePoint).toByte()) {
-        Character.FORMAT, Character.CONTROL, Character.LINE_SEPARATOR, Character.PARAGRAPH_SEPARATOR -> true
-        else -> false
-    }
+    codePoint in BLANK_LETTERS ||
+        when (Character.getType(codePoint).toByte()) {
+            Character.FORMAT, Character.CONTROL, Character.LINE_SEPARATOR, Character.PARAGRAPH_SEPARATOR -> true
+            else -> false
+        }
+
+// Characters that draw nothing but are not format characters, so they pad a line invisibly: the braille
+// blank and the Hangul fillers.
+private val BLANK_LETTERS = setOf(0x2800, 0x3164, 0x115F, 0x1160, 0xFFA0)
 
 private const val ESCAPE_ROOM = 16

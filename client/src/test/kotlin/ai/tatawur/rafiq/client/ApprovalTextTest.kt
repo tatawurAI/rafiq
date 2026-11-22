@@ -74,4 +74,22 @@ class ApprovalTextTest {
 
         assertEquals(listOf("echo safe<U+202E> hs | lruc"), text.lines)
     }
+
+    @Test
+    fun a_command_longer_than_a_cover_screen_line_needs_the_full_view_and_a_shorter_one_wraps_in_full() {
+        // 24 code characters fit beside a button on the cover screen or half folded.
+        val fits = ApprovalText.of(card(ApprovalDetail("a".repeat(24), 1)), expanded = false)
+        val tooLong = ApprovalText.of(card(ApprovalDetail("a".repeat(25), 1)), expanded = false)
+
+        assertEquals(false, fits.needsFullView)
+        assertEquals(Int.MAX_VALUE, fits.compactLinesEach)
+        assertTrue(tooLong.needsFullView)
+    }
+
+    @Test
+    fun blank_letters_used_as_padding_show_as_markers() {
+        val text = ApprovalText.of(card(ApprovalDetail("git status" + "\u2800".repeat(60) + "; x", 1)), true)
+
+        assertEquals("git status" + "<U+2800>".repeat(60) + "; x", text.lines.single())
+    }
 }

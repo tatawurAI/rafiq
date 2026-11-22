@@ -81,10 +81,13 @@ The first gives `{"status":"ok","version":"..."}`. The first request after you t
 ## 6. Pair your phone
 
 1. Make sure Tailscale is connected on your phone.
-2. Open Rafiq. Under **Server address**, enter `https://box.example.ts.net`, with no port and no path.
-3. Under **Device token**, paste the token.
+2. On your server, with the same `RAFIQ_DATA_DIR` as the bridge, run `rafiq-bridge pair --name my-phone`. It prints a code such as `ABCD-EFGH`. The code works once and expires in about 10 minutes.
+3. Open Rafiq. Under **Server address**, enter `https://box.example.ts.net`, with no port and no path.
+4. Under **Pairing code**, enter the code.
 
-The app then connects and shows your sessions.
+The app then connects and shows your sessions. To see your phones, run `rafiq-bridge devices`. To cut one off, run `rafiq-bridge revoke <id>`. It stops working at once, and the app asks you to pair again.
+
+If you set `RAFIQ_DEVICE_TOKEN`, that token still works and shows as the device `legacy`, so an existing pairing carries on.
 
 ## Terminal
 
@@ -122,7 +125,8 @@ A listed session shows in your session list with the agent that runs in it. Its 
 | Symptom | Likely cause |
 |---|---|
 | `421`, `misdirected_request` | The name is missing from `RAFIQ_ALLOWED_HOSTS`, or it does not match the name you used in the app. |
-| `401`, `unauthorized` | The token in the app is not the bridge's `RAFIQ_DEVICE_TOKEN`. |
+| `401`, `unauthorized` | The phone's token is not one the bridge knows. Pair again. |
+| `401`, `device_revoked` | You revoked this phone with `rafiq-bridge revoke`. Pair it again. |
 | `403`, `forbidden_origin` | A browser page on another site called the bridge. The app sends no `Origin`, so this is not the app. |
 | `502` from `tailscale serve` | The bridge is not running, or not on `127.0.0.1:8740`. |
 | No answer at all | Tailscale is off on your phone, the phone is on another tailnet, or your tailnet's access rules block it from your server. |

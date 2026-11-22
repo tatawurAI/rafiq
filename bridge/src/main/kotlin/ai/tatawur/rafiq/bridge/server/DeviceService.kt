@@ -72,6 +72,9 @@ class IssuedCode(
  * - Attempts are serialised by one lock held across the database check, so parallel guesses cannot
  *   exceed the limit.
  * - A device token is 256 random bits. Only its digest is stored.
+ *
+ * @param onPaired runs with the new device's id after each successful pairing, outside the attempt lock. The
+ *   Claude reader uses it so a device paired while approvals wait can release them when it is revoked.
  */
 class DeviceService(
     private val store: DeviceStore,
@@ -81,6 +84,7 @@ class DeviceService(
     private val codeLifetime: Duration = 10.minutes,
     private val maxFailures: Int = MAX_FAILURES,
     private val failureWindow: Duration = 5.minutes,
+    private val onPaired: suspend (deviceId: String) -> Unit = {},
 ) : DeviceVerifier {
     private val attempts = Mutex()
     private val failures = ArrayDeque<Long>()
@@ -102,6 +106,9 @@ class DeviceService(
 
     /** Spends [code] and returns the new device's token. */
     suspend fun redeem(code: String): RedeemResult =
+        redeemLocked(code).also { result -> if (result is RedeemResult.Paired) onPaired(result.response.deviceId) }
+
+    private suspend fun redeemLocked(code: String): RedeemResult =
         attempts.withLock {
             val now = clock.millis()
             while (failures.isNotEmpty() && now - failures.first() >= failureWindow.inWholeMilliseconds) {

@@ -3,7 +3,6 @@ package ai.tatawur.rafiq.bridge
 import ai.tatawur.rafiq.bridge.hook.HookChannel
 import ai.tatawur.rafiq.bridge.hook.HookSettings
 import ai.tatawur.rafiq.bridge.hook.HookSetup
-import ai.tatawur.rafiq.bridge.hook.HookSink
 import ai.tatawur.rafiq.bridge.hook.NoopHookSink
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.DeviceAdminServer
@@ -18,6 +17,7 @@ import ai.tatawur.rafiq.bridge.tmux.TerminalGate
 import ai.tatawur.rafiq.bridge.tmux.TerminalService
 import ai.tatawur.rafiq.bridge.tmux.TmuxSessionSource
 import ai.tatawur.rafiq.bridge.tmux.inheritedRafiqVariables
+import ai.tatawur.rafiq.bridge.tmux.reader.ClaudeReader
 import io.ktor.server.application.log
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
@@ -29,6 +29,7 @@ import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
 import java.util.Properties
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
 /** Starts the bridge with settings from the environment and serves until the process is stopped. */
@@ -44,7 +45,9 @@ fun main(args: Array<String>) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val connections = InMemoryConnectionRegistry()
     val deviceStore = DeviceStore.open(config.dataDir, Dispatchers.IO.limitedParallelism(1))
-    val devices = DeviceService(deviceStore, connections)
+    // The reader is built later, once Terminal is known. A device paired before that has no approval to join.
+    val reader = AtomicReference<ClaudeReader?>(null)
+    val devices = DeviceService(deviceStore, connections, onPaired = { id -> reader.get()?.devicePaired(id) })
     // The shared token from RAFIQ_DEVICE_TOKEN stays valid as the device "legacy" until it is revoked.
     config.deviceToken?.let { token -> runBlocking { devices.adoptLegacyToken(token) } }
     val security = BridgeSecurity(config.bindAddress, config.allowedHosts, devices)
@@ -59,6 +62,12 @@ fun main(args: Array<String>) {
             val gate = TerminalGate(settings)
             TerminalService(gate, TmuxSessionSource(gate, eventLog, AgentDetector()))
         }
+    // Hooks feed tmux Chat, so the channel and the installer exist only with tmux on and a data folder for them.
+    val hookDir = terminal?.let { config.dataDir }
+    val hooks = hookDir?.let { hookSetup(it, deviceStore) }
+    // Built before the tmux source starts, so the reader sees the source's first scan.
+    val claude = readerFor(terminal, eventLog, scope, config.dataDir, connections, devices, hooks)
+    reader.set(claude)
     val sessions =
         SessionManager(
             eventLog,
@@ -66,6 +75,7 @@ fun main(args: Array<String>) {
             scope,
             visibility =
                 terminal?.source?.let { source -> { id: String -> source.isVisible(id) } } ?: { !isTmuxSessionId(it) },
+            tmuxChat = claude,
         )
     runBlocking {
         sessions.recoverAfterRestart()
@@ -73,9 +83,7 @@ fun main(args: Array<String>) {
     }
     terminal?.source?.start(scope)
     terminal?.let { warnAboutInheritedSecrets(it) }
-    // Hooks feed tmux Chat, so the channel exists only with tmux on, and only with a data folder to hold it.
-    val hookChannel = terminal?.let { config.dataDir?.let { dir -> HookChannel(dir, hookSink, scope).start() } }
-    val hooks = hookChannel?.let { hookSetup(config.dataDir, deviceStore) }
+    val hookChannel = hookDir?.let { dir -> HookChannel(dir, claude ?: NoopHookSink, scope).start() }
     try {
         embeddedServer(CIO, host = config.bindAddress, port = config.port) {
             log.info("Rafiq bridge {} starting with {}", version, config)
@@ -83,6 +91,7 @@ fun main(args: Array<String>) {
         }.start(wait = true)
     } finally {
         hookChannel?.close()
+        runBlocking { claude?.close() }
         adminServer?.close()
         deviceStore.close()
         scope.cancel()
@@ -90,8 +99,26 @@ fun main(args: Array<String>) {
     }
 }
 
-/** Where hook calls go. Until a reader is wired in, permission requests go back to the desk. */
-private val hookSink: HookSink = NoopHookSink
+/** The Claude reader for tmux Chat, asking the device service for paired devices and the installer for hooks. */
+@Suppress("LongParameterList") // Start-up pieces the reader needs, each built in main.
+private fun readerFor(
+    terminal: TerminalService?,
+    eventLog: EventLog,
+    scope: CoroutineScope,
+    dataDir: Path?,
+    connections: InMemoryConnectionRegistry,
+    devices: DeviceService,
+    hooks: HookSetup?,
+): ClaudeReader? =
+    claudeReaderFor(
+        terminal,
+        eventLog,
+        scope,
+        dataDir,
+        connections,
+        devices = { devices.devices().filter { it.revokedAtMs == null }.map { it.id } },
+        hooksInstalled = { project -> hooks?.preview(project)?.installed ?: true },
+    )
 
 /** The hook installer, or null with a warning when the hook program is not where an installed bridge has it. */
 private fun hookSetup(

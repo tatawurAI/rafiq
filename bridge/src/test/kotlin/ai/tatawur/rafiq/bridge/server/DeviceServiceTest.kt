@@ -1,6 +1,8 @@
 package ai.tatawur.rafiq.bridge.server
 
+import ai.tatawur.rafiq.bridge.store.DeviceStore
 import ai.tatawur.rafiq.bridge.store.RevokeOutcome
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
@@ -31,6 +33,24 @@ class DeviceServiceTest {
     fun closeFixtures() = opened.forEach(DeviceFixture::close)
 
     private fun fixture(path: Path? = dir) = DeviceFixture(path).also(opened::add)
+
+    @Test
+    fun a_successful_pairing_reports_the_new_device_and_a_failed_one_does_not() =
+        runBlocking {
+            val paired = mutableListOf<String>()
+            val store = DeviceStore.open(dir, Dispatchers.IO.limitedParallelism(1))
+            try {
+                val service = DeviceService(store, InMemoryConnectionRegistry(), onPaired = { paired += it })
+                val code = service.issueCode("phone").code
+
+                val result = assertIs<RedeemResult.Paired>(service.redeem(code))
+                assertEquals(RedeemResult.Invalid, service.redeem(code))
+
+                assertEquals(listOf(result.response.deviceId), paired)
+            } finally {
+                store.close()
+            }
+        }
 
     @Test
     fun a_pairing_code_works_once_and_not_after_it_expires() =

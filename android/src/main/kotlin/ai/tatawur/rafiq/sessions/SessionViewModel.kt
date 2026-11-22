@@ -110,12 +110,14 @@ data class ComposerRefusal(
  * State holder for one session's view. It reads only from [repository].
  *
  * @param newClientId makes the id each prompt carries, so its delivery events can be matched to it.
+ * @param nowMs your phone's clock in milliseconds since the Unix epoch, for how long a prompt has waited.
  */
 @Suppress("TooManyFunctions") // One function per action on the screen; splitting would split its state.
 class SessionViewModel(
     private val repository: SessionRepository,
     private val sessionId: String,
     private val newClientId: () -> String = { UUID.randomUUID().toString() },
+    private val nowMs: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
     private data class Local(
         val selectedThreadId: String? = null,
@@ -167,8 +169,9 @@ class SessionViewModel(
     }
 
     /**
-     * Each time the event socket comes back after being down, prompts still queued may be gone: your server
-     * keeps its queue in memory only. They show as not delivered until a later state for them arrives.
+     * Each time the event socket comes back after being down, prompts still queued, or sent over
+     * [SENT_TOO_LONG_MS] ago with no word since, may be gone: your server keeps its queue in memory only.
+     * They show as not delivered until a later state for them arrives.
      */
     private suspend fun markQueuedOnReconnect() {
         var wasLive = false
@@ -176,11 +179,15 @@ class SessionViewModel(
         repository.connection.collect { connection ->
             val live = connection == ConnectionState.Live
             if (live && wasLive && dropped) {
-                val queued =
+                val sentAt = local.value.sent.associate { it.clientId to it.sentAtMs }
+                val now = nowMs()
+                val waiting =
                     promptEchoes(local.value.sent, state.value.screen.deliveries)
-                        .filter { it.state == EchoState.QUEUED }
-                        .mapTo(mutableSetOf()) { it.clientId }
-                local.update { it.copy(presumedLost = it.presumedLost + queued) }
+                        .filter { echo ->
+                            echo.state == EchoState.QUEUED ||
+                                (echo.state == EchoState.SENT && now - (sentAt[echo.clientId] ?: 0) > SENT_TOO_LONG_MS)
+                        }.mapTo(mutableSetOf()) { it.clientId }
+                local.update { it.copy(presumedLost = it.presumedLost + waiting) }
             }
             if (live) {
                 wasLive = true
@@ -321,7 +328,7 @@ class SessionViewModel(
                     draft = if (clearDraft && accepted) "" else it.draft,
                     feedback = if (refusal == null) result.feedback() else null,
                     refusal = refusal,
-                    sent = if (accepted && inTmux) it.stillPending() + SentPrompt(clientId, text) else it.sent,
+                    sent = if (accepted && inTmux) it.stillPending() + SentPrompt(clientId, text, nowMs()) else it.sent,
                     hooksMissing = it.hooksMissing || refusal?.code == SendRefusal.HOOKS_NOT_INSTALLED,
                     hooksDismissed = it.hooksDismissed && refusal?.code != SendRefusal.HOOKS_NOT_INSTALLED,
                 )
@@ -349,6 +356,10 @@ class SessionViewModel(
                 .orEmpty()
                 .filter { it is TimelineItem.Message && it.role == MessageRole.USER }
                 .mapTo(mutableSetOf()) { it.key }
+
+        // A prompt your server took but said nothing more about for this long is likely lost at a reconnect.
+        // Typing it at once takes about a second, and "not confirmed" comes after about five.
+        const val SENT_TOO_LONG_MS = 10_000L
 
         // Keeps the session's socket open across a configuration change such as unfolding.
         const val STOP_TIMEOUT_MS = 5_000L

@@ -251,7 +251,7 @@ class SessionViewModelTest {
         runTest(dispatcher) {
             // The agent is busy: in tmux your server queues the prompt instead of refusing it.
             val repository = FakeRepository(screen(mainStatus = AgentState.WORKING, inTmux = true))
-            val viewModel = SessionViewModel(repository, "s-1") { "c-1" }
+            val viewModel = SessionViewModel(repository, "s-1", newClientId = { "c-1" })
             backgroundScope.launch { viewModel.state.collect {} }
 
             viewModel.updateDraft(" !ls -la ")
@@ -318,7 +318,7 @@ class SessionViewModelTest {
         runTest(dispatcher) {
             // Your server holds its queue in memory, so a restart would leave "Queued" forever.
             val repository = FakeRepository(screen(inTmux = true))
-            val viewModel = SessionViewModel(repository, "s-1") { "c-1" }
+            val viewModel = SessionViewModel(repository, "s-1", newClientId = { "c-1" })
             backgroundScope.launch { viewModel.state.collect {} }
             viewModel.updateDraft("Then update the README")
             viewModel.send()
@@ -342,6 +342,39 @@ class SessionViewModelTest {
             // Your server kept it after all: the later state wins.
             repository.screen.update { it.copy(deliveries = mapOf("c-1" to delivery(DeliveryState.DELIVERED))) }
             assertEquals(emptyList(), viewModel.state.value.echoes)
+        }
+
+    @Test
+    fun a_prompt_sent_long_ago_with_no_word_since_shows_as_maybe_lost_at_a_reconnect() =
+        runTest(dispatcher) {
+            var now = 0L
+            val repository = FakeRepository(screen(inTmux = true))
+            val viewModel = SessionViewModel(repository, "s-1", { "c-${now / 1_000}" }, { now })
+            backgroundScope.launch { viewModel.state.collect {} }
+            viewModel.updateDraft("First")
+            viewModel.send()
+            now = 9_000
+            viewModel.updateDraft("Second")
+            viewModel.send()
+
+            now = 11_000
+            repository.link.value = ConnectionState.Offline(retryAtMs = null)
+            repository.link.value = ConnectionState.Live
+
+            // Only the one older than ten seconds is presumed lost; the recent one may still land.
+            assertEquals(
+                listOf(EchoState.NOT_DELIVERED, EchoState.SENT),
+                viewModel.state.value.echoes
+                    .map { it.state },
+            )
+            repository.screen.update {
+                it.copy(deliveries = mapOf("c-0" to delivery(DeliveryState.DELIVERED).copy(clientId = "c-0")))
+            }
+            assertEquals(
+                listOf("c-9"),
+                viewModel.state.value.echoes
+                    .map { it.clientId },
+            )
         }
 
     private fun delivery(state: DeliveryState) = EventPayload.PromptDelivery("c-1", "t-main", state)

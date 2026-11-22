@@ -113,7 +113,7 @@ What to know before you turn it on:
 - Each phone can have 2 terminals open, and the bridge 4. A terminal you leave alone for 10 minutes closes.
 - While you have Terminal open, the window in tmux has the size of your phone. When you leave, it goes back to the size of your terminal at your desk. If nothing is attached at your desk, the window keeps your phone's size until something attaches.
 - Rafiq can ask for your fingerprint or face before Terminal opens. Turn it on in the app's settings. It asks once when Terminal opens, and not for each key.
-- The bridge's own view sessions are named `rafiq-view-...`. Do not use that name for your own sessions.
+- The bridge's own view sessions are named `rafiq-view-...`. Do not use that name for your own sessions. When the bridge starts, it ends any `rafiq-view-` session left on its tmux server, so run one bridge for each tmux server.
 
 A listed session shows in your session list with the agent that runs in it. Its row opens in Terminal. A session you did not list is not shown, and cannot be opened, even if its name starts with a listed name.
 

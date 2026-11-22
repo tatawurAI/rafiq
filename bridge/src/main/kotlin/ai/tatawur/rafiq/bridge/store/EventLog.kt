@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.bridge.store
 
+import ai.tatawur.rafiq.bridge.sessions.isTmuxSessionId
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
 import ai.tatawur.rafiq.protocol.Event
@@ -113,6 +114,22 @@ class EventLog(
                     )
                 }
             events.forEach(::publish)
+        }
+    }
+
+    /** Changes which agent a session shows as, for a tmux session where an agent started or stopped later. */
+    suspend fun updateAgent(
+        sessionId: String,
+        agent: String,
+    ) {
+        onDispatcher {
+            transaction {
+                connection.prepareStatement("UPDATE sessions SET agent = ? WHERE id = ?").use {
+                    it.setString(1, agent)
+                    it.setString(2, sessionId)
+                    it.executeUpdate()
+                }
+            }
         }
     }
 
@@ -431,6 +448,7 @@ class EventLog(
                     status = fromWireName(rows.getString(5)),
                     createdAtMs = rows.getLong(7),
                     updatedAtMs = rows.getLong(8),
+                    terminal = isTmuxSessionId(rows.getString(1)),
                 ),
             agentSessionRef = rows.getString(6),
         )

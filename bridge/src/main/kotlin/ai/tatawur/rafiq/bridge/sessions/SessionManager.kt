@@ -61,6 +61,7 @@ class SessionManager(
     private val scope: CoroutineScope,
     private val clock: Clock = Clock.systemUTC(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val visibility: (sessionId: String) -> Boolean = { !isTmuxSessionId(it) },
 ) {
     private val adaptersById = adapters.associateBy(AgentAdapter::agentId)
     private val live = ConcurrentHashMap<String, LiveSession>()
@@ -131,11 +132,17 @@ class SessionManager(
         return session
     }
 
-    /** Every session, most recently updated first. */
-    suspend fun sessions(): List<Session> = log.sessions()
+    /**
+     * Whether clients may see the session. A tmux session is visible only while the Terminal gate lets
+     * it through, so with Terminal off none is listed, read or streamed.
+     */
+    fun isVisible(sessionId: String): Boolean = visibility(sessionId)
 
-    /** Every session with what the session list shows, most recently updated first. See [EventLog.summaries]. */
-    suspend fun summaries(): List<SessionSummary> = log.summaries()
+    /** Every visible session, most recently updated first. */
+    suspend fun sessions(): List<Session> = log.sessions().filter { visibility(it.id) }
+
+    /** Every visible session with what the list shows, most recently updated first. See [EventLog.summaries]. */
+    suspend fun summaries(): List<SessionSummary> = log.summaries().filter { visibility(it.session.id) }
 
     /** @throws SessionException.NotFound when there is no such session. */
     suspend fun threads(sessionId: String): List<AgentThread> {
@@ -262,7 +269,8 @@ class SessionManager(
      * longer answer. A session idle after a finished turn is left as it is.
      */
     suspend fun recoverAfterRestart() {
-        for (session in log.sessions()) {
+        // A tmux session has no agent process of the bridge's to interrupt. The tmux source settles those.
+        for (session in log.sessions().filterNot { isTmuxSessionId(it.id) }) {
             interrupt(session, "Interrupted by a bridge restart. Send a message to resume.")
         }
     }
@@ -546,6 +554,12 @@ class SessionManager(
 
     private suspend fun liveSession(sessionId: String): LiveSession {
         live[sessionId]?.let { return it }
+        if (isTmuxSessionId(sessionId)) {
+            throw SessionException.Conflict(
+                "terminal_only",
+                "A tmux session opens in Terminal. Chat is not available for it.",
+            )
+        }
         val stored = requireSession(sessionId)
         val lock = resumeLocks.computeIfAbsent(sessionId) { Mutex() }
         try {
@@ -602,7 +616,8 @@ class SessionManager(
     }
 
     private suspend fun requireSession(sessionId: String) =
-        log.session(sessionId) ?: throw SessionException.NotFound("session_not_found", "No session '$sessionId'.")
+        log.session(sessionId)?.takeIf { visibility(sessionId) }
+            ?: throw SessionException.NotFound("session_not_found", "No session '$sessionId'.")
 
     /** Checks the target of a prompt before anything is logged. The turn check is in [prompt], under its lock. */
     private suspend fun resolvePromptTarget(
@@ -675,3 +690,9 @@ class SessionManager(
 }
 
 private fun AgentState.isRunning(): Boolean = this == AgentState.WORKING || this == AgentState.WAITING_ON_YOU
+
+/** Prefix of the ids of sessions that are tmux sessions on your server, so the app offers Terminal for them. */
+const val TMUX_SESSION_PREFIX = "tmux-"
+
+/** True when [sessionId] names a tmux session, which the bridge shows but does not run an agent for. */
+fun isTmuxSessionId(sessionId: String): Boolean = sessionId.startsWith(TMUX_SESSION_PREFIX)

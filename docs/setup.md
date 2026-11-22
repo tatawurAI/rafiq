@@ -8,7 +8,8 @@ The examples use `box.example.ts.net` for your server's name. Use your own.
 
 - Tailscale on your server, signed in to the same tailnet as your phone. The commands here were checked against Tailscale 1.98. Older versions used a different `tailscale serve` syntax, so update first if a command below is refused.
 - Tailscale on your phone, connected.
-- The bridge built and configured as in the [README](../README.md#quickstart), with a device token in `RAFIQ_DEVICE_TOKEN`.
+- The bridge built and configured as in the [README](../README.md#quickstart), with `RAFIQ_DATA_DIR` set, because pairing needs it.
+- To build the app: it compiles against Android SDK Platform 37 (`platforms;android-37.0`) with Build-Tools 37.0.0, and still targets API 36.
 - `claude-agent-acp` installed on your server, as the [README](../README.md#requirements) shows, and Claude Code signed in there.
 
 ## 1. Turn on HTTPS certificates for your tailnet
@@ -35,7 +36,6 @@ This prints a name such as `box.example.ts.net.`. Drop the final dot.
 Keep the default bind address and port, and add your server's name to `RAFIQ_ALLOWED_HOSTS`:
 
 ```sh
-export RAFIQ_DEVICE_TOKEN=replace-with-a-long-random-value   # openssl rand -hex 32
 export RAFIQ_AGENTS=claude-code=claude-agent-acp
 export RAFIQ_DATA_DIR=/var/lib/rafiq
 export RAFIQ_ALLOWED_HOSTS=box.example.ts.net
@@ -73,25 +73,78 @@ From any device on your tailnet, such as your laptop:
 
 ```sh
 curl https://box.example.ts.net/health
-curl -H "Authorization: Bearer $RAFIQ_DEVICE_TOKEN" https://box.example.ts.net/sessions
+curl -H "Authorization: Bearer $DEVICE_TOKEN" https://box.example.ts.net/sessions   # a token from pairing, or the legacy token
 ```
 
 The first gives `{"status":"ok","version":"..."}`. The first request after you turn on HTTPS can take a few seconds while Tailscale gets the certificate.
 
 ## 6. Pair your phone
 
-1. Make sure Tailscale is connected on your phone.
-2. Open Rafiq. Under **Server address**, enter `https://box.example.ts.net`, with no port and no path.
-3. Under **Device token**, paste the token.
+Run this on your server, in the same environment as the bridge (it needs the same `RAFIQ_DATA_DIR`):
 
-The app then connects and shows your sessions.
+```sh
+rafiq-bridge pair --name pixel
+```
+
+It prints a pairing code like `ABCD-EFGH` and the address to enter. The code works once and expires after 10 minutes. After 100 wrong codes in five minutes the bridge refuses every code until the window passes, a right one too. Anyone who can reach your server's address could cause that, so running `rafiq-bridge pair` again clears the lockout and gives you a fresh code at once. In the app, enter your server address (your https `*.ts.net` name) and the code. The phone gets its own token and keeps it in the Android Keystore. Nobody, including you, can read it again.
+
+### List and revoke phones
+
+```sh
+rafiq-bridge devices
+rafiq-bridge revoke <id>
+```
+
+`devices` shows each phone's id, name, when it last connected and whether it is active. `revoke` cuts that phone off at once: its open connections close and its next request is refused. The phone clears its token and shows the pairing screen. Revoking is permanent. Pair the phone again for a new token. Unpairing in the app does the same thing from the phone. If your server cannot be reached when you unpair, the app tells you the phone is still listed, and you run `rafiq-bridge revoke <id>` later. These commands talk to the running bridge over a Unix socket in `$RAFIQ_DATA_DIR/admin`, a folder only your user can open. They never use the network port. They are for you: any process that runs as the same user as the bridge can reach this socket and the database in `RAFIQ_DATA_DIR`. The Wave 2 installer adds read-deny rules so an agent run by the bridge cannot.
+
+### Retire the old shared token
+
+If you set `RAFIQ_DEVICE_TOKEN` before this version, that token still works. The bridge lists it as the device `legacy`. Once your phone is paired with its own token, run `rafiq-bridge revoke legacy`, then remove `RAFIQ_DEVICE_TOKEN` from your service environment. The bridge no longer needs it. A revoked `legacy` stays revoked even if the variable is still set, so a leftover value is harmless.
+
+## Terminal
+
+Terminal shows a tmux session on your server in the app, and sends your keys to it. It is a remote shell. It is off until you turn it on, and it reaches only the sessions you name.
+
+You need tmux 3.2 or newer on your server, and the default `window-size latest`.
+
+Turn it on in the bridge's environment:
+
+```sh
+export RAFIQ_TERMINAL=1
+export RAFIQ_TMUX_SESSIONS=weather-app,docs-site
+```
+
+| Setting | Meaning |
+|---|---|
+| `RAFIQ_TERMINAL` | `1` turns Terminal and tmux sessions on. Anything else, or unset, leaves them off. |
+| `RAFIQ_TMUX_SESSIONS` | The exact names of the tmux sessions your phone may see and open. Letters, digits, `.`, `_` and `-` only. No `*`. The bridge will not start with a bad name, and says which variable it is. |
+| `RAFIQ_TMUX_SOCKET` | The tmux socket name, if your sessions run on a tmux server started with `tmux -L <name>`. Unset uses the default server. |
+| `RAFIQ_TERMINAL_ALLOW_NON_LOOPBACK` | `1` lets the bridge bind to an address other than `127.0.0.1` while Terminal is on. Leave it unset. |
+
+What to know before you turn it on:
+
+- Terminal reaches every window and pane of each session you list. Name only sessions you are happy to type into from your phone.
+- With Terminal on, the bridge refuses to start on a non-loopback address. Keep `RAFIQ_BIND_ADDRESS` at its default and use `tailscale serve`, as above. Never use `tailscale funnel`.
+- Each phone can have 2 terminals open, and the bridge 4. A terminal closes after 10 minutes with no keys or resize from your phone and no output from the pane. A phone that is watching an agent work stays open. A terminal socket is closed after 8 hours whatever it is doing, so a forgotten phone does not stay attached. The app reconnects only if Terminal is on screen. A device may open at most 5 terminals a minute. Past that, the bridge answers "too many terminal opens, wait a moment". Fast size changes, such as a keyboard or fold animation, are merged into the newest size. More than 60 size changes in 10 seconds end the terminal.
+- While you have Terminal open, the window in tmux has the size of your phone. When you leave, it goes back to the size of your terminal at your desk. If nothing is attached at your desk, the window keeps your phone's size until something attaches.
+- Rafiq can ask for your fingerprint or face before Terminal opens. Turn it on in the app's settings. It asks once when Terminal opens, and not for each key.
+- The bridge's own view sessions are named `rafiq-view-...`. Do not use that name for your own sessions. When the bridge starts, it ends only the `rafiq-view-` sessions that have no client attached, so two bridges do not close each other's live views.
+
+A listed session shows in your session list with the agent that runs in it. Its row opens in Terminal. A session you did not list is not shown, and cannot be opened, even if its name starts with a listed name.
 
 ## If it does not connect
 
 | Symptom | Likely cause |
 |---|---|
 | `421`, `misdirected_request` | The name is missing from `RAFIQ_ALLOWED_HOSTS`, or it does not match the name you used in the app. |
-| `401`, `unauthorized` | The token in the app is not the bridge's `RAFIQ_DEVICE_TOKEN`. |
+| `401`, `unauthorized` | The phone's token is not one the bridge knows. Pair again. |
+| `401`, `device_revoked` | You revoked this phone with `rafiq-bridge revoke`, or unpaired it in the app. Pair it again. |
+| `401`, `invalid_pairing_code` | The code is wrong, expired or already used. Run `rafiq-bridge pair` for a new one. |
+| `429`, `too_many_attempts` | 100 wrong codes in five minutes. Run `rafiq-bridge pair` again for a fresh code. That also clears the lockout. |
+| The app says your server removed the phone | The phone was revoked. Run `rafiq-bridge pair` again. |
+| The app says the code is wrong | Codes work once and expire after 10 minutes. Run `rafiq-bridge pair` for a new one. |
 | `403`, `forbidden_origin` | A browser page on another site called the bridge. The app sends no `Origin`, so this is not the app. |
 | `502` from `tailscale serve` | The bridge is not running, or not on `127.0.0.1:8740`. |
 | No answer at all | Tailscale is off on your phone, the phone is on another tailnet, or your tailnet's access rules block it from your server. |
+| The bridge will not start and names `RAFIQ_TMUX_SESSIONS`, `RAFIQ_TMUX_SOCKET` or `RAFIQ_BIND_ADDRESS` | A Terminal setting is wrong. Terminal needs at least one exact session name, and a loopback bind address. |
+| A session is listed but Terminal closes at once | tmux is older than 3.2, or the session was killed. |

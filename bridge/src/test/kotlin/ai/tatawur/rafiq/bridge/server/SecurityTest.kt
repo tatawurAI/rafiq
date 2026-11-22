@@ -11,6 +11,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
@@ -40,13 +41,13 @@ class SecurityTest {
         origin: String? = null,
         authorization: String? = "Bearer $TEST_TOKEN",
         protocols: String? = null,
-    ) = security.inspect(path, host, origin, authorization, protocols)
+    ) = runBlocking { security.inspect(path, host, origin, authorization, protocols) }
 
     private fun rejected(verdict: BridgeSecurity.Verdict) = (verdict as BridgeSecurity.Verdict.Rejected).status
 
     @Test
     fun a_request_needs_the_right_token_unless_it_is_health_or_the_dev_page() {
-        assertEquals(BridgeSecurity.Verdict.Accepted(), inspect())
+        assertEquals(BridgeSecurity.Verdict.Accepted(deviceId = "legacy"), inspect())
         assertEquals(HttpStatusCode.Unauthorized, rejected(inspect(authorization = null)))
         assertEquals(HttpStatusCode.Unauthorized, rejected(inspect(authorization = "Bearer ${TEST_TOKEN}0")))
         assertEquals(HttpStatusCode.Unauthorized, rejected(inspect(authorization = TEST_TOKEN)))
@@ -56,14 +57,14 @@ class SecurityTest {
         val noToken = BridgeSecurity(null, "100.64.0.1")
         assertEquals(
             HttpStatusCode.Unauthorized,
-            rejected(noToken.inspect("/sessions", "100.64.0.1", null, "Bearer ", null)),
+            rejected(runBlocking { noToken.inspect("/sessions", "100.64.0.1", null, "Bearer ", null) }),
         )
     }
 
     @Test
     fun only_the_bind_address_localhost_and_listed_names_are_accepted_as_host() {
         for (host in listOf("100.64.0.1", "100.64.0.1:8740", "localhost:8740", "LOCALHOST", "box.example.ts.net:443")) {
-            assertEquals(BridgeSecurity.Verdict.Accepted(), inspect(host = host), host)
+            assertEquals("legacy", (inspect(host = host) as BridgeSecurity.Verdict.Accepted).deviceId, host)
         }
         for (host in listOf("evil.example", "evil.example:8740", "100.64.0.2", null)) {
             assertEquals(MISDIRECTED, rejected(inspect(host = host)), host.toString())
@@ -72,17 +73,21 @@ class SecurityTest {
 
     @Test
     fun a_request_with_another_origin_is_refused_even_with_the_token() {
-        assertEquals(BridgeSecurity.Verdict.Accepted(), inspect(origin = "http://100.64.0.1:8740"))
+        assertEquals(BridgeSecurity.Verdict.Accepted(deviceId = "legacy"), inspect(origin = "http://100.64.0.1:8740"))
         for (origin in listOf("https://evil.example", "http://localhost:3000", "null")) {
             assertEquals(HttpStatusCode.Forbidden, rejected(inspect(origin = origin)), origin)
         }
     }
 
     @Test
-    fun the_event_socket_alone_takes_the_token_as_a_subprotocol_and_never_from_the_query_string() {
+    fun the_two_sockets_alone_take_the_token_as_a_subprotocol_and_never_from_the_query_string() {
         assertEquals(
-            BridgeSecurity.Verdict.Accepted(echoProtocol = "rafiq.v1"),
+            BridgeSecurity.Verdict.Accepted(echoProtocol = "rafiq.v1", deviceId = "legacy"),
             inspect(path = "/events", authorization = null, protocols = "rafiq.v1, $TEST_TOKEN"),
+        )
+        assertEquals(
+            BridgeSecurity.Verdict.Accepted(echoProtocol = "rafiq.term.v1", deviceId = "legacy"),
+            inspect(path = "/terminal", authorization = null, protocols = "rafiq.term.v1, $TEST_TOKEN"),
         )
         assertEquals(
             HttpStatusCode.Unauthorized,

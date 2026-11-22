@@ -1,18 +1,25 @@
 package ai.tatawur.rafiq.bridge
 
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
+import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
+import ai.tatawur.rafiq.bridge.server.DevicePrincipalKey
+import ai.tatawur.rafiq.bridge.server.DeviceService
 import ai.tatawur.rafiq.bridge.server.EventStreamer
+import ai.tatawur.rafiq.bridge.server.InMemoryConnectionRegistry
 import ai.tatawur.rafiq.bridge.server.devRoutes
+import ai.tatawur.rafiq.bridge.server.deviceRoutes
 import ai.tatawur.rafiq.bridge.server.eventsRoute
 import ai.tatawur.rafiq.bridge.server.installErrorShape
 import ai.tatawur.rafiq.bridge.server.installSecurity
 import ai.tatawur.rafiq.bridge.server.sessionRoutes
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.store.EventLog
+import ai.tatawur.rafiq.bridge.tmux.TerminalService
 import ai.tatawur.rafiq.protocol.api.Health
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationStopping
 import io.ktor.server.application.install
 import io.ktor.server.plugins.bodylimit.RequestBodyLimit
@@ -30,6 +37,13 @@ import kotlinx.coroutines.runBlocking
  * @param version the bridge version, reported by `GET /health`.
  * @param security the host, origin and device token checks every request passes first.
  * @param devPage whether to serve the development page at `/dev`. When false the route does not exist.
+ * @param terminal the Terminal view and the tmux session source, or null when Terminal is off. With null,
+ *   `WS /terminal` does not exist and no tmux session is listed.
+ * @param devices the per-device tokens, which add `POST /pair` and `DELETE /devices/me`. Null keeps neither.
+ * @param connections where every `/events` and `/terminal` socket registers, so revoking a device closes its
+ *   sockets at once.
+ * @param deviceOf names the device a call came from, for the connection registry and the per-device terminal
+ *   limit. By default it is the device the security plugin authenticated the call as.
  */
 fun Application.bridgeModule(
     version: String,
@@ -37,6 +51,10 @@ fun Application.bridgeModule(
     sessions: SessionManager,
     security: BridgeSecurity,
     devPage: Boolean = false,
+    terminal: TerminalService? = null,
+    connections: ConnectionRegistry = InMemoryConnectionRegistry(),
+    devices: DeviceService? = null,
+    deviceOf: (ApplicationCall) -> String = { it.attributes.getOrNull(DevicePrincipalKey)?.deviceId ?: UNKNOWN_DEVICE },
 ) {
     install(ContentNegotiation) {
         json(protocolJson)
@@ -55,7 +73,9 @@ fun Application.bridgeModule(
     monitor.subscribe(ApplicationStopping) { runBlocking { sessions.shutdown() } }
     routing {
         sessionRoutes(sessions)
-        eventsRoute(log, EventStreamer(log))
+        eventsRoute(log, EventStreamer(log), sessions::isVisible, connections, deviceOf)
+        terminal?.routes(this, connections, deviceOf)
+        devices?.let { deviceRoutes(it) }
         if (devPage) devRoutes(sessions)
         // Open to any caller on purpose, though the host and origin checks still apply: it reveals only
         // liveness and version, and it is what you check first when the phone cannot connect.
@@ -64,6 +84,9 @@ fun Application.bridgeModule(
         }
     }
 }
+
+/** For a call the security plugin did not name a device for. Every route that matters has one. */
+private const val UNKNOWN_DEVICE = "unknown"
 
 private const val MAX_FRAME_BYTES = 64L * 1024
 private const val MAX_BODY_BYTES = 1024L * 1024

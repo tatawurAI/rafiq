@@ -34,9 +34,12 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerializationException
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.seconds
 
 /** Turns every failure into the one [ApiError] shape, so clients parse a single error format. */
 internal fun io.ktor.server.application.Application.installErrorShape() {
@@ -142,9 +145,13 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
  * A client that falls too far behind is closed with `TRY_AGAIN_LATER`. It reconnects with the last
  * `seq` it saw and replays what it missed.
  */
+@Suppress("CyclomaticComplexMethod") // One handler: checks, registration, stream, watcher and cleanup.
 internal fun Route.eventsRoute(
     log: EventLog,
     streamer: EventStreamer,
+    isVisible: (sessionId: String) -> Boolean = { true },
+    connections: ConnectionRegistry = InMemoryConnectionRegistry(),
+    deviceOf: (ApplicationCall) -> String = { "unknown" },
 ) {
     webSocket("/events") {
         val sessionId = call.request.queryParameters["session"]
@@ -153,7 +160,7 @@ internal fun Route.eventsRoute(
             when {
                 sessionId.isNullOrBlank() -> "session is required"
                 call.request.queryParameters["after"] != null && after == null -> "after must be a non-negative integer"
-                log.session(sessionId) == null -> "no such session"
+                log.session(sessionId) == null || !isVisible(sessionId) -> "no such session"
                 else -> null
             }
         if (rejection != null || sessionId == null) {
@@ -161,25 +168,40 @@ internal fun Route.eventsRoute(
             return@webSocket
         }
         var closeReason = CloseReason(CloseReason.Codes.NORMAL, "")
-        val stream =
-            launch {
-                try {
-                    streamer.stream(sessionId, after ?: 0) { event ->
-                        send(Frame.Text(protocolJson.encodeToString(Event.serializer(), event)))
+        // Revoking the device ends this socket at once. The stream below stops when the socket closes.
+        val registration =
+            connections.register(deviceOf(call), "events") { reason ->
+                // A phone that stopped reading cannot hold the revoke up: after a second the socket is cancelled.
+                val closed =
+                    withTimeoutOrNull(
+                        REVOKE_CLOSE_WAIT,
+                    ) { close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, reason)) }
+                if (closed == null) cancel()
+            }
+        // A cancelled or dropped connection leaves this block by an exception, and must still leave the registry.
+        try {
+            val stream =
+                launch {
+                    try {
+                        streamer.stream(sessionId, after ?: 0) { event ->
+                            send(Frame.Text(protocolJson.encodeToString(Event.serializer(), event)))
+                        }
+                    } catch (_: SlowConsumerException) {
+                        closeReason = CloseReason(CloseReason.Codes.TRY_AGAIN_LATER, "too slow, reconnect and replay")
                     }
-                } catch (_: SlowConsumerException) {
-                    closeReason = CloseReason(CloseReason.Codes.TRY_AGAIN_LATER, "too slow, reconnect and replay")
                 }
-            }
-        // The client sends nothing we act on, but we must read to notice it leaving.
-        val watcher =
-            launch {
-                for (frame in incoming) if (frame is Frame.Text) frame.readText()
-                stream.cancel()
-            }
-        stream.join()
-        watcher.cancel()
-        close(closeReason)
+            // The client sends nothing we act on, but we must read to notice it leaving.
+            val watcher =
+                launch {
+                    for (frame in incoming) if (frame is Frame.Text) frame.readText()
+                    stream.cancel()
+                }
+            stream.join()
+            watcher.cancel()
+            close(closeReason)
+        } finally {
+            registration.close()
+        }
     }
 }
 
@@ -195,3 +217,5 @@ internal fun Route.devRoutes(sessions: SessionManager) {
 
 private fun io.ktor.http.Parameters.getOrFail(name: String): String =
     this[name] ?: throw BadRequestException("Missing path parameter '$name'.")
+
+private val REVOKE_CLOSE_WAIT = 1.seconds

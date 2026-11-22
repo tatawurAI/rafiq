@@ -4,6 +4,7 @@ import ai.tatawur.rafiq.bridge.agent.AgentAdapter
 import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
+import ai.tatawur.rafiq.bridge.sessions.isTmuxSessionId
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
@@ -106,10 +107,11 @@ class FakeAgentSession(
 class BridgeFixture(
     dir: Path,
     val adapter: FakeAdapter = FakeAdapter(),
+    visibility: (String) -> Boolean = { !isTmuxSessionId(it) },
 ) : AutoCloseable {
     val log: EventLog = EventLog.open(dir, Dispatchers.IO.limitedParallelism(1))
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    val sessions = SessionManager(log, listOf(adapter), scope)
+    val sessions = SessionManager(log, listOf(adapter), scope, visibility = visibility)
 
     override fun close() {
         scope.cancel()

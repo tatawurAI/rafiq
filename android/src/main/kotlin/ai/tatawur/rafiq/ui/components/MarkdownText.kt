@@ -2,17 +2,28 @@ package ai.tatawur.rafiq.ui.components
 
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import ai.tatawur.rafiq.ui.theme.plexMono
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
+import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.MarkdownCodeBackground
+import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
+import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.elements.MarkdownCheckBox
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.markdownDimens
@@ -75,7 +86,46 @@ fun MarkdownText(
                     ),
             ),
         dimens = markdownDimens(codeBackgroundCornerSize = RafiqTheme.spacing.small),
+        components =
+            markdownComponents(
+                codeFence = { MarkdownCodeFence(it.content, it.node, it.typography.code, block = codeBlock) },
+                codeBlock = { MarkdownCodeBlock(it.content, it.node, it.typography.code, block = codeBlock) },
+                checkbox = { MarkdownCheckBox(it.content, it.node, it.typography.text) },
+            ),
     )
+}
+
+private val codeBlock: @Composable (String, String?, TextStyle) -> Unit = { code, _, style ->
+    ScrollingCode(
+        code,
+        style,
+    )
+}
+
+/**
+ * A code block that keeps every line whole and scrolls sideways, with the edge that has more code
+ * past it faded, so a long line reads as "scroll for more" and not as cut off. Code is never wrapped:
+ * a wrapped line would read as two.
+ */
+@Composable
+private fun ScrollingCode(
+    code: String,
+    style: TextStyle,
+) {
+    val spacing = RafiqTheme.spacing
+    val scroll = rememberScrollState()
+    MarkdownCodeBackground(
+        color = RafiqTheme.colors.ground,
+        shape = RoundedCornerShape(spacing.small),
+        modifier = Modifier.fillMaxWidth().padding(vertical = spacing.small),
+    ) {
+        Text(
+            text = code,
+            style = style,
+            softWrap = false,
+            modifier = Modifier.horizontalFadingEdges(scroll).horizontalScroll(scroll).padding(spacing.small),
+        )
+    }
 }
 
 @Preview(name = "Markdown", widthDp = 360)
@@ -95,6 +145,7 @@ private fun MarkdownTextPreview() {
 
                     ```kotlin
                     val forecast = client.fetch(city = "Lisbon")
+                    val fruits = listOf("apple", "banana", "cherry", "damson", "elderberry", "fig", "grape")
                     ```
                     """.trimIndent(),
                 modifier = Modifier.padding(RafiqTheme.spacing.medium),

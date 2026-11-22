@@ -17,6 +17,8 @@ android {
             .toInt()
 
     defaultConfig {
+        // termlib ships native code for four ABIs. Rafiq runs on arm64 phones only.
+        ndk { abiFilters += listOf("arm64-v8a") }
         applicationId = "ai.tatawur.rafiq"
         minSdk =
             libs.versions.android.minSdk
@@ -72,6 +74,9 @@ dependencies {
 
     // Fold posture for the half-folded layout.
     implementation(libs.window)
+
+    // The Terminal view's emulator.
+    implementation(libs.termlib)
 
     // JVM unit tests for the screens' state holders.
     testImplementation(libs.kotlin.test)

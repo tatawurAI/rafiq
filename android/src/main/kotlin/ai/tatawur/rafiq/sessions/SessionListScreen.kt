@@ -81,12 +81,14 @@ fun SessionListRoute(
     onNewSession: () -> Unit,
     modifier: Modifier = Modifier,
     onPairAgain: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val actions =
-        remember(viewModel, onOpen, onNewSession, onPairAgain) {
+        remember(viewModel, onOpen, onNewSession, onPairAgain, onOpenSettings) {
             SessionListActions(
                 onOpen = onOpen,
+                onOpenSettings = onOpenSettings,
                 onNewSession = onNewSession,
                 onFilter = viewModel::selectFilter,
                 onApprove = viewModel::approve,

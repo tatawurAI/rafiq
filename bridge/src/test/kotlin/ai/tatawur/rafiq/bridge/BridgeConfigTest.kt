@@ -27,9 +27,9 @@ class BridgeConfigTest {
 
     @Test
     fun the_device_token_never_appears_in_the_printed_config() {
-        val config = BridgeConfig.fromEnvironment(mapOf("RAFIQ_DEVICE_TOKEN" to "test-token-0000"))
+        val config = BridgeConfig.fromEnvironment(mapOf("RAFIQ_DEVICE_TOKEN" to TEST_TOKEN))
 
-        assertFalse("test-token-0000" in config.toString())
+        assertFalse(TEST_TOKEN in config.toString())
     }
 
     @Test
@@ -64,19 +64,15 @@ class BridgeConfigTest {
     }
 
     @Test
-    fun agents_without_a_long_enough_device_token_refuse_to_start_and_say_how_to_make_one() {
+    fun a_device_token_that_is_set_must_be_long_enough_and_is_optional_with_agents() {
         val agents = mapOf("RAFIQ_AGENTS" to "claude-code=claude-agent-acp")
 
-        for (environment in listOf(agents, agents + ("RAFIQ_DEVICE_TOKEN" to "too-short"))) {
-            val message =
-                assertFailsWith<IllegalArgumentException> {
-                    BridgeConfig.fromEnvironment(
-                        environment,
-                    )
-                }.message
-            assertTrue("RAFIQ_DEVICE_TOKEN" in message.orEmpty() && "openssl rand -hex 32" in message.orEmpty())
-        }
-        // The bridge never prints the token, and a bridge with no agents has nothing to protect yet.
-        assertNull(BridgeConfig.fromEnvironment(emptyMap()).deviceToken)
+        // Phones pair with a code now, so agents need no shared token.
+        assertNull(BridgeConfig.fromEnvironment(agents).deviceToken)
+        val message =
+            assertFailsWith<IllegalArgumentException> {
+                BridgeConfig.fromEnvironment(agents + ("RAFIQ_DEVICE_TOKEN" to "too-short"))
+            }.message.orEmpty()
+        assertTrue("RAFIQ_DEVICE_TOKEN" in message && "openssl rand -hex 32" in message)
     }
 }

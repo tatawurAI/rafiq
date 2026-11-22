@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.bridge
 
+import ai.tatawur.rafiq.bridge.tmux.TerminalSettings
 import java.nio.file.Path
 
 /**
@@ -16,6 +17,8 @@ import java.nio.file.Path
  * @property allowedHosts extra `Host` header values the bridge accepts, from `RAFIQ_ALLOWED_HOSTS`, for
  *   example your Tailscale name. The bind address and `localhost` are always accepted.
  * @property devPage whether to serve the development page at `/dev`, from `RAFIQ_DEV_PAGE=1`.
+ * @property terminal the Terminal gate, from `RAFIQ_TERMINAL`, `RAFIQ_TMUX_SESSIONS` and `RAFIQ_TMUX_SOCKET`. Off
+ *   unless you turn it on.
  */
 class BridgeConfig(
     val bindAddress: String,
@@ -25,12 +28,13 @@ class BridgeConfig(
     val agents: List<AgentSpec> = emptyList(),
     val devPage: Boolean = false,
     val allowedHosts: List<String> = emptyList(),
+    val terminal: TerminalSettings = TerminalSettings.OFF,
 ) {
     // Configuration objects end up in logs. The token must never be one of the things printed.
     override fun toString(): String =
         "BridgeConfig(bindAddress=$bindAddress, port=$port, dataDir=$dataDir, " +
             "deviceToken=${if (deviceToken == null) "unset" else "set"}, agents=${agents.map(AgentSpec::id)}, " +
-            "devPage=$devPage, allowedHosts=$allowedHosts)"
+            "devPage=$devPage, allowedHosts=$allowedHosts, terminal=${terminal.enabled})"
 
     companion object {
         const val DEFAULT_BIND_ADDRESS = "127.0.0.1"
@@ -60,13 +64,14 @@ class BridgeConfig(
 
             val agents = read("RAFIQ_AGENTS")?.let(::parseAgents).orEmpty()
             val token = read("RAFIQ_DEVICE_TOKEN")
-            require(agents.isEmpty() || (token != null && token.length >= MIN_TOKEN_LENGTH)) {
-                "RAFIQ_DEVICE_TOKEN must be set to at least $MIN_TOKEN_LENGTH characters when RAFIQ_AGENTS is set. " +
+            require(token == null || token.length >= MIN_TOKEN_LENGTH) {
+                "RAFIQ_DEVICE_TOKEN must be at least $MIN_TOKEN_LENGTH characters when it is set. " +
                     "Generate one with: openssl rand -hex 32"
             }
 
+            val bindAddress = read("RAFIQ_BIND_ADDRESS") ?: DEFAULT_BIND_ADDRESS
             return BridgeConfig(
-                bindAddress = read("RAFIQ_BIND_ADDRESS") ?: DEFAULT_BIND_ADDRESS,
+                bindAddress = bindAddress,
                 port = port,
                 dataDir = read("RAFIQ_DATA_DIR")?.let(Path::of),
                 deviceToken = token,
@@ -78,6 +83,7 @@ class BridgeConfig(
                         ?.map { it.trim().lowercase() }
                         .orEmpty()
                         .filter(String::isNotEmpty),
+                terminal = TerminalSettings.fromEnvironment(::read, bindAddress),
             )
         }
 

@@ -1,0 +1,1 @@
+Rafiq types into a tmux pane only when Claude is idle, no dialog is open and the input box is empty, and says why when it will not. A message sent while Claude is busy waits and is typed when the turn ends.

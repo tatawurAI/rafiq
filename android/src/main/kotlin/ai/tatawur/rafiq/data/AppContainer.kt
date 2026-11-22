@@ -32,10 +32,10 @@ private val Context.pairingStore by preferencesDataStore(
     corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
 )
 
-// A damaged file reads as empty, which leaves every setting at its default.
+// A damaged file turns the Terminal lock on (see SecuritySettings), so damage never weakens it.
 private val Context.settingsStore by preferencesDataStore(
     name = "settings",
-    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+    corruptionHandler = SecuritySettings.corruptionHandler,
 )
 
 /**

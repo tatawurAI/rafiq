@@ -83,12 +83,14 @@ internal fun TerminalLayout(
     status: TerminalStatus,
     onRetry: () -> Unit,
     pane: @Composable (Modifier) -> Unit,
+    notice: @Composable () -> Unit = {},
     keyRow: @Composable () -> Unit,
 ) {
     val top: @Composable (Modifier) -> Unit = { modifier ->
         Column(modifier = modifier) {
             header()
             StatusStrip(status, onRetry)
+            notice()
             pane(Modifier.weight(1f).fillMaxWidth())
         }
     }

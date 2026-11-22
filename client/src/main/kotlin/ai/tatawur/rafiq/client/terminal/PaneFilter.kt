@@ -13,6 +13,10 @@ import java.io.ByteArrayOutputStream
  * passes explicit emulator callbacks for these, so this filter does not rely on the library's
  * defaults and the library's defaults do not rely on this filter.
  *
+ * C1 controls written as UTF-8 (U+0080 to U+009F) are read as their 7-bit ESC forms, so U+009D
+ * is an OSC and U+0090 a DCS and they are filtered the same way. A C1 control with no string or
+ * sequence behind it is dropped.
+ *
  * It keeps state between frames, because a sequence can be split across two of them. [reset] it when
  * a snapshot repaints the screen.
  */
@@ -22,10 +26,12 @@ class PaneFilter {
     private var state = State.GROUND
     private val osc = ByteArrayOutputStream()
     private var oscOverflow = false
+    private var pendingC1Lead = false
 
     /** Forgets any half-read sequence. */
     fun reset() {
         state = State.GROUND
+        pendingC1Lead = false
         osc.reset()
         oscOverflow = false
     }
@@ -33,8 +39,52 @@ class PaneFilter {
     /** The part of [bytes] the emulator may see, with the state carried over to the next call. */
     fun filter(bytes: ByteArray): ByteArray {
         val out = ByteArrayOutputStream(bytes.size)
-        for (b in bytes) step(b, out)
+        for (b in bytes) decode(b, out)
         return out.toByteArray()
+    }
+
+    /** Turns a C1 control in UTF-8 into its 7-bit form before the state machine sees it. */
+    private fun decode(
+        b: Byte,
+        out: ByteArrayOutputStream,
+    ) {
+        val code = b.toInt() and BYTE_MASK
+        when {
+            pendingC1Lead && code in C1_RANGE -> {
+                pendingC1Lead = false
+                c1(code, out)
+            }
+
+            pendingC1Lead -> {
+                pendingC1Lead = false
+                step(C1_LEAD.toByte(), out)
+                decode(b, out)
+            }
+
+            code == C1_LEAD -> {
+                pendingC1Lead = true
+            }
+
+            else -> {
+                step(b, out)
+            }
+        }
+    }
+
+    private fun c1(
+        code: Int,
+        out: ByteArrayOutputStream,
+    ) {
+        val final =
+            when (code) {
+                C1_CSI -> '['
+                C1_OSC -> ']'
+                C1_DCS, C1_SOS, C1_PM, C1_APC -> 'P'
+                C1_ST -> '\\'
+                else -> null
+            } ?: return
+        step(ESC, out)
+        step(final.code.toByte(), out)
     }
 
     private fun step(
@@ -159,5 +209,18 @@ class PaneFilter {
         // OSC 8 is "8;params;uri". Longer ones are dropped rather than cut, so a link is never altered.
         const val MAX_LINK_OSC = 4096
         val HYPERLINK = "8;".toByteArray(Charsets.US_ASCII)
+
+        const val BYTE_MASK = 0xFF
+
+        // U+0080 to U+009F in UTF-8 are C2 80 to C2 9F.
+        const val C1_LEAD = 0xC2
+        val C1_RANGE = 0x80..0x9F
+        const val C1_DCS = 0x90
+        const val C1_SOS = 0x98
+        const val C1_CSI = 0x9B
+        const val C1_ST = 0x9C
+        const val C1_OSC = 0x9D
+        const val C1_PM = 0x9E
+        const val C1_APC = 0x9F
     }
 }

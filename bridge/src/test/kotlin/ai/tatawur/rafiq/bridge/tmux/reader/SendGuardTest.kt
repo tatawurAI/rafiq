@@ -72,6 +72,17 @@ class SendGuardTest {
         }
 
     @Test
+    fun a_fourth_message_while_claude_is_busy_is_refused_as_queue_full() =
+        runTest {
+            val reader = attached()
+            statuses.status = AgentStatus.BUSY
+            repeat(TmuxChatSession.MAX_QUEUED) { reader.prompt(SESSION, "message $it", "c-$it") }
+
+            assertEquals("queue_full", reader.refusal("one too many"))
+            assertEquals(TmuxChatSession.MAX_QUEUED, deliveries().count { it.first == DeliveryState.QUEUED })
+        }
+
+    @Test
     fun nothing_is_typed_while_a_dialog_is_open_at_the_desk() =
         runTest {
             val reader = attached()

@@ -140,7 +140,7 @@ private fun SessionScreenState.upsertThread(thread: AgentThread): SessionScreenS
     val updated = if (index < 0) threads + tab else threads.replaceAt(index, tab)
     // sortedBy is stable, so the other threads keep the order they first appeared in.
     val next = copy(threads = updated.sortedBy { if (it.kind == ThreadKind.MAIN) 0 else 1 })
-    return if (thread.kind == ThreadKind.MAIN) next.adoptOrphans(thread.id) else next
+    return if (thread.kind == ThreadKind.MAIN) next.adoptOrphans(thread.id).mirrorMain(thread.id) else next
 }
 
 /** Moves items that arrived before the main thread onto it, in `seq` order. */
@@ -247,12 +247,21 @@ private fun SessionScreenState.resolveApproval(approvalId: String): SessionScree
     mapTools { tool -> if (tool.approval?.id == approvalId) tool.copy(approval = null) else tool }
         .withApprovals(openApprovals.filterNot { it.id == approvalId })
 
-private fun SessionScreenState.changeStatus(payload: EventPayload.StatusChanged): SessionScreenState =
-    if (payload.threadId == null) {
-        copy(session = session?.copy(status = payload.state))
-    } else {
-        copy(threads = threads.map { if (it.id == payload.threadId) it.copy(status = payload.state) else it })
-    }
+private fun SessionScreenState.changeStatus(payload: EventPayload.StatusChanged): SessionScreenState {
+    val threadId = payload.threadId ?: return copy(session = session?.copy(status = payload.state))
+    return copy(threads = threads.map { if (it.id == threadId) it.copy(status = payload.state) else it })
+        .mirrorMain(threadId)
+}
+
+/**
+ * The session's status is its main thread's status, because real agents report status per thread only.
+ * The bridge applies the same rule to the session row it serves in `GET /sessions/summaries`, so the
+ * header, the list and the summaries agree.
+ */
+private fun SessionScreenState.mirrorMain(threadId: String): SessionScreenState {
+    val main = mainThread?.takeIf { it.id == threadId } ?: return this
+    return copy(session = session?.copy(status = main.status))
+}
 
 private fun SessionScreenState.putNotice(notice: TimelineItem.Notice): SessionScreenState =
     updateTimeline(mainThread?.id ?: NO_THREAD) { items ->

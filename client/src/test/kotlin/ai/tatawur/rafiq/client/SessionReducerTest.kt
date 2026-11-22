@@ -80,6 +80,22 @@ class SessionReducerTest {
     }
 
     @Test
+    fun the_session_status_follows_its_main_thread_and_not_a_helper() {
+        // Real agents report status per thread only, so this is how the header learns the agent is working.
+        val working = fold(opening + EventPayload.StatusChanged(threadId = "main", state = AgentState.WORKING))
+        assertEquals(AgentState.WORKING, working.session?.status)
+
+        val waiting =
+            fold(
+                opening +
+                    EventPayload.ThreadUpdated(thread("t_helper", ThreadKind.SUBAGENT, parent = "main")) +
+                    EventPayload.StatusChanged(threadId = "main", state = AgentState.WAITING_ON_YOU) +
+                    EventPayload.StatusChanged(threadId = "t_helper", state = AgentState.DONE),
+            )
+        assertEquals(AgentState.WAITING_ON_YOU, waiting.session?.status)
+    }
+
+    @Test
     fun an_approval_attaches_to_its_tool_card_until_it_is_resolved() {
         val requested =
             opening +

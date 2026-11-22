@@ -136,6 +136,23 @@ class ReaderTurnTest {
         }
 
     @Test
+    fun a_subagent_reply_is_shown_but_claude_codes_own_helpers_are_not() =
+        runTest {
+            val reader = reader(log)
+            // The prompt-suggestion helper and /compact end with an empty agent type.
+            reader.onEvent(
+                hook(event("SubagentStop", "agent_type" to "", "last_assistant_message" to "cat live-check.txt")),
+            )
+            reader.onEvent(hook(event("SubagentStop", "last_assistant_message" to "Summary of the conversation.")))
+            reader.onEvent(
+                hook(event("SubagentStop", "agent_type" to "Explore", "last_assistant_message" to "Seven objects.")),
+            )
+            settle()
+
+            assertEquals(listOf("**Explore**\n\nSeven objects."), log.agentTexts())
+        }
+
+    @Test
     fun the_permission_mode_from_the_hooks_is_shown_on_the_session() =
         runTest {
             val reader = reader(log)

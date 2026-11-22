@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -62,6 +63,7 @@ fun ThreadTabs(
     ) {
         threads.forEach { thread ->
             val selected = thread.id == selectedId
+            val title = threadTabLabel(thread)
             val waiting =
                 if (thread.openApprovals > 0) {
                     pluralStringResource(R.plurals.thread_needs_you, thread.openApprovals, thread.openApprovals)
@@ -75,11 +77,11 @@ fun ThreadTabs(
                     Modifier
                         .heightIn(min = RafiqTheme.spacing.minTouchTarget)
                         .widthIn(min = RafiqTheme.spacing.minTouchTarget)
-                        .semantics { if (waiting != null) contentDescription = "${thread.title}, $waiting" },
+                        .semantics { if (waiting != null) contentDescription = "$title, $waiting" },
                 selectedContentColor = colors.text,
                 unselectedContentColor = colors.textMuted,
             ) {
-                ThreadTabLabel(thread, selected)
+                ThreadTabLabel(thread, title, selected)
             }
         }
     }
@@ -89,6 +91,7 @@ fun ThreadTabs(
 @Composable
 private fun ThreadTabLabel(
     thread: ThreadTab,
+    title: String,
     selected: Boolean,
 ) {
     val colors = RafiqTheme.colors
@@ -99,7 +102,7 @@ private fun ThreadTabLabel(
     ) {
         if (thread.kind != ThreadKind.MAIN) StatusDot(thread.status, describe = true)
         Text(
-            text = tabTitle(thread.title),
+            text = title,
             style =
                 MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
@@ -114,6 +117,14 @@ private fun ThreadTabLabel(
         }
     }
 }
+
+/**
+ * The tab's label. The main thread is always "Main": the bridge names it after the session, which
+ * the header already shows. Helper threads keep their own titles.
+ */
+@Composable
+private fun threadTabLabel(thread: ThreadTab): String =
+    if (thread.kind == ThreadKind.MAIN) stringResource(R.string.thread_main) else tabTitle(thread.title)
 
 /** [title] cut to [MAX_TAB_TITLE] characters, ending in an ellipsis when it was longer. */
 internal fun tabTitle(title: String): String =

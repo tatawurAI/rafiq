@@ -53,13 +53,16 @@ data class RafiqSpacing(
  * Corner shapes that Material's [Shapes] has no slot for.
  *
  * @property userBubble your own messages: rounded, with a tighter corner at the bottom right.
- * @property pill chips, the composer field and round buttons.
+ * @property pill chips and round buttons.
+ * @property composerField the composer's text field. A fixed radius, not a pill: a pill turns into
+ *   an oval as the draft grows to several lines and clips the text at its corners.
  */
 @Immutable
 data class RafiqShapes(
     val userBubble: RoundedCornerShape =
         RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 4.dp, bottomStart = 18.dp),
     val pill: RoundedCornerShape = RoundedCornerShape(percent = 50),
+    val composerField: RoundedCornerShape = RoundedCornerShape(24.dp),
 )
 
 // Small for buttons, medium for tool cards, large for session cards.

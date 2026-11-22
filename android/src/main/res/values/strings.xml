@@ -20,6 +20,7 @@
   <!-- Status -->
   <string name="status_working">Working</string>
   <string name="status_waiting_on_you">Waiting on you</string>
+  <string name="status_ready">Ready</string>
   <string name="status_done">Done</string>
   <string name="status_error">Error</string>
   <string name="status_unknown">Idle</string>
@@ -54,6 +55,7 @@
     <item quantity="one">%1$d approval waiting on you</item>
     <item quantity="other">%1$d approvals waiting on you</item>
   </plurals>
+  <string name="thread_main">Main</string>
   <string name="thread_empty">Nothing in this thread yet.</string>
   <string name="cancel_turn">Stop this thread</string>
   <string name="jump_to_latest">Jump to latest</string>

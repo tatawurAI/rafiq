@@ -177,7 +177,7 @@ private fun DraftField(
                 modifier =
                     Modifier
                         .heightIn(min = spacing.composerHeight)
-                        .border(spacing.hairline, colors.borderStrong, RafiqTheme.shapes.pill)
+                        .border(spacing.hairline, colors.borderStrong, RafiqTheme.shapes.composerField)
                         .padding(horizontal = spacing.medium, vertical = spacing.smallMedium),
                 contentAlignment = Alignment.CenterStart,
             ) {
@@ -251,7 +251,7 @@ private fun SendButton(
     }
 }
 
-private const val MAX_LINES = 5
+private const val MAX_LINES = 6
 private const val DISABLED_ALPHA = 0.6f
 
 @Preview(name = "Composer, ready", widthDp = 360)

@@ -52,6 +52,16 @@ fun statusLabel(state: AgentState): Int =
     }
 
 /**
+ * The word for a session's [state], with one exception: a session that is done but has no messages
+ * yet has not run a turn, so it reads "Ready" instead of "Done".
+ */
+@StringRes
+fun sessionStatusLabel(
+    state: AgentState,
+    hasMessages: Boolean,
+): Int = if (state == AgentState.DONE && !hasMessages) R.string.status_ready else statusLabel(state)
+
+/**
  * A small dot for [state]. Finished states draw a hollow ring, so a done session reads as quiet
  * next to a running one even without colour.
  *

@@ -43,29 +43,44 @@ enum class EchoState {
 
 /**
  * The echoes for [sent], oldest first, from the latest delivery state of each. A delivered prompt has no
- * echo. A delivery state this build does not know keeps the echo as sent, so nothing vanishes unseen.
+ * echo, and a late delivery after "not delivered" still clears it. A delivery state this build does not
+ * know keeps the echo as sent, so nothing vanishes unseen.
+ *
+ * @param messageKeys the keys of the messages in the timeline. Your server writes a `!` line or a local
+ *   slash command as the message `user:<client id>` just before it says the prompt was delivered, so an
+ *   echo goes as soon as that message is there and never shows next to it.
  */
 fun promptEchoes(
     sent: List<SentPrompt>,
     deliveries: Map<String, EventPayload.PromptDelivery>,
+    messageKeys: Set<String> = emptySet(),
 ): List<PromptEcho> =
     sent.mapNotNull { prompt ->
         val delivery = deliveries[prompt.clientId]
-        when (delivery?.state) {
-            DeliveryState.DELIVERED -> {
-                null
-            }
+        when {
+            "user:${prompt.clientId}" in messageKeys -> null
+            else -> echoFor(prompt, delivery)
+        }
+    }
 
-            DeliveryState.QUEUED -> {
-                PromptEcho(prompt.clientId, prompt.text, EchoState.QUEUED)
-            }
+private fun echoFor(
+    prompt: SentPrompt,
+    delivery: EventPayload.PromptDelivery?,
+): PromptEcho? =
+    when (delivery?.state) {
+        DeliveryState.DELIVERED -> {
+            null
+        }
 
-            DeliveryState.NOT_DELIVERED -> {
-                PromptEcho(prompt.clientId, prompt.text, EchoState.NOT_DELIVERED, delivery.code, delivery.message)
-            }
+        DeliveryState.QUEUED -> {
+            PromptEcho(prompt.clientId, prompt.text, EchoState.QUEUED)
+        }
 
-            DeliveryState.UNKNOWN, null -> {
-                PromptEcho(prompt.clientId, prompt.text, EchoState.SENT)
-            }
+        DeliveryState.NOT_DELIVERED -> {
+            PromptEcho(prompt.clientId, prompt.text, EchoState.NOT_DELIVERED, delivery.code, delivery.message)
+        }
+
+        DeliveryState.UNKNOWN, null -> {
+            PromptEcho(prompt.clientId, prompt.text, EchoState.SENT)
         }
     }

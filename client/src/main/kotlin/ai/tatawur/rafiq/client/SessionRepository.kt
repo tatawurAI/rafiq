@@ -122,9 +122,6 @@ sealed interface ConnectionState {
     data object IdentityRefused : ConnectionState
 }
 
-/** The error code your server answers with when the phone's Tailscale login is not its owner's (403). */
-const val IDENTITY_MISMATCH = "identity_mismatch"
-
 /** The outcome of a call to the bridge. Screens branch on the kind, never on message text. */
 sealed interface CommandResult<out T> {
     data class Ok<T>(

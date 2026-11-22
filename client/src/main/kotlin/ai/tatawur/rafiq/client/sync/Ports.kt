@@ -105,7 +105,7 @@ fun interface EventSource {
 
 /**
  * The bridge refused a socket handshake with HTTP [status], for example 401 for a wrong token. [code] is the
- * error code from the answer's body, such as [ai.tatawur.rafiq.client.IDENTITY_MISMATCH], or null.
+ * error code from the answer's body, such as [ai.tatawur.rafiq.protocol.api.AuthErrorCodes.IDENTITY_MISMATCH], or null.
  */
 class HandshakeRejectedException(
     val status: Int,

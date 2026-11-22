@@ -2,7 +2,7 @@ package ai.tatawur.rafiq.sessions
 
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.CommandResult
-import ai.tatawur.rafiq.client.IDENTITY_MISMATCH
+import ai.tatawur.rafiq.protocol.api.AuthErrorCodes
 import androidx.annotation.StringRes
 
 /**
@@ -50,13 +50,33 @@ sealed interface Feedback {
 /** The feedback for a finished command, or null when it went through. */
 fun CommandResult<*>.feedback(): Feedback? =
     when (this) {
-        is CommandResult.Ok -> null
-        CommandResult.Busy -> Feedback.StillWorking
-        CommandResult.Gone -> Feedback.AlreadyAnswered
-        CommandResult.Offline -> Feedback.Offline
-        CommandResult.NotFound -> Feedback.NotFound
-        CommandResult.Unauthorized -> Feedback.Unauthorized
-        is CommandResult.Failed -> if (code == IDENTITY_MISMATCH) Feedback.IdentityRefused else Feedback.Failed(message)
+        is CommandResult.Ok -> {
+            null
+        }
+
+        CommandResult.Busy -> {
+            Feedback.StillWorking
+        }
+
+        CommandResult.Gone -> {
+            Feedback.AlreadyAnswered
+        }
+
+        CommandResult.Offline -> {
+            Feedback.Offline
+        }
+
+        CommandResult.NotFound -> {
+            Feedback.NotFound
+        }
+
+        CommandResult.Unauthorized -> {
+            Feedback.Unauthorized
+        }
+
+        is CommandResult.Failed -> {
+            if (code == AuthErrorCodes.IDENTITY_MISMATCH) Feedback.IdentityRefused else Feedback.Failed(message)
+        }
     }
 
 /**

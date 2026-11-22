@@ -152,18 +152,21 @@ The bridge reads environment variables at start-up. Nothing reads a `.env` file.
 | `RAFIQ_DEV_PAGE` | `1` serves a plain test page at `/dev` | unset |
 | `RAFIQ_DEVICE_TOKEN` | Optional. Creates the device `legacy`, so a phone paired before per-device tokens keeps working. At least 32 characters when set. Treat as sensitive. New phones pair with a code. | unset |
 | `RAFIQ_ALLOWED_HOSTS` | Extra `Host` values to accept, for example your Tailscale name | unset |
-| `RAFIQ_TERMINAL` | `1` turns on Terminal and tmux sessions. See [Terminal](#terminal). | unset (off) |
-| `RAFIQ_TMUX_SESSIONS` | The exact names of the tmux sessions the phone may see and open, separated by commas. No wildcard. | unset |
+| `RAFIQ_TMUX` | `1` lists tmux sessions, without Terminal. See [Terminal](#terminal). | unset (off) |
+| `RAFIQ_TERMINAL` | `1` lists tmux sessions and lets the phone open them in Terminal. | unset (off) |
+| `RAFIQ_TMUX_SESSIONS` | The exact names of the tmux sessions the phone may see, separated by commas. No wildcard. | unset |
+| `RAFIQ_TERMINAL_SHELLS` | Listed sessions that open in Terminal even with no agent detected, separated by commas. No wildcard. | unset |
 | `RAFIQ_TMUX_SOCKET` | The tmux socket name (`tmux -L`), to use another tmux server than the default | unset (default server) |
-| `RAFIQ_TERMINAL_ALLOW_NON_LOOPBACK` | `1` lets the bridge bind to a non-loopback address while Terminal is on | unset |
+| `RAFIQ_TERMINAL_ALLOW_NON_LOOPBACK` | `1` lets the bridge bind to a non-loopback address while tmux sessions are on | unset |
+| `RAFIQ_TAILSCALE_LOGIN` | Optional. The Tailscale login every request must come from, checked against the header `tailscale serve` adds. Needs a loopback bind address. See [setup.md](setup.md#check-your-tailscale-login-too-optional). | unset |
 
 ### Terminal
 
 Terminal shows the real screen of a tmux session on your server in the app, and sends your keys to it. It is a remote shell, so it is off until you turn it on, and it reaches only the sessions you name. [setup.md](setup.md#terminal) shows how to turn it on.
 
-**The gate.** With `RAFIQ_TERMINAL` unset, the bridge lists no tmux session, `WS /terminal` closes with "no such session" and no tmux command runs. With it on:
+**The gate.** With both `RAFIQ_TMUX` and `RAFIQ_TERMINAL` unset, the bridge lists no tmux session, `WS /terminal` closes with "no such session" and no tmux command runs. `RAFIQ_TMUX=1` lists the named sessions for Chat. `RAFIQ_TERMINAL=1` lists them too and lets the phone open them in Terminal. A session opens in Terminal only when `RAFIQ_TERMINAL` is on and an agent was detected in it, or its name is in `RAFIQ_TERMINAL_SHELLS`. Otherwise `WS /terminal` closes with "no such session" before any tmux command, and the session carries `terminal_allowed` false so the app hides its Terminal toggle. With either switch on:
 
-- `RAFIQ_TMUX_SESSIONS` must name the sessions. Names are matched exactly and may use only letters, digits, `.`, `_` and `-`. There is no `*`. A bad entry fails the start and names the variable.
+- `RAFIQ_TMUX_SESSIONS` must name the sessions. Names are matched exactly and may use only letters, digits, `.`, `_` and `-`. There is no `*`. A bad entry fails the start and names the variable. The same holds for `RAFIQ_TERMINAL_SHELLS`, and each of its names must also be in `RAFIQ_TMUX_SESSIONS`.
 - A grant covers every window and pane of the session. The app mirrors the active pane of the session's current window at the moment you open Terminal.
 - The bridge refuses to start bound to a non-loopback address, unless `RAFIQ_TERMINAL_ALLOW_NON_LOOPBACK=1`. Publish it with `tailscale serve`, never `tailscale funnel`.
 - At most 2 terminal sockets per device and 4 in all. Columns are clamped to 20 to 500 and rows to 5 to 200 on every resize, the first one included. A frame of keys may be at most 16 KiB, and a socket may send at most 64 KiB of keys per second. A socket is closed and detached after 10 minutes in which the phone sent no frame and the pane sent no output. Size changes are limited to 5 a second with a burst of 10, and a repeat of the current size is free. Text frames count toward the same 64 KiB per second input budget as keys. A terminal socket is closed after 8 hours whatever it is doing, so a forgotten phone does not stay attached. The app reconnects only if Terminal is on screen. A device may open at most 5 terminals a minute. Past that, the bridge answers "too many terminal opens, wait a moment". Fast size changes, such as a keyboard or fold animation, are merged into the newest size. More than 60 size changes in 10 seconds end the terminal.

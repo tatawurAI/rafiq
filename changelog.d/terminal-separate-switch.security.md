@@ -1,0 +1,1 @@
+Listing tmux sessions and opening them in Terminal are now separate switches. `RAFIQ_TMUX=1` lists your tmux sessions without Terminal, and `RAFIQ_TERMINAL=1` lists and opens them. A session with no agent in it opens in Terminal only if you also name it in `RAFIQ_TERMINAL_SHELLS`. Its row says when Terminal is not available.

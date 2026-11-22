@@ -17,8 +17,8 @@ import java.nio.file.Path
  * @property allowedHosts extra `Host` header values the bridge accepts, from `RAFIQ_ALLOWED_HOSTS`, for
  *   example your Tailscale name. The bind address and `localhost` are always accepted.
  * @property devPage whether to serve the development page at `/dev`, from `RAFIQ_DEV_PAGE=1`.
- * @property terminal the Terminal gate, from `RAFIQ_TERMINAL`, `RAFIQ_TMUX_SESSIONS` and `RAFIQ_TMUX_SOCKET`. Off
- *   unless you turn it on.
+ * @property terminal the tmux gate, from `RAFIQ_TMUX`, `RAFIQ_TERMINAL`, `RAFIQ_TMUX_SESSIONS`,
+ *   `RAFIQ_TERMINAL_SHELLS` and `RAFIQ_TMUX_SOCKET`. Off unless you turn it on.
  * @property tailscaleLogin from `RAFIQ_TAILSCALE_LOGIN`: the Tailscale login every request must come from, as
  *   `tailscale serve` names it, or null to skip that check. See `TailscaleIdentityCheck`.
  */
@@ -37,7 +37,7 @@ class BridgeConfig(
     override fun toString(): String =
         "BridgeConfig(bindAddress=$bindAddress, port=$port, dataDir=$dataDir, " +
             "deviceToken=${if (deviceToken == null) "unset" else "set"}, agents=${agents.map(AgentSpec::id)}, " +
-            "devPage=$devPage, allowedHosts=$allowedHosts, terminal=${terminal.enabled}, " +
+            "devPage=$devPage, allowedHosts=$allowedHosts, tmux=${terminal.enabled}, terminal=${terminal.terminal}, " +
             "tailscaleLogin=${if (tailscaleLogin == null) "unset" else "set"})"
 
     companion object {

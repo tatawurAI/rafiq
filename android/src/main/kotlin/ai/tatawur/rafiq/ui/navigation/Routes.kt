@@ -8,6 +8,7 @@ internal object Routes {
     const val PAIRING = "pairing"
     const val SESSIONS = "sessions"
     const val NEW_SESSION = "sessions/new"
+    const val SETTINGS = "settings"
     const val SESSION_ID = "sessionId"
     const val SESSION = "session/{$SESSION_ID}"
 

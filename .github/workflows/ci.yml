@@ -52,16 +52,19 @@ jobs:
       # but cannot poison it. validate-wrappers fails the job if gradle-wrapper.jar
       # is not an official Gradle release.
       #
-      # The Android SDK comes preinstalled on the GitHub-hosted ubuntu image
-      # (ANDROID_HOME is set and its licences are accepted), so there is no
-      # separate SDK install step. As of 2026-11-20 the ubuntu-24.04 image lists
-      # platform android-36 and build-tools 36.0.0 in the runner-images readme.
-      # Images drop old SDK versions over time. If a build starts failing on a
-      # missing package, add an sdkmanager step for the exact versions needed.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           validate-wrappers: true
+
+      # The Android SDK comes preinstalled on the GitHub-hosted ubuntu image
+      # (ANDROID_HOME is set and its licences are accepted). The app compiles
+      # against platform 37, which the image may not carry yet, so the exact
+      # packages are installed here. sdkmanager skips what is already there.
+      - name: Install Android SDK platform 37
+        run: |
+          set -euo pipefail
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0"
 
       - name: Format, lint and test
         run: ./gradlew --console=plain spotlessCheck detekt test

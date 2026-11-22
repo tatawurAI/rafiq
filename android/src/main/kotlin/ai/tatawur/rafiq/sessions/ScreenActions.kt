@@ -106,12 +106,26 @@ data class SessionActions(
     val onScrolledToKey: () -> Unit = {},
     val onDismissFeedback: () -> Unit = {},
     val onPairAgain: () -> Unit = {},
+    val viewToggle: ViewToggle? = null,
+)
+
+/**
+ * The Chat and Terminal toggle in the session header, for a session your server serves as a
+ * terminal. Null hides it.
+ *
+ * @property terminal true while Terminal is the view showing.
+ */
+@Immutable
+data class ViewToggle(
+    val terminal: Boolean,
+    val onSelect: (terminal: Boolean) -> Unit,
 )
 
 /** What the session list can ask its state holder or the navigation to do. */
 @Immutable
 data class SessionListActions(
     val onOpen: (sessionId: String) -> Unit = {},
+    val onOpenSettings: () -> Unit = {},
     val onNewSession: () -> Unit = {},
     val onFilter: (SessionFilter) -> Unit = {},
     val onApprove: (approvalId: String, optionId: String) -> Unit = { _, _ -> },

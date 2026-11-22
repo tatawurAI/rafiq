@@ -760,8 +760,8 @@ internal class TmuxChatSession(
     ) {
         if (queue.size >= MAX_QUEUED) {
             throw SessionException.Conflict(
-                "turn_in_progress",
-                "Claude is busy and $MAX_QUEUED of your messages are already waiting. Wait for its reply.",
+                QUEUE_FULL,
+                "Three messages are already waiting. Try again when the agent is free.",
             )
         }
         queue.add(QueuedPrompt(text, clientId))
@@ -909,6 +909,9 @@ internal class TmuxChatSession(
     companion object {
         const val MAIN_THREAD = "main"
         const val MAX_QUEUED = 3
+
+        /** The refusal when [MAX_QUEUED] prompts already wait. Becomes `SendRefusal.QUEUE_FULL` in the contract. */
+        const val QUEUE_FULL = "queue_full"
         private const val MAX_RECENT = 5
         private const val RECENT_MS = 60_000L
 

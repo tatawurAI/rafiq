@@ -138,7 +138,10 @@ private fun hookSetup(
     if (program == null || dataDir == null) {
         LoggerFactory
             .getLogger("ai.tatawur.rafiq.bridge")
-            .warn("hooks/rafiq-hook.py was not found next to the bridge, so hooks cannot be installed from the app.")
+            .warn(
+                "hooks/rafiq-hook.py was not found next to the bridge, or it or its folder can be changed by " +
+                    "another user, so hooks cannot be installed from the app.",
+            )
         return null
     }
     return HookSetup(HookSettings(program.toString(), dataDir.toAbsolutePath().toString()), consents)

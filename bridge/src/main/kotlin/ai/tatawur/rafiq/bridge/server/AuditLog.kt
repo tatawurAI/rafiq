@@ -13,6 +13,20 @@ interface AuditLog {
         textSha256: String,
     )
 
+    /** Hooks installed in [projectPath] from a phone. [fileSha256] is the SHA-256 of the settings file written. */
+    fun hooksInstalled(
+        deviceId: String,
+        projectPath: String,
+        fileSha256: String,
+    )
+
+    /** Hooks removed from [projectPath]. [fileSha256] is the file left behind, or null when it was deleted. */
+    fun hooksRemoved(
+        deviceId: String,
+        projectPath: String,
+        fileSha256: String?,
+    )
+
     /** An approval answered from a phone. [optionId] is the option chosen. */
     fun approvalAnswer(
         deviceId: String,

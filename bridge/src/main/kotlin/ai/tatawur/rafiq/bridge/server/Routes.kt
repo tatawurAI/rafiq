@@ -155,12 +155,14 @@ internal fun Route.sessionRoutes(
 /**
  * `GET`, `POST` and `DELETE /sessions/{id}/hooks`: preview, install and remove the reader's hooks in the
  * session's project (issue #44). Only for sessions in tmux, whose agent runs in a project folder on your server.
- * The work is in [HookSetup]. Install and remove need the hash of the preview you agreed to.
+ * The work is in [HookSetup]. Install and remove need the hash of the preview you agreed to, and each leaves an
+ * [audit] line with the device, the project and the hash of the file written.
  */
 internal fun Route.hookRoutes(
     hooks: HookSetup,
     sessions: SessionManager,
     deviceOf: (ApplicationCall) -> String,
+    audit: AuditLog = LoggingAuditLog(),
 ) {
     suspend fun projectOf(call: ApplicationCall): String {
         val id = call.parameters.getOrFail("id")
@@ -177,11 +179,16 @@ internal fun Route.hookRoutes(
     }
     post("/sessions/{id}/hooks") {
         val request = call.receive<HookSetupRequest>()
-        call.respond(hooks.install(projectOf(call), request, deviceOf(call)))
+        val device = deviceOf(call)
+        val change = hooks.install(projectOf(call), request, device)
+        audit.hooksInstalled(device, change.preview.projectPath, change.writtenSha256 ?: "")
+        call.respond(change.preview)
     }
     delete("/sessions/{id}/hooks") {
         val request = call.receive<HookSetupRequest>()
-        call.respond(hooks.remove(projectOf(call), request))
+        val change = hooks.remove(projectOf(call), request)
+        audit.hooksRemoved(deviceOf(call), change.preview.projectPath, change.writtenSha256)
+        call.respond(change.preview)
     }
 }
 

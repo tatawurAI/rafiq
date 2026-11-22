@@ -23,7 +23,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 
-/** The app going to the background and leaving by back both close Terminal's socket. */
+/**
+ * The app going to the background closes Terminal's socket, and coming back opens a new one. Leaving
+ * by back cancels the caller, which TerminalLinkTest covers.
+ */
 @OptIn(ExperimentalCoroutinesApi::class) // A test main dispatcher stands in for the UI thread.
 class HoldWhileStartedTest {
     private val main = UnconfinedTestDispatcher()
@@ -78,20 +81,5 @@ class HoldWhileStartedTest {
             assertEquals(1, port.open)
             assertEquals(2, port.opened)
             view.cancel()
-        }
-
-    @Test
-    fun leaving_by_back_closes_the_socket() =
-        runTest(main) {
-            val screen = Screen().apply { registry.currentState = Lifecycle.State.RESUMED }
-            val port = CountingPort()
-            val link = TerminalLink(port, "weather-app").apply { setViewport(CellSize(80, 24)) }
-            // Back disposes the Terminal screen, which cancels the effect that runs this.
-            val view = launch { holdWhileStarted(screen.lifecycle) { link.attach().collect {} } }
-            assertEquals(1, port.open)
-
-            view.cancel()
-
-            assertEquals(0, port.open)
         }
 }

@@ -13,13 +13,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 /** One frame from `WS /terminal`, before the snapshot pairing. */
 sealed interface TerminalFrame {
@@ -99,6 +101,7 @@ class TerminalLink(
     private val port: TerminalPort,
     private val sessionId: String,
     private val resizeDebounce: Duration = DEFAULT_RESIZE_DEBOUNCE,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
 ) {
     @Volatile private var uplink: TerminalUplink? = null
 
@@ -139,18 +142,7 @@ class TerminalLink(
             currentStatus.value = TerminalStatus.Connecting
             try {
                 viewport.filterNotNull().first()
-                var ended: String? = null
-                var again = true
-                while (again) {
-                    again = false
-                    try {
-                        ended = holdSocket(this)
-                    } catch (_: TerminalOverflowException) {
-                        currentStatus.value = TerminalStatus.Connecting
-                        again = true
-                    }
-                }
-                currentStatus.value = TerminalStatus.Ended(ended)
+                currentStatus.value = holdUntilEnded(this)
             } catch (cancelled: CancellationException) {
                 currentStatus.value = TerminalStatus.Detached
                 throw cancelled
@@ -158,6 +150,29 @@ class TerminalLink(
                 currentStatus.value = TerminalStatus.Failed(failure.message)
             }
         }
+
+    /**
+     * Holds sockets until one ends for good, and returns how it ended. After an overflow it waits,
+     * from [FIRST_REOPEN_DELAY] doubling up to [MAX_REOPEN_DELAY], then opens a new socket. Three
+     * overflows within [OVERFLOW_WINDOW] stop it with [FELL_BEHIND], so a phone that cannot keep
+     * up stops reconnecting until you ask.
+     */
+    private suspend fun holdUntilEnded(events: ProducerScope<TerminalEvent>): TerminalStatus {
+        val overflows = ArrayDeque<TimeMark>()
+        var wait = FIRST_REOPEN_DELAY
+        while (true) {
+            try {
+                return TerminalStatus.Ended(holdSocket(events))
+            } catch (_: TerminalOverflowException) {
+                overflows.addLast(timeSource.markNow())
+                while (overflows.first().elapsedNow() > OVERFLOW_WINDOW) overflows.removeFirst()
+                if (overflows.size >= MAX_OVERFLOWS) return TerminalStatus.Failed(FELL_BEHIND)
+                currentStatus.value = TerminalStatus.Connecting
+                delay(wait)
+                wait = minOf(wait * 2, MAX_REOPEN_DELAY)
+            }
+        }
+    }
 
     /** One socket, from open to close. Returns the bridge's reason if it ended the view. */
     @OptIn(FlowPreview::class) // debounce
@@ -178,15 +193,22 @@ class TerminalLink(
                             outgoing = queue
                             currentStatus.value = TerminalStatus.Live
                             // The attach does not wait for the debounce. Later changes do.
-                            viewport.value?.let { frame.uplink.sendText(resizeMessage(it)) }
+                            var sent = viewport.value
+                            sent?.let { frame.uplink.sendText(resizeMessage(it)) }
                             helpers += launch { sendPaced(queue, frame.uplink) }
+                            // Compares with what was sent instead of skipping the first value, so a
+                            // change between the open and this collector starting still goes up.
                             helpers +=
                                 launch {
                                     viewport
-                                        .drop(1)
                                         .filterNotNull()
                                         .debounce(resizeDebounce)
-                                        .collect { size -> uplink?.sendText(resizeMessage(size)) }
+                                        .collect { size ->
+                                            if (size != sent) {
+                                                sent = size
+                                                uplink?.sendText(resizeMessage(size))
+                                            }
+                                        }
                                 }
                         }
 
@@ -244,6 +266,14 @@ class TerminalLink(
 
     companion object {
         val DEFAULT_RESIZE_DEBOUNCE: Duration = 150.milliseconds
+
+        /** The [TerminalStatus.Failed] message after [MAX_OVERFLOWS] overflows in [OVERFLOW_WINDOW]. */
+        const val FELL_BEHIND = "The screen could not keep up. Tap to retry."
+
+        private val FIRST_REOPEN_DELAY = 500.milliseconds
+        private val MAX_REOPEN_DELAY = 8.seconds
+        private val OVERFLOW_WINDOW = 30.seconds
+        private const val MAX_OVERFLOWS = 3
 
         /** About half the bridge's 64 KiB/s input limit. */
         const val MAX_UP_BYTES_PER_SECOND = 32 * 1024L

@@ -31,3 +31,4 @@ Each file here records one decision that shapes Rafiq: what prompted it, what we
 | [0010](0010-push-transport.md) | Push transport | Proposed |
 | [0011](0011-a-pure-kotlin-client-module-for-app-logic.md) | A pure Kotlin client module for app logic | Accepted |
 | [0012](0012-https-through-tailscale-serve.md) | HTTPS through tailscale serve, with a per-device token | Accepted |
+| [0013](0013-agents-in-tmux.md) | Agents in tmux | Proposed |

@@ -86,6 +86,37 @@ The first gives `{"status":"ok","version":"..."}`. The first request after you t
 
 The app then connects and shows your sessions.
 
+## Terminal
+
+Terminal shows a tmux session on your server in the app, and sends your keys to it. It is a remote shell. It is off until you turn it on, and it reaches only the sessions you name.
+
+You need tmux 3.2 or newer on your server, and the default `window-size latest`.
+
+Turn it on in the bridge's environment:
+
+```sh
+export RAFIQ_TERMINAL=1
+export RAFIQ_TMUX_SESSIONS=weather-app,docs-site
+```
+
+| Setting | Meaning |
+|---|---|
+| `RAFIQ_TERMINAL` | `1` turns Terminal and tmux sessions on. Anything else, or unset, leaves them off. |
+| `RAFIQ_TMUX_SESSIONS` | The exact names of the tmux sessions your phone may see and open. Letters, digits, `.`, `_` and `-` only. No `*`. The bridge will not start with a bad name, and says which variable it is. |
+| `RAFIQ_TMUX_SOCKET` | The tmux socket name, if your sessions run on a tmux server started with `tmux -L <name>`. Unset uses the default server. |
+| `RAFIQ_TERMINAL_ALLOW_NON_LOOPBACK` | `1` lets the bridge bind to an address other than `127.0.0.1` while Terminal is on. Leave it unset. |
+
+What to know before you turn it on:
+
+- Terminal reaches every window and pane of each session you list. Name only sessions you are happy to type into from your phone.
+- With Terminal on, the bridge refuses to start on a non-loopback address. Keep `RAFIQ_BIND_ADDRESS` at its default and use `tailscale serve`, as above. Never use `tailscale funnel`.
+- Each phone can have 2 terminals open, and the bridge 4. A terminal you leave alone for 10 minutes closes.
+- While you have Terminal open, the window in tmux has the size of your phone. When you leave, it goes back to the size of your terminal at your desk. If nothing is attached at your desk, the window keeps your phone's size until something attaches.
+- Rafiq can ask for your fingerprint or face before Terminal opens. Turn it on in the app's settings. It asks once when Terminal opens, and not for each key.
+- The bridge's own view sessions are named `rafiq-view-...`. Do not use that name for your own sessions.
+
+A listed session shows in your session list with the agent that runs in it. Its row opens in Terminal. A session you did not list is not shown, and cannot be opened, even if its name starts with a listed name.
+
 ## If it does not connect
 
 | Symptom | Likely cause |
@@ -95,3 +126,5 @@ The app then connects and shows your sessions.
 | `403`, `forbidden_origin` | A browser page on another site called the bridge. The app sends no `Origin`, so this is not the app. |
 | `502` from `tailscale serve` | The bridge is not running, or not on `127.0.0.1:8740`. |
 | No answer at all | Tailscale is off on your phone, the phone is on another tailnet, or your tailnet's access rules block it from your server. |
+| The bridge will not start and names `RAFIQ_TMUX_SESSIONS`, `RAFIQ_TMUX_SOCKET` or `RAFIQ_BIND_ADDRESS` | A Terminal setting is wrong. Terminal needs at least one exact session name, and a loopback bind address. |
+| A session is listed but Terminal closes at once | tmux is older than 3.2, or the session was killed. |

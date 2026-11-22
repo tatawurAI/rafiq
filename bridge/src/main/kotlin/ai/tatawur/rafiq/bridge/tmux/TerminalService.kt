@@ -39,7 +39,7 @@ class TerminalService(
                 log.warn("Terminal is on but tmux could not be run. Terminal and tmux sessions will not work.")
             }
 
-            version.first * VERSION_BASE + version.second < major * VERSION_BASE + minor -> {
+            !TmuxServer.isSupported(version) -> {
                 log.warn(
                     "Terminal needs tmux {}.{} or newer, found {}.{}.",
                     major,
@@ -58,7 +58,6 @@ class TerminalService(
     }
 
     private companion object {
-        const val VERSION_BASE = 1000
         val log = LoggerFactory.getLogger(TerminalService::class.java)
     }
 }

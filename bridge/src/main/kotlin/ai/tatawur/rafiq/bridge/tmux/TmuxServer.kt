@@ -49,7 +49,7 @@ class TmuxServer(
     fun start(vararg args: String): Process =
         ProcessBuilder(commandLine(*args))
             .redirectErrorStream(true)
-            .also { it.environment().remove("TMUX") }
+            .also(::cleanEnvironment)
             .start()
 
     /** The tmux version as (major, minor), or null when tmux is missing or prints something unexpected. */
@@ -123,7 +123,7 @@ class TmuxServer(
     private fun exec(command: List<String>): Result? {
         val process =
             try {
-                ProcessBuilder(command).also { it.environment().remove("TMUX") }.start()
+                ProcessBuilder(command).also(::cleanEnvironment).start()
             } catch (_: Exception) {
                 return null
             }
@@ -146,6 +146,11 @@ class TmuxServer(
         /** The oldest tmux the terminal view works with, for `pause-after`. */
         val MINIMUM_VERSION = 3 to 2
 
+        /** True when [version], as major and minor, is at least [MINIMUM_VERSION]. */
+        fun isSupported(version: Pair<Int, Int>): Boolean =
+            version.first > MINIMUM_VERSION.first ||
+                (version.first == MINIMUM_VERSION.first && version.second >= MINIMUM_VERSION.second)
+
         private const val EXEC_TIMEOUT_SECONDS = 5L
         private const val PANE_FIELDS = 6
         private const val PID = 2
@@ -164,4 +169,10 @@ class TmuxServer(
                 }
             }
     }
+}
+
+/** `TMUX` would point tmux at another server. The device token has no business in a tmux process. */
+private fun cleanEnvironment(builder: ProcessBuilder) {
+    builder.environment().remove("TMUX")
+    builder.environment().remove("RAFIQ_DEVICE_TOKEN")
 }

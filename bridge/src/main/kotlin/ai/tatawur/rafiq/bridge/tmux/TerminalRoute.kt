@@ -124,16 +124,12 @@ private class TerminalConnection(
             )
         log.info("Terminal opened: device={} session={} remote={}", device, sessionName, remote)
         try {
-            withContext(Dispatchers.IO) {
-                client.start(first.cols, first.rows)
-                client.requestSnapshot()
-            }
-            serve(client, queue, first.early)
+            if (attach(client, first)) serve(client, queue, first.early)
         } catch (failure: CancellationException) {
             throw failure
         } catch (failure: Exception) {
-            log.warn("Terminal could not attach to session {}: {}", sessionName, failure.toString())
-            runCatching { send(TerminalEnded("Could not attach to the tmux session.")) }
+            // The phone going away mid-stream ends up here too. It is not an error worth more than a line.
+            log.info("Terminal for session {} stopped: {}", sessionName, failure.toString())
         } finally {
             withContext(NonCancellable + Dispatchers.IO) {
                 // A paste cut off by the socket closing would leave the pane waiting for its end marker.
@@ -154,11 +150,27 @@ private class TerminalConnection(
         }
     }
 
-    private suspend fun tmuxIsNewEnough(): Boolean {
-        val version = gate.server.version() ?: return false
-        val (major, minor) = TmuxServer.MINIMUM_VERSION
-        return version.first * VERSION_BASE + version.second >= major * VERSION_BASE + minor
-    }
+    private suspend fun tmuxIsNewEnough(): Boolean = gate.server.version()?.let(TmuxServer::isSupported) == true
+
+    /** Attaches at the size the phone asked for. Tells the phone and returns false when tmux refuses. */
+    @Suppress("TooGenericExceptionCaught") // Whatever tmux does wrong, the phone gets one plain sentence.
+    private suspend fun attach(
+        client: TmuxControlClient,
+        first: FirstFrames,
+    ): Boolean =
+        try {
+            withContext(Dispatchers.IO) {
+                client.start(first.cols, first.rows)
+                client.requestSnapshot()
+            }
+            true
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Exception) {
+            log.warn("Terminal could not attach to session {}: {}", sessionName, failure.toString())
+            runCatching { send(TerminalEnded("Could not attach to the tmux session.")) }
+            false
+        }
 
     @Volatile
     private var lastSize: Pair<Int, Int>? = null
@@ -329,7 +341,6 @@ private class TerminalConnection(
 
     private companion object {
         const val VIEW_ID_LENGTH = 8
-        const val VERSION_BASE = 1000
         const val IDLE_CHECKS = 4
         const val CLOSE_REASON_MAX = 100
         val MIN_IDLE_CHECK = 50.milliseconds

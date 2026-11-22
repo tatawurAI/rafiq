@@ -220,6 +220,22 @@ class TerminalRouteTest {
     }
 
     @Test
+    fun an_open_view_ends_and_detaches_when_a_scan_no_longer_allows_its_session() {
+        tmux.newSession("weather-app")
+        val bridge = bridgeFor("weather-app")
+        val socket = bridge.terminal("weather-app")
+        socket.sendResize(60, 20)
+        socket.snapshot()
+
+        bridge.gate!!.updateOpenable(emptySet())
+
+        val ended = socket.until(seconds = 5) { it is Received.Text && "\"ended\"" in it.text } as Received.Text
+        assertTrue("no longer allowed" in ended.text, ended.text)
+        assertIs<Received.Closed>(socket.until(seconds = 5) { it is Received.Closed })
+        eventually("the view session is gone", check = ::noViewSession)
+    }
+
+    @Test
     fun an_idle_socket_is_closed_and_detaches() {
         tmux.newSession("weather-app")
         val bridge = bridgeFor("weather-app", limits = TerminalLimits(idleTimeout = 600.milliseconds))

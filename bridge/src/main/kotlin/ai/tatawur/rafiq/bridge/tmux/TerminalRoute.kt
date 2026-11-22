@@ -57,6 +57,9 @@ import kotlin.time.TimeSource
 private val log = LoggerFactory.getLogger("ai.tatawur.rafiq.bridge.tmux.Terminal")
 
 private val CLAIM_INTERVAL = 1.seconds
+
+/** How often an open view checks that its session may still be opened. */
+private val ACCESS_CHECK_INTERVAL = 1.seconds
 private val FIRST_RESIZE_WAIT = 2.seconds
 private val TRY_AGAIN = CloseReason.Codes.TRY_AGAIN_LATER
 private val END_SEND_WAIT = 1.seconds
@@ -302,6 +305,7 @@ private class TerminalConnection(
                 }
             }
         val watchdog = launch { closeWhenIdle() }
+        val access = launch { closeWhenNoLongerAllowed() }
         try {
             early.forEach { handle(it, client) }
             for (frame in socket.incoming) {
@@ -310,6 +314,7 @@ private class TerminalConnection(
         } finally {
             downstream.cancel()
             watchdog.cancel()
+            access.cancel()
         }
     }
 
@@ -578,6 +583,20 @@ private class TerminalConnection(
             keyLock.withLock {
                 val keys = filter.flush()
                 if (keys.isNotEmpty() && !ended.get()) client.sendInput(keys)
+            }
+        }
+    }
+
+    /**
+     * The gate is checked at connect, and again here while the view is open: a scan can drop the session, for
+     * example when its agent exits and the session is not named as a shell. Then the view ends and detaches.
+     */
+    private suspend fun closeWhenNoLongerAllowed() {
+        while (socket.isActive) {
+            delay(ACCESS_CHECK_INTERVAL)
+            if (gate.allowedName(TMUX_SESSION_PREFIX + sessionName) == null) {
+                end("Terminal is no longer allowed for this session.")
+                return
             }
         }
     }

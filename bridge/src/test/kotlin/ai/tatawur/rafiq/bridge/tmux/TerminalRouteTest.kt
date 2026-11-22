@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge.tmux
 
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
+import ai.tatawur.rafiq.protocol.api.TerminalWindow
 import ai.tatawur.rafiq.protocol.api.terminalJson
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
@@ -95,6 +96,25 @@ class TerminalRouteTest {
         eventuallyEquals("a small later resize is followed", 30 to 10) { tmux.windowSize("weather-app") }
         socket.sendResize(100_000, 100_000)
         eventuallyEquals("a later resize is clamped too", 500 to 200) { tmux.windowSize("weather-app") }
+    }
+
+    @Test
+    fun the_snapshot_names_the_mirrored_window_and_a_switch_at_the_desk_changes_it_on_the_next_snapshot() {
+        tmux.newSession("weather-app")
+        tmux.tmux("rename-window", "-t", "=weather-app:", "api server")
+        // A user's tmux config may number windows from 1, so ask tmux instead of assuming 0.
+        val index = tmux.tmux("display-message", "-p", "-t", "=weather-app:", "#{window_index}").trim().toInt()
+        val socket = bridgeFor("weather-app").terminal("weather-app")
+        socket.sendResize(80, 24)
+        assertEquals(TerminalWindow(index, "api server"), socket.snapshot().first.window)
+
+        // The mirrored pane stays put when the desk moves to another window. A new window gets a new number.
+        tmux.tmux("new-window", "-t", "=weather-app:", "-n", "docs", "cat")
+        socket.sendResize(90, 30)
+        assertEquals(TerminalWindow(index, "api server"), socket.snapshot().first.window)
+        tmux.tmux("rename-window", "-t", "=weather-app:$index", "renamed")
+        socket.sendResize(100, 30)
+        assertEquals(TerminalWindow(index, "renamed"), socket.snapshot().first.window)
     }
 
     @Test

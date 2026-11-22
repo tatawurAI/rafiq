@@ -7,6 +7,7 @@ import ai.tatawur.rafiq.protocol.api.TerminalResize
 import ai.tatawur.rafiq.protocol.api.TerminalSize
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
 import ai.tatawur.rafiq.protocol.api.TerminalUnknown
+import ai.tatawur.rafiq.protocol.api.TerminalWindow
 import ai.tatawur.rafiq.protocol.api.terminalJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,6 +27,19 @@ class TerminalMessageTest {
         assertEquals("""{"type":"size","cols":100,"rows":30}""", encode(TerminalSize(100, 30)))
         assertEquals("""{"type":"ended","reason":"gone"}""", encode(TerminalEnded("gone")))
         assertEquals("""{"type":"resize","cols":60,"rows":20}""", encode(TerminalResize(60, 20)))
+    }
+
+    @Test
+    fun a_snapshot_carries_the_window_and_one_without_it_still_decodes() {
+        val head = """{"type":"snapshot","cols":80,"rows":24,"cursor_x":0,"cursor_y":0"""
+        val window = TerminalWindow(2, "api server")
+
+        val json = """$head,"window":{"index":2,"name":"api server"}}"""
+        assertEquals(TerminalSnapshot(80, 24, 0, 0, window = window), decode(json))
+        val written = encode(TerminalSnapshot(80, 24, 0, 0, window = window))
+        assertEquals(true, """"window":{"index":2,"name":"api server"}""" in written)
+        assertEquals(null, (decode("$head}") as TerminalSnapshot).window)
+        assertEquals(false, "window" in encode(TerminalSnapshot(80, 24, 0, 0)))
     }
 
     @Test

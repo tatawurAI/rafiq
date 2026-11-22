@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge.tmux
 
 import ai.tatawur.rafiq.protocol.api.TerminalModes
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
+import ai.tatawur.rafiq.protocol.api.TerminalWindow
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ExecutionException
@@ -224,16 +225,27 @@ class TmuxControlClient(
         const val MOUSE_ANY = 7
         const val MOUSE_BUTTON = 8
         const val MOUSE_STANDARD = 9
+        const val WINDOW_INDEX = 10
+        const val META_FIELDS = 12
+
+        private fun window(fields: List<String>): TerminalWindow? =
+            fields.getOrNull(WINDOW_INDEX)?.toIntOrNull()?.let {
+                TerminalWindow(it, fields.getOrNull(WINDOW_INDEX + 1).orEmpty())
+            }
+
         const val META_FORMAT =
             "#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{alternate_on} #{bracket_paste_flag} " +
-                "#{keypad_cursor_flag} #{mouse_any_flag} #{mouse_button_flag} #{mouse_standard_flag}"
+                "#{keypad_cursor_flag} #{mouse_any_flag} #{mouse_button_flag} #{mouse_standard_flag} " +
+                "#{window_index} #{window_name}"
 
         /** Reads the numbers of [META_FORMAT]: size, cursor, alternate screen, then paste, keypad and mouse flags. */
         fun screen(
             meta: String,
             lines: List<String>,
         ): TermItem.Screen {
-            val n = meta.trim().split(' ').map { it.toIntOrNull() ?: 0 }
+            // The window name comes last and may hold spaces.
+            val fields = meta.trim().split(' ', limit = META_FIELDS)
+            val n = fields.map { it.toIntOrNull() ?: 0 }
 
             fun at(index: Int) = n.getOrElse(index) { 0 }
 
@@ -241,7 +253,7 @@ class TmuxControlClient(
             val mouse = flag(MOUSE_ANY) || flag(MOUSE_BUTTON) || flag(MOUSE_STANDARD)
             val modes = TerminalModes(flag(BRACKETED_PASTE), flag(APP_CURSOR_KEYS), mouse)
             return TermItem.Screen(
-                snapshot = TerminalSnapshot(at(0), at(1), at(CURSOR_X), at(CURSOR_Y), modes),
+                snapshot = TerminalSnapshot(at(0), at(1), at(CURSOR_X), at(CURSOR_Y), modes, window(fields)),
                 alternate = flag(ALTERNATE_ON),
                 text = lines.joinToString("\r\n").toByteArray(Charsets.ISO_8859_1),
             )

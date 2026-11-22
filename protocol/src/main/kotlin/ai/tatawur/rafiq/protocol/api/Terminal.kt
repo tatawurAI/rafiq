@@ -23,6 +23,8 @@ sealed interface TerminalMessage
  *
  * @property modes the terminal modes the program in the pane has switched on, so paste and arrow keys behave
  * after the screen is restored.
+ * @property window the tmux window the pane is in, so the app can show which window is mirrored. Null from a
+ * bridge that does not send it.
  */
 @Serializable
 @SerialName("snapshot")
@@ -32,7 +34,15 @@ data class TerminalSnapshot(
     @SerialName("cursor_x") val cursorX: Int,
     @SerialName("cursor_y") val cursorY: Int,
     @SerialName("modes") val modes: TerminalModes = TerminalModes(),
+    @SerialName("window") val window: TerminalWindow? = null,
 ) : TerminalMessage
+
+/** The tmux window a pane is in: its number in the session and its name. */
+@Serializable
+data class TerminalWindow(
+    @SerialName("index") val index: Int,
+    @SerialName("name") val name: String,
+)
 
 /** Modes of the pane, read from tmux formats. All default to off. */
 @Serializable
@@ -79,6 +89,7 @@ val terminalJson: Json =
         classDiscriminator = "type"
         ignoreUnknownKeys = true
         encodeDefaults = true
+        explicitNulls = false
         serializersModule =
             SerializersModule {
                 polymorphic(TerminalMessage::class) {

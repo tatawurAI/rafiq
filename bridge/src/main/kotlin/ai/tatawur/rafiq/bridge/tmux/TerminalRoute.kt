@@ -1,16 +1,23 @@
 package ai.tatawur.rafiq.bridge.tmux
 
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
-import ai.tatawur.rafiq.bridge.sessions.TMUX_SESSION_PREFIX
+import ai.tatawur.rafiq.bridge.sessions.SessionException
+import ai.tatawur.rafiq.protocol.api.MAX_HISTORY_LINES
 import ai.tatawur.rafiq.protocol.api.TerminalEnded
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
+import ai.tatawur.rafiq.protocol.api.TerminalListWindows
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
+import ai.tatawur.rafiq.protocol.api.TerminalNotice
 import ai.tatawur.rafiq.protocol.api.TerminalResize
+import ai.tatawur.rafiq.protocol.api.TerminalSelectWindow
 import ai.tatawur.rafiq.protocol.api.TerminalSize
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
 import ai.tatawur.rafiq.protocol.api.terminalJson
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.origin
+import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.get
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.DefaultWebSocketSession
@@ -59,7 +66,12 @@ private val ENTER_ALTERNATE_SCREEN = "\u001b[?1049h\u001b[2J\u001b[H".toByteArra
  *
  * Binary frames carry terminal bytes, text frames carry [TerminalMessage] JSON. The phone's first `resize`
  * sets the attach size, so the desk is never resized to a guess (it waits 2 s, then uses 80x24). A snapshot
- * and then the live stream follow. Closing the socket detaches, which hands the window size back to the desk.
+ * and then the live stream follow. Closing the socket detaches, which hands the window size back to the desk,
+ * or, with no other client showing the window, puts back the size it had before the phone took it.
+ *
+ * The phone may ask for the session's windows (`list_windows`) and show another one (`select_window`). Only the
+ * phone's own view session changes window. When the shown window closes, the view moves to the session's
+ * current window and the phone is told with a `notice` and a fresh snapshot.
  *
  * Nothing here runs unless the gate allows the session, and the order is: gate, device limit, then tmux.
  *
@@ -72,11 +84,7 @@ fun Route.terminalRoute(
     deviceOf: (ApplicationCall) -> String,
 ) {
     webSocket("/terminal") {
-        val name =
-            call.request.queryParameters["session"]
-                ?.takeIf { it.startsWith(TMUX_SESSION_PREFIX) }
-                ?.removePrefix(TMUX_SESSION_PREFIX)
-                ?.takeIf(gate.settings::allows)
+        val name = gate.allowedName(call.request.queryParameters["session"])
         if (name == null) {
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "no such session"))
             return@webSocket
@@ -109,6 +117,34 @@ fun Route.terminalRoute(
     }
 }
 
+/**
+ * `GET /terminal/history?session=<id>&window=<index>&lines=<n>`: read-only scrollback of the pane the phone
+ * shows, as [TerminalHistory]. `lines` is capped at [MAX_HISTORY_LINES], and is that cap when left out. Without
+ * `window`, the session's current window. Reading never changes the window, its size or what the desk sees.
+ *
+ * It sits behind the device token like every route, and reaches only an allowed session, by the same rule as
+ * `WS /terminal`. Anything else is `404 session_not_found`, so the answer does not say which tmux sessions
+ * exist.
+ */
+fun Route.terminalHistoryRoute(gate: TerminalGate) {
+    get("/terminal/history") {
+        val query = call.request.queryParameters
+        val window = query["window"]?.let { it.toIntOrNull()?.takeIf { index -> index >= 0 } ?: invalidQuery() }
+        val lines = query["lines"]?.let { it.toIntOrNull()?.takeIf { n -> n > 0 } ?: invalidQuery() }
+        val name =
+            gate.allowedName(query["session"])?.takeIf { runCatching { gate.server.session(it) }.getOrNull() != null }
+                ?: throw SessionException.NotFound("session_not_found", "No such tmux session.")
+        val history =
+            gate.server.history(name, window, (lines ?: MAX_HISTORY_LINES).coerceAtMost(MAX_HISTORY_LINES))
+                ?: throw SessionException.NotFound("no_such_window", "That window is not in this session.")
+        val lineCount = if (history.text.isEmpty()) 0 else history.text.count { it == '\n' } + 1
+        call.respond(TerminalHistory(history.text, lineCount, history.cols, history.alternateScreen))
+    }
+}
+
+private fun invalidQuery(): Nothing =
+    throw SessionException.Invalid("invalid_query", "window and lines are whole numbers.")
+
 /** One open terminal socket, from attach to detach. */
 @Suppress("TooManyFunctions") // One function for each thing a terminal socket does.
 private class TerminalConnection(
@@ -130,6 +166,7 @@ private class TerminalConnection(
     private val ended = AtomicBoolean(false)
     private val resizeBucket = TokenBucket(limits.resizeBurst, limits.resizesPerSecond)
     private val abuseBucket = TokenBucket(limits.abuseResizes, limits.abuseResizes / ABUSE_WINDOW_SECONDS)
+    private val windowBucket = TokenBucket(WINDOW_REQUEST_BURST, WINDOW_REQUESTS_PER_SECOND)
     private val keyLock = Mutex()
     private val resizeLock = Mutex()
 
@@ -166,6 +203,7 @@ private class TerminalConnection(
                 session.id,
                 gate.viewPrefix + UUID.randomUUID().toString().take(VIEW_ID_LENGTH),
                 limits,
+                gate.sessionSizes,
                 queue::offer,
             )
         log.info("Terminal opened: device={} session={} remote={}", device, sessionName, remote)
@@ -262,7 +300,10 @@ private class TerminalConnection(
             }
 
             is TermItem.Screen -> {
-                true.also { sendScreen(item) }
+                true.also {
+                    failedScreens = 0
+                    sendScreen(item)
+                }
             }
 
             TermItem.LayoutChanged -> {
@@ -277,11 +318,11 @@ private class TerminalConnection(
             }
 
             TermItem.MaybeGone -> {
-                stillThere(client.paneExists(), "pane")
+                client.paneExists() || follow(client)
             }
 
             TermItem.ScreenFailed -> {
-                stillThere(false, "pane")
+                onScreenFailed(client)
             }
 
             is TermItem.Ended -> {
@@ -289,21 +330,67 @@ private class TerminalConnection(
             }
         }
 
+    /** Snapshots that failed in a row while the pane was still there. */
+    private var failedScreens = 0
+
+    /**
+     * A failed snapshot is never sent as a short screen. While the pane is there, a fresh one is asked for, a
+     * few times at most, so a pane that keeps breaking its reply cannot keep the bridge busy.
+     */
+    private suspend fun onScreenFailed(client: TmuxControlClient): Boolean =
+        when {
+            !client.paneExists() -> {
+                follow(client)
+            }
+
+            ++failedScreens <= MAX_FAILED_SCREENS -> {
+                true.also { client.requestSnapshot() }
+            }
+
+            else -> {
+                false.also { end("The screen of the tmux pane could not be read.") }
+            }
+        }
+
+    /**
+     * The mirrored pane went away. A pane that closed in a window that is still there gives way to that window's
+     * active pane. A window that closed gives way to the session's current window, and the phone is told. Only
+     * a session that is gone ends the view.
+     */
+    private suspend fun follow(client: TmuxControlClient): Boolean {
+        val followed = withContext(Dispatchers.IO) { client.followAfterLoss() }
+        if (followed == TmuxControlClient.Followed.SESSION_WINDOW) {
+            send(
+                TerminalNotice(
+                    WINDOW_CLOSED,
+                    "The window you were watching closed. This is the session's current window.",
+                ),
+            )
+        }
+        if (followed == TmuxControlClient.Followed.NOTHING) return stillThere(false, "session")
+        client.requestSnapshot()
+        return true
+    }
+
     private suspend fun sendScreen(item: TermItem.Screen) {
         lastSize = item.snapshot.cols to item.snapshot.rows
-        send(item.snapshot)
-        sendBytes((if (item.alternate) ENTER_ALTERNATE_SCREEN else ByteArray(0)) + item.text)
+        // The screen's bytes must be the very next frame after its snapshot, whatever else is being sent.
+        sendLock.withLock {
+            sendFrame(item.snapshot)
+            sendBytesFrame((if (item.alternate) ENTER_ALTERNATE_SCREEN else ByteArray(0)) + item.text)
+        }
     }
 
     /** The desk may have taken the size back. The phone learns the new size and gets a screen laid out for it. */
     private suspend fun onLayoutChange(client: TmuxControlClient): Boolean {
-        val size = runCatching { client.paneSize() }.getOrNull()
-        if (size != null && size != lastSize) {
+        // A pane that closed in a split window changes the layout too, and then has no size to read.
+        val size = runCatching { client.paneSize() }.getOrNull() ?: return follow(client)
+        if (size != lastSize) {
             lastSize = size
             send(TerminalSize(size.first, size.second))
             client.requestSnapshot()
         }
-        return stillThere(size != null, "pane")
+        return true
     }
 
     /** Ends the view with a reason when [exists] is false. Returns [exists]. */
@@ -341,6 +428,7 @@ private class TerminalConnection(
         lastActivity.set(System.nanoTime())
         if (!budget.allows(text.length)) return refuse("too much input")
         val message = runCatching { terminalJson.decodeFromString(TerminalMessage.serializer(), text) }.getOrNull()
+        if (message is TerminalListWindows || message is TerminalSelectWindow) return onWindowRequest(message, client)
         if (message !is TerminalResize || message.cols <= 0 || message.rows <= 0) return true
         val size = message.cols to message.rows
         if (size == requestedSize) return true
@@ -359,6 +447,38 @@ private class TerminalConnection(
                 ) {
                     resizeApplier = scope?.launch(Dispatchers.IO) { applyWhenAllowed(client) }
                 }
+            }
+        }
+        return true
+    }
+
+    /**
+     * `list_windows` answers with the session's windows. `select_window` shows one of them in the phone's view
+     * session only, and answers with a fresh snapshot, or a `notice` when the session has no such window. Each
+     * starts tmux commands, so a phone that sends them far faster than a person picks windows is closed.
+     */
+    private suspend fun onWindowRequest(
+        message: TerminalMessage,
+        client: TmuxControlClient,
+    ): Boolean {
+        if (!windowBucket.tryTake()) return refuse("too many window requests")
+        when (message) {
+            is TerminalListWindows -> {
+                send(withContext(Dispatchers.IO) { client.windows() })
+            }
+
+            is TerminalSelectWindow -> {
+                if (withContext(Dispatchers.IO) { client.selectWindow(message.index) }) {
+                    resizes.incrementAndGet()
+                    lastClaim.set(System.nanoTime())
+                    client.requestSnapshot()
+                } else {
+                    send(TerminalNotice(NO_SUCH_WINDOW, "That window is not in this session."))
+                }
+            }
+
+            else -> {
+                Unit
             }
         }
         return true
@@ -464,11 +584,18 @@ private class TerminalConnection(
         if (closed == null) socket.cancel()
     }
 
-    private suspend fun send(message: TerminalMessage) {
+    /** Frames go out from the stream and from answers to the phone's requests, one at a time. */
+    private val sendLock = Mutex()
+
+    private suspend fun send(message: TerminalMessage) = sendLock.withLock { sendFrame(message) }
+
+    private suspend fun sendBytes(bytes: ByteArray) = sendLock.withLock { sendBytesFrame(bytes) }
+
+    private suspend fun sendFrame(message: TerminalMessage) {
         socket.send(Frame.Text(terminalJson.encodeToString(TerminalMessage.serializer(), message)))
     }
 
-    private suspend fun sendBytes(bytes: ByteArray) {
+    private suspend fun sendBytesFrame(bytes: ByteArray) {
         bytesDown.addAndGet(bytes.size.toLong())
         socket.send(Frame.Binary(true, bytes))
     }
@@ -478,6 +605,11 @@ private class TerminalConnection(
         const val IDLE_CHECKS = 4
         const val ABUSE_WINDOW_SECONDS = 10.0
         const val CLOSE_REASON_MAX = 100
+        const val MAX_FAILED_SCREENS = 3
+        const val WINDOW_REQUEST_BURST = 20
+        const val WINDOW_REQUESTS_PER_SECOND = 2.0
+        const val WINDOW_CLOSED = "window_closed"
+        const val NO_SUCH_WINDOW = "no_such_window"
         val MIN_IDLE_CHECK = 50.milliseconds
         val MAX_IDLE_CHECK = 5.seconds
     }

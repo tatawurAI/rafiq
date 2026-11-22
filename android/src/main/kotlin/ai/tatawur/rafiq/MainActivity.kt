@@ -50,7 +50,13 @@ class MainActivity : ComponentActivity() {
                             pairing = { onPaired -> PairingScreen(container.pairing, onPaired) },
                             onPairAgain = { lifecycleScope.launch { container.pairing.unpair() } },
                             terminal = container.terminal,
-                            settings = { onBack -> SettingsRoute(container.security, onBack) },
+                            settings = { onBack ->
+                                // The activity's scope: Settings closes as soon as the phone is unpaired.
+                                SettingsRoute(
+                                    container.security,
+                                    onBack,
+                                ) { lifecycleScope.launch { container.pairing.unpair() } }
+                            },
                         )
                     }
                 }

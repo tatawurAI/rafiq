@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.settings
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.terminal.BiometricCheck
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,13 +17,18 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -47,7 +53,10 @@ import kotlinx.coroutines.launch
 fun SettingsRoute(
     settings: SecuritySettings,
     onBack: () -> Unit,
+    onUnpair: () -> Unit = {},
 ) {
+    val unpair = remember(onUnpair) { UnpairPrompt(onUnpair) }
+    val askingUnpair by unpair.asking.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lockOn by settings.terminalLock.collectAsStateWithLifecycle(initialValue = false)
@@ -68,7 +77,9 @@ fun SettingsRoute(
                 }
             }
         },
+        onUnpair = unpair::ask,
     )
+    if (askingUnpair) UnpairConfirmation(onConfirm = unpair::confirm, onDismiss = unpair::cancel)
 }
 
 /** The settings list: for now, the biometric lock on Terminal. */
@@ -79,6 +90,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onTerminalLockChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    onUnpair: () -> Unit = {},
 ) {
     val spacing = RafiqTheme.spacing
     val colors = RafiqTheme.colors
@@ -107,7 +119,51 @@ fun SettingsScreen(
             )
         }
         TerminalLockRow(terminalLock, biometricAvailable, onTerminalLockChange)
+        HorizontalDivider(color = colors.border, thickness = spacing.hairline)
+        UnpairRow(onUnpair)
     }
+}
+
+/** Unpair this phone: what it does, and the button that asks to confirm it. */
+@Composable
+private fun UnpairRow(onUnpair: () -> Unit) {
+    val spacing = RafiqTheme.spacing
+    val colors = RafiqTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
+        Text(stringResource(R.string.settings_unpair), style = MaterialTheme.typography.bodyLarge, color = colors.text)
+        Text(
+            stringResource(R.string.settings_unpair_detail),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.textSecondary,
+        )
+        OutlinedButton(
+            onClick = onUnpair,
+            modifier = Modifier.heightIn(min = spacing.minTouchTarget),
+            border = BorderStroke(spacing.hairline, colors.deletion),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.deletion),
+        ) {
+            Text(stringResource(R.string.settings_unpair_button))
+        }
+    }
+}
+
+/** Asks before unpairing, because the phone then needs a new pairing code. */
+@Composable
+private fun UnpairConfirmation(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_unpair_confirm_title)) },
+        text = { Text(stringResource(R.string.settings_unpair_confirm_text)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.settings_unpair_button), color = RafiqTheme.colors.deletion)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.terminal_unlock_cancel)) } },
+    )
 }
 
 /** The Terminal lock switch, with what it does or why it cannot be turned on. */
@@ -163,6 +219,12 @@ private fun TerminalLockRow(
                 ),
         )
     }
+}
+
+@Preview(name = "Unpair confirmation", widthDp = 360)
+@Composable
+private fun UnpairConfirmationPreview() {
+    RafiqTheme { UnpairConfirmation(onConfirm = {}, onDismiss = {}) }
 }
 
 @Preview(name = "Settings", widthDp = 412, heightDp = 400)

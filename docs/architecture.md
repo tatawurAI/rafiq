@@ -18,11 +18,11 @@ Everything else on this page, including the file and git routes, per-device toke
 ## Principles
 
 - **Agent-agnostic.** The app knows only generic sessions, threads and events. Agent-specific logic lives in adapters on the bridge.
-- **Chat first.** The app shows messages, tool-call cards, diffs and approvals. For a tmux session on your server it can also show the real terminal, but only after you turn that on (see [Terminal](#terminal)). ADR 0013 records the decision.
+- **Chat first, terminal when you need it.** The app shows messages, tool-call cards, diffs and approvals for every session. For a session in tmux that you have allowed, it also offers a terminal view of the real pane, as the ground truth and the fallback. It is off until you turn it on (see [Terminal](#terminal)). It is not a general terminal client. See [ADR 0013](adr/0013-agents-in-tmux.md).
 - **Fold-native.** The cover screen, the open screen and Flex Mode (half-folded) each have their own design, with continuity between them.
 - **Private by default.** All traffic goes over Tailscale. Credentials stay on your server. The phone only approves.
 
-Non-goals for v1: a terminal for anything but the tmux sessions you allow (SSH stays the out-of-band admin path), mosh or any terminal-state protocol, iOS, the Play Store, multiple users, and running agents on the phone.
+Non-goals for v1: a general terminal client (SSH stays the out-of-band admin path), mosh or any terminal-state protocol beyond tmux's own control mode, iOS, the Play Store, multiple users, and running agents on the phone.
 
 ## Overview
 

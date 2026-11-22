@@ -114,7 +114,7 @@ The health, session, summary, agent, thread, prompt, cancel, approval and event 
 | `GET /sessions` | List sessions. With Terminal on, this includes the allowed tmux sessions. |
 | `GET /sessions/summaries` | List sessions with what the session list shows: the newest event `seq`, a one-line preview of the newest agent or user message on the main thread, and the approvals still open, oldest first. Read from small summary tables kept with the log, so polling it is cheap. |
 | `GET /agents` | The agents you can start a session with, as `{"id": ...}` objects |
-| `POST /pair` | Trade a pairing code for this phone's device token. Needs no token, because it is where a phone gets one. Host and origin checks still apply. A wrong, expired or used code is 401 `invalid_pairing_code`. After five wrong codes in five minutes, every attempt is 429 `too_many_attempts` with `Retry-After`. |
+| `POST /pair` | Trade a pairing code for this phone's device token. Needs no token, because it is where a phone gets one. Host and origin checks still apply. A wrong, expired or used code is 401 `invalid_pairing_code`. After 100 wrong codes in five minutes, every attempt is 429 `too_many_attempts` with `Retry-After`. |
 | `DELETE /devices/me` | Revoke the calling device and close its open sockets. Answers 204. Used when you unpair in the app. It cannot affect another device. |
 | `GET /sessions/{id}/threads` | List a session's threads |
 | `POST /sessions/{id}/prompt` | Send a prompt. Prompts go to the main thread, and a helper thread is refused. A tmux session answers `409` with `terminal_only`, because it opens in Terminal. |

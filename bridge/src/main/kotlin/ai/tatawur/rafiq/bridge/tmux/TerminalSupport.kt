@@ -61,6 +61,38 @@ internal class TermQueue(
     }
 }
 
+/**
+ * The size a session's windows had before the first view of this bridge took them, so the last view to leave
+ * can give it back. Shared by every view, because two phones may show one session: the size to give back is the
+ * one from before the first of them.
+ */
+class SessionSizes {
+    private class Held(
+        val size: Pair<Int, Int>,
+        val views: Int,
+    )
+
+    private val held = mutableMapOf<String, Held>()
+
+    /** A view of [sessionId] opened, whose window had [size] just before. Only the first view's size is kept. */
+    @Synchronized
+    fun claim(
+        sessionId: String,
+        size: Pair<Int, Int>,
+    ) {
+        val now = held[sessionId]
+        held[sessionId] = if (now == null) Held(size, 1) else Held(now.size, now.views + 1)
+    }
+
+    /** A view of [sessionId] closed. The earlier size when it was the last view, otherwise null. */
+    @Synchronized
+    fun release(sessionId: String): Pair<Int, Int>? {
+        val now = held.remove(sessionId) ?: return null
+        if (now.views > 1) held[sessionId] = Held(now.size, now.views - 1)
+        return now.size.takeIf { now.views == 1 }
+    }
+}
+
 /** What [TerminalSlots.acquire] decided. */
 sealed interface SlotResult {
     /** The socket may open. Close [slot] when it ends. */

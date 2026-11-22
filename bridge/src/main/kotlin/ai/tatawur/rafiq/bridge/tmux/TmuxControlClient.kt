@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.bridge.tmux
 import ai.tatawur.rafiq.protocol.api.TerminalModes
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
 import ai.tatawur.rafiq.protocol.api.TerminalWindow
+import ai.tatawur.rafiq.protocol.api.TerminalWindows
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ExecutionException
@@ -63,10 +64,20 @@ sealed interface TermItem {
  * back from the desk only with `switch-client`. So a size is `refresh-client -C` then `switch-client`. This
  * class never uses `ignore-size`, `-g` or `resize-window`.
  *
+ * Windows. The phone picks which window of the session it shows, and only the view session changes window,
+ * never the desk's. The window it shows takes the phone's size, as the first one did.
+ *
+ * Leaving. With `window-size latest`, every window of the session group follows the client that acted last,
+ * and a detached client hands that to the next one. When this was the bridge's last view of the session and no
+ * other client of the group is attached, nothing would take the size back, so before it detaches this client
+ * sets the size the window had before the first view took it ([sizes]). With another client attached, tmux's
+ * own rule gives the size to it.
+ *
  * The reader thread never waits for the consumer. [sink] is called on it and must return at once.
  *
  * @param sessionId the tmux id (`$3`) of the session to mirror, so a rename cannot change what is attached.
  * @param viewName the name of the view session, which starts with [TmuxServer.VIEW_PREFIX].
+ * @param sizes the sizes sessions had before a view of this bridge took them, shared by all its views.
  */
 @Suppress("TooManyFunctions") // One function for each thing the terminal view asks tmux to do.
 class TmuxControlClient(
@@ -74,12 +85,20 @@ class TmuxControlClient(
     private val sessionId: String,
     private val viewName: String,
     private val limits: TerminalLimits,
+    private val sizes: SessionSizes = SessionSizes(),
     private val sink: (TermItem) -> Unit,
 ) : AutoCloseable {
     private lateinit var process: Process
     private val replies = ConcurrentLinkedQueue<PendingReply>()
     private val writeLock = Any()
     private val target = ControlTarget()
+
+    /** The phone's size after the clamp, which every window it shows takes. */
+    @Volatile
+    private var phoneSize = 0 to 0
+
+    /** True while this client holds the session's earlier size in [sizes]. */
+    private var holdsSize = false
 
     /** The pane being mirrored. Set by [start]. */
     val paneId: String get() = target.paneId
@@ -102,10 +121,14 @@ class TmuxControlClient(
             // Set after attach: set before it, the session is destroyed at once.
             command("set-option destroy-unattached on")
             command("refresh-client -f pause-after=${limits.pauseAfterSeconds}")
-            command("refresh-client -C ${limits.clampCols(cols)}x${limits.clampRows(rows)}")
-            val here = command("display-message -p '#{window_id} #{pane_id}'").first().trim().split(' ')
-            target.windowId = here[0]
-            target.paneId = here[1]
+            // Read before this client sends a size: until then it does not count, so this is the size from before.
+            val (width, height) =
+                command("display-message -p '#{window_width} #{window_height}'").first().trim().split(' ')
+            sizes.claim(sessionId, width.toInt() to height.toInt())
+            holdsSize = true
+            phoneSize = limits.clampCols(cols) to limits.clampRows(rows)
+            command("refresh-client -C ${phoneSize.first}x${phoneSize.second}")
+            locate()
             claimSize()
         } catch (failure: Exception) {
             close()
@@ -118,8 +141,99 @@ class TmuxControlClient(
         cols: Int,
         rows: Int,
     ) {
-        send("refresh-client -C ${limits.clampCols(cols)}x${limits.clampRows(rows)}", PendingReply.IGNORED)
+        phoneSize = limits.clampCols(cols) to limits.clampRows(rows)
+        send("refresh-client -C ${phoneSize.first}x${phoneSize.second}", PendingReply.IGNORED)
         claimSize()
+    }
+
+    /** The session's windows in index order, and the index of the one this view shows. Waits for tmux. */
+    @Synchronized
+    fun windows(): TerminalWindows {
+        val shown = command("display-message -p '#{window_index}'").first().trim().toInt()
+        // Each line starts with the index, so a window name can never begin a line that looks like protocol.
+        val windows =
+            command("list-windows -t '$sessionId' -F '#{window_index} #{window_name}'").mapNotNull { line ->
+                val parts = line.split(' ', limit = 2)
+                parts[0].toIntOrNull()?.let { TerminalWindow(it, parts.getOrElse(1) { "" }) }
+            }
+        return TerminalWindows(windows, shown)
+    }
+
+    /**
+     * Shows window [index] of the mirrored session in this view only, at the phone's size. The desk's session
+     * keeps its own current window. False when the session has no window [index]. Waits for tmux.
+     */
+    @Synchronized
+    fun selectWindow(index: Int): Boolean {
+        val windowId =
+            command("list-windows -t '$sessionId' -F '#{window_index} #{window_id}'")
+                .map { it.trim().split(' ') }
+                .firstOrNull { it.getOrNull(0) == index.toString() }
+                ?.getOrNull(1) ?: return false
+        show(windowId)
+        return true
+    }
+
+    /** Where this view is now, after the pane it mirrored went away. */
+    enum class Followed {
+        /** Only the pane closed. The view mirrors the active pane of the same window. */
+        SAME_WINDOW,
+
+        /** The window closed. The view shows the session's current window, as the desk does. */
+        SESSION_WINDOW,
+
+        /** The session is gone, so there is nothing left to show. */
+        NOTHING,
+    }
+
+    /** Moves the view on after its pane went away. Waits for tmux. */
+    @Synchronized
+    @Suppress("TooGenericExceptionCaught") // A session that went with its last window refuses every command.
+    fun followAfterLoss(): Followed =
+        try {
+            val windowId = command("display-message -p '#{window_id}'").first().trim()
+            if (windowId == target.windowId) {
+                locate()
+                Followed.SAME_WINDOW
+            } else {
+                show(command("display-message -p -t '$sessionId:' '#{window_id}'").first().trim())
+                Followed.SESSION_WINDOW
+            }
+        } catch (_: Exception) {
+            Followed.NOTHING
+        }
+
+    /** Switches this view to [windowId], which takes the phone's size, and mirrors its active pane. */
+    private fun show(windowId: String) {
+        command("select-window -t '=$viewName:$windowId'")
+        locate()
+        // tmux gives a window the size of the client that acted last while showing it.
+        claimSize()
+    }
+
+    /** Points the reader at the window and pane this view shows now. */
+    private fun locate() {
+        val here = command("display-message -p '#{window_id} #{pane_id}'").first().trim().split(' ')
+        target.windowId = here[0]
+        target.paneId = here[1]
+    }
+
+    /**
+     * Sets the size the session had before the bridge's first view of it, when this is the last view and no
+     * other client of the group is attached. Run just before detaching: a detached client leaves the size as it
+     * is when nothing else is attached.
+     */
+    private fun giveSizeBack() {
+        if (!holdsSize) return
+        holdsSize = false
+        val earlier = sizes.release(sessionId)
+        // The count includes this client.
+        if (earlier != null && process.isAlive &&
+            command("display-message -p '#{session_group_attached}'").first().trim() == "1"
+        ) {
+            command("refresh-client -C ${earlier.first}x${earlier.second}")
+            command("switch-client -t '$viewName'")
+        }
     }
 
     /** Takes the window size back, for after the desk typed. tmux gives `latest` to whoever acted last. */
@@ -195,6 +309,8 @@ class TmuxControlClient(
     private fun command(text: String): List<String> {
         val future = CompletableFuture<List<String>>()
         send(text, PendingReply(future, null))
+        // A reader that stopped before this reply was queued would never answer it.
+        if (target.ended) future.completeExceptionally(IllegalStateException("tmux control client exited"))
         return try {
             future.get(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         } catch (failure: ExecutionException) {
@@ -229,6 +345,8 @@ class TmuxControlClient(
      */
     override fun close() {
         if (!::process.isInitialized) return
+        // Gives the window its earlier size back while this client can still set it.
+        synchronized(this) { runCatching { giveSizeBack() } }
         Thread { runCatching { process.outputStream.close() } }.apply { isDaemon = true }.start()
         if (!process.waitFor(CLOSE_WAIT_SECONDS, TimeUnit.SECONDS)) process.destroyForcibly()
     }

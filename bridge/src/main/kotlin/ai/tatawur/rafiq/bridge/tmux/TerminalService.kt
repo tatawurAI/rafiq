@@ -13,6 +13,9 @@ class TerminalGate(
 ) {
     val slots = TerminalSlots(settings.limits)
 
+    /** The sizes sessions had before a view took them, so the last view to leave gives them back. */
+    val sessionSizes = SessionSizes()
+
     /** The name every view of this bridge process starts with: `rafiq-view-<nonce>-`. */
     val viewPrefix: String = TmuxServer.VIEW_PREFIX + UUID.randomUUID().toString().take(NONCE_LENGTH) + "-"
 }

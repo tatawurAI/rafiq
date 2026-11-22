@@ -33,6 +33,10 @@ internal class ControlTarget {
     @Volatile
     var paneId: String = ""
 
+    /** True once the reader has stopped, so a command sent after it fails at once instead of waiting. */
+    @Volatile
+    var ended: Boolean = false
+
     /** The `%begin` line of the last reply to a command of ours, for tests that need its time and number. */
     @Volatile
     var lastBegin: String = ""
@@ -66,6 +70,7 @@ internal class ControlReader(
             running = line != null && handle(line)
         }
         val gone = IllegalStateException("tmux control client exited")
+        target.ended = true
         replies.forEach { it.future?.completeExceptionally(gone) }
         sink(TermItem.Ended("tmux closed the connection."))
     }
@@ -141,7 +146,9 @@ internal class ControlReader(
                 if (fieldOf(text) == target.windowId) sink(TermItem.LayoutChanged)
             }
 
-            text.startsWith("%window-close ") -> {
+            // A window killed while this view shows it is already unlinked from the view's session when tmux
+            // reports it, so it comes as the unlinked kind.
+            text.startsWith("%window-close ") || text.startsWith("%unlinked-window-close ") -> {
                 if (fieldOf(text) == target.windowId) sink(TermItem.MaybeGone)
             }
 

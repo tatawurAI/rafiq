@@ -41,7 +41,7 @@ class ControlReaderTest {
         )
         val items = LinkedBlockingQueue<TermItem>()
         val id = runBlocking { tmux.server.session("weather-app") }!!.id
-        val view = TmuxControlClient(tmux.server, id, "rafiq-view-readertest", TerminalLimits(), items::add)
+        val view = TmuxControlClient(tmux.server, id, "rafiq-view-readertest", TerminalLimits(), sink = items::add)
         client = view
         view.start(COLS, ROWS)
         view.requestSnapshot()

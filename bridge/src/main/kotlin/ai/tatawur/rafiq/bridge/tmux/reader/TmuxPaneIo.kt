@@ -36,7 +36,7 @@ class TmuxPaneIo(
     }
 
     override suspend fun capture(paneId: String): String? =
-        tmux("capture-pane", "-p", "-t", paneId)?.takeIf { it.exit == 0 }?.out
+        tmux("capture-pane", "-p", "-e", "-t", paneId)?.takeIf { it.exit == 0 }?.out
 
     override suspend fun paste(
         paneId: String,

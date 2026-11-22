@@ -214,9 +214,10 @@ internal class PaneConversation(
         agentType: String?,
         text: String,
     ) {
-        if (text.isBlank()) return
-        val label = agentType?.takeIf(String::isNotBlank) ?: "Subagent"
-        out(agentMessage("claude:sub:" + UUID.randomUUID(), "**$label**\n\n$text", isStreaming = false))
+        // Only a subagent the main agent started has a type. Claude Code's own helpers, such as the one that
+        // suggests your next prompt or the one behind /compact, end with an empty type and are not part of Chat.
+        if (text.isBlank() || agentType.isNullOrBlank()) return
+        out(agentMessage("claude:sub:" + UUID.randomUUID(), "**$agentType**\n\n$text", isStreaming = false))
     }
 
     /**

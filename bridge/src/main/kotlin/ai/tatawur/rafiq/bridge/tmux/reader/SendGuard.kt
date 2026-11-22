@@ -62,20 +62,64 @@ internal enum class InputBox {
 }
 
 /**
- * Reads the input box from [screen]. The box sits between the last two lines made of box-drawing dashes, and its
- * first line starts with the prompt mark. The grey hint in an empty box (`Try "..."`) is not text.
+ * Reads the input box from [screen], the visible pane text with its colour escapes (`capture-pane -e`). The box
+ * sits between the last two lines made of box-drawing dashes, and its first line starts with the prompt mark.
+ *
+ * Claude Code shows grey text in an empty box: the `Try "..."` hint, and after a turn a suggested next prompt.
+ * Both are dim (SGR 2). So the box is empty when nothing after the prompt mark is visible, or everything visible is
+ * dim. Text you type is not dim. Anything else counts as a draft, so an unclear screen never reads as empty.
  */
 @Suppress("ReturnCount") // Each sign that the box is not showing answers ABSENT right away.
 internal fun readInputBox(screen: String): InputBox {
     val lines = screen.lines()
-    val rules = lines.indices.filter { lines[it].trimStart().startsWith(RULE) }
+    val rules = lines.indices.filter { stripEscapes(lines[it]).trimStart().startsWith(RULE) }
     if (rules.size < 2) return InputBox.ABSENT
-    val inside = lines.subList(rules[rules.size - 2] + 1, rules.last()).filter(String::isNotBlank)
-    // Claude puts a no-break space after the prompt mark.
-    val first = inside.firstOrNull()?.replace(' ', ' ')?.trim() ?: return InputBox.ABSENT
-    if (!first.startsWith(PROMPT_MARK)) return InputBox.ABSENT
-    val hint = first.startsWith("$PROMPT_MARK Try \"")
-    return if ((first == PROMPT_MARK || hint) && inside.size == 1) InputBox.EMPTY else InputBox.DRAFT
+    val inside = lines.subList(rules[rules.size - 2] + 1, rules.last()).filter { stripEscapes(it).isNotBlank() }
+    val first = inside.firstOrNull() ?: return InputBox.ABSENT
+    val mark = first.indexOf(PROMPT_MARK)
+    if (mark < 0 || stripEscapes(first.substring(0, mark)).isNotBlank()) return InputBox.ABSENT
+    val typed = listOf(first.substring(mark + PROMPT_MARK.length)) + inside.drop(1)
+    return if (typed.any(::hasUndimmedText)) InputBox.DRAFT else InputBox.EMPTY
+}
+
+private val ESCAPE = Regex("\u001b\\[[0-9;?]*[ -/]*[@-~]")
+
+private fun stripEscapes(line: String): String = ESCAPE.replace(line, "")
+
+/**
+ * True when [line] shows a character that is not dim. Dim starts at SGR 2 and ends at SGR 0, 22 or an empty SGR.
+ * Each line starts not dim, as tmux writes the escapes again at the start of every captured line.
+ */
+private fun hasUndimmedText(line: String): Boolean {
+    var dim = false
+    var index = 0
+    while (index < line.length) {
+        val escape = ESCAPE.matchAt(line, index)
+        if (escape != null) {
+            if (escape.value.endsWith("m")) dim = dimAfter(escape.value, dim)
+            index = escape.range.last + 1
+        } else {
+            val char = line[index]
+            if (!dim && !char.isWhitespace() && char != '\u00a0') return true
+            index++
+        }
+    }
+    return false
+}
+
+private fun dimAfter(
+    sgr: String,
+    dim: Boolean,
+): Boolean {
+    val params = sgr.removePrefix("\u001b[").removeSuffix("m").split(';')
+    var now = dim
+    for (param in params) {
+        when (param) {
+            "", "0", "22" -> now = false
+            "2" -> now = true
+        }
+    }
+    return now
 }
 
 private const val PROMPT_MARK = "❯"

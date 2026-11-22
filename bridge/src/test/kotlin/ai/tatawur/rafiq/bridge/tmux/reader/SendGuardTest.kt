@@ -195,12 +195,48 @@ class SendGuardTest {
         }
 
     @Test
+    fun claudes_dim_suggestion_after_a_turn_counts_as_an_empty_box() {
+        // Exactly as `capture-pane -e` showed it on Claude Code 2.1.330.
+        val suggestion = "${"─".repeat(40)}\n\u001b[39m❯\u00a0\u001b[2mcat live-check.txt\u001b[0m\n${"─".repeat(40)}\n"
+        val draft = "${"─".repeat(40)}\n\u001b[39m❯\u00a0hello\n${"─".repeat(40)}\n"
+        val draftAfterDim = "${"─".repeat(40)}\n\u001b[39m❯\u00a0\u001b[2mcat\u001b[0m typed\n${"─".repeat(40)}\n"
+        val draftAfterDimEnds = "${"─".repeat(40)}\n❯ \u001b[2m\u001b[22mtyped\n${"─".repeat(40)}\n"
+        val dimRules = "\u001b[2m${"─".repeat(
+            40,
+        )}\u001b[0m\n❯\u00a0\u001b[2mnext\u001b[0m\n\u001b[2m${"─".repeat(40)}\n"
+
+        assertEquals(InputBox.EMPTY, readInputBox(suggestion))
+        assertEquals(InputBox.DRAFT, readInputBox(draft))
+        assertEquals(InputBox.DRAFT, readInputBox(draftAfterDim))
+        assertEquals(InputBox.DRAFT, readInputBox(draftAfterDimEnds))
+        assertEquals(InputBox.EMPTY, readInputBox(dimRules))
+    }
+
+    @Test
+    fun a_prompt_is_typed_while_claude_shows_a_suggestion_in_the_box() =
+        runTest {
+            val reader = attached()
+            io.screen = FakePaneIo.box("${DIM}cat live-check.txt$RESET")
+
+            reader.prompt(SESSION, "hello", "c-1")
+
+            assertEquals(listOf("hello"), io.pasted)
+        }
+
+    @Test
     fun the_input_box_is_read_from_the_screen() {
         assertEquals(InputBox.EMPTY, readInputBox(FakePaneIo.EMPTY_BOX))
-        assertEquals(InputBox.EMPTY, readInputBox(FakePaneIo.box("Try \"fix lint errors\"")))
+        assertEquals(InputBox.EMPTY, readInputBox(FakePaneIo.box("$DIM Try \"fix lint errors\"$RESET")))
         assertEquals(InputBox.DRAFT, readInputBox(FakePaneIo.box("desk half-written line")))
+        // Without the dim escape, text that reads like the hint is a draft: unclear never counts as empty.
+        assertEquals(InputBox.DRAFT, readInputBox(FakePaneIo.box("Try \"fix lint errors\"")))
         val rule = "─".repeat(30)
         assertEquals(InputBox.DRAFT, readInputBox("$rule\n❯ first line\n  second line\n$rule\n"))
         assertEquals(InputBox.ABSENT, readInputBox("Do you want to proceed?\n❯ 1. Yes\n  2. No\n"))
+    }
+
+    private companion object {
+        const val DIM = "\u001b[2m"
+        const val RESET = "\u001b[0m"
     }
 }

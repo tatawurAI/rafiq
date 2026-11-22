@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="pair_intro">On your server, run rafiq-bridge pair --name followed by a name for this phone. Enter the server address and the code it prints.</string>
+  <string name="pair_code_label">Pairing code</string>
+  <string name="pair_code_placeholder">ABCD-EFGH</string>
+  <string name="pair_hint_code_rejected">That code is wrong, expired or already used. Run rafiq-bridge pair again for a new one.</string>
+  <string name="pair_hint_too_many">Too many wrong codes. Wait a few minutes, then try again.</string>
+  <string name="pair_revoked_notice">Your server removed this phone. Pair it again to carry on.</string>
+  <string name="pair_revoked_dismiss">Dismiss</string>
+  <string name="pair_unpaired_unconfirmed">This phone is unpaired, but your server could not be reached, so it still lists this device. Remove it there with rafiq-bridge revoke %1$s.</string>
+  <string name="pair_unpaired_unconfirmed_unknown_id">This phone is unpaired, but your server could not be reached, so it still lists this device. Run rafiq-bridge devices, then rafiq-bridge revoke with its id.</string>
+</resources>

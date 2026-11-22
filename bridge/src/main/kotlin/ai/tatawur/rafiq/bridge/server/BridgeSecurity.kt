@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge.server
 
 import ai.tatawur.rafiq.protocol.api.ApiError
 import ai.tatawur.rafiq.protocol.api.ApiErrorDetail
+import ai.tatawur.rafiq.protocol.api.AuthErrorCodes
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
@@ -11,7 +12,6 @@ import io.ktor.server.request.header
 import io.ktor.server.request.path
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
-import java.security.MessageDigest
 
 /**
  * Decides whether a request may reach the bridge's routes. Three checks, in this order:
@@ -20,20 +20,29 @@ import java.security.MessageDigest
  *    web page from reaching the bridge through DNS rebinding (421).
  * 2. A request that carries `Origin` must come from the bridge's own origin, which keeps the dev page
  *    working and refuses every other web page (403).
- * 3. Every route except `GET /health` and the static `/dev` page needs the device token as
- *    `Authorization: Bearer <token>` (401). A browser cannot set headers on a WebSocket, so `/events`
- *    also takes the token as one of the `Sec-WebSocket-Protocol` values. Never a query string.
+ * 3. Every route except `GET /health`, the static `/dev` page and `POST /pair` needs a device token as
+ *    `Authorization: Bearer <token>` (401). A browser cannot set headers on a WebSocket, so `/events` and
+ *    `/terminal` also take the token as one of the `Sec-WebSocket-Protocol` values, next to `rafiq.v1` or
+ *    `rafiq.term.v1`. Never a query string. A token of a revoked device gets 401 `device_revoked`, so the
+ *    app can tell "pair again" from "wrong token".
  *
- * Pairing, per-device tokens and revocation arrive with M3. This is one shared token.
+ * The token is checked against the device store on every request, never cached, so a revocation takes
+ * effect on the next call. The checks set [DevicePrincipalKey] on the call.
  *
- * @param deviceToken the secret, or null when none is set, in which case every protected route answers 401.
+ * @param devices decides which device, if any, a token belongs to.
  */
 class BridgeSecurity(
-    deviceToken: String?,
     bindAddress: String,
-    allowedHosts: List<String> = emptyList(),
+    allowedHosts: List<String>,
+    private val devices: DeviceVerifier,
 ) {
-    private val tokenDigest = deviceToken?.let(::sha256)
+    /** One shared token and no device store: what the bridge was before per-device tokens. Tests use it. */
+    constructor(
+        deviceToken: String?,
+        bindAddress: String,
+        allowedHosts: List<String> = emptyList(),
+    ) : this(bindAddress, allowedHosts, SingleTokenVerifier(deviceToken))
+
     private val allowed =
         (allowedHosts + bindAddress + "localhost")
             .map {
@@ -41,7 +50,7 @@ class BridgeSecurity(
             }.toSet()
 
     // Holds a secret, so it must never print one.
-    override fun toString(): String = "BridgeSecurity(tokenSet=${tokenDigest != null}, allowedHosts=$allowed)"
+    override fun toString(): String = "BridgeSecurity(allowedHosts=$allowed)"
 
     /** What the check decided. [echoProtocol] is the subprotocol the WebSocket handshake must select, if any. */
     sealed interface Verdict {
@@ -58,7 +67,7 @@ class BridgeSecurity(
     }
 
     /** Checks one request from its path and the headers the checks read. */
-    fun inspect(
+    suspend fun inspect(
         path: String,
         host: String?,
         origin: String?,
@@ -81,16 +90,16 @@ class BridgeSecurity(
         return when {
             host == null || hostName(host) !in allowed -> misdirected
             origin != null && !origin.substringAfter("://", "").equals(host, ignoreCase = true) -> forbiddenOrigin
-            path == "/health" || path == "/dev" -> Verdict.Accepted()
+            path in OPEN_PATHS -> Verdict.Accepted()
             else -> authenticate(path, authorization, webSocketProtocols) ?: unauthorized
         }
     }
 
-    private fun authenticate(
+    private suspend fun authenticate(
         path: String,
         authorization: String?,
         webSocketProtocols: String?,
-    ): Verdict.Accepted? {
+    ): Verdict? {
         val bearer =
             authorization
                 ?.takeIf {
@@ -99,32 +108,44 @@ class BridgeSecurity(
                         ignoreCase = true,
                     )
                 }?.substring(BEARER_PREFIX.length)
+                ?.trim()
         val offered =
             webSocketProtocols
                 ?.takeIf { path in SOCKET_PATHS }
                 ?.split(',')
                 ?.map(String::trim)
                 .orEmpty()
-        return when {
-            bearer != null && matches(bearer.trim()) -> {
-                Verdict.Accepted(deviceId = LEGACY_DEVICE_ID)
-            }
+        val echo = listOf(WS_PROTOCOL, TERMINAL_WS_PROTOCOL).firstOrNull { it in offered }
+        // A socket carries the token as one subprotocol value next to the protocol name.
+        val candidates =
+            listOfNotNull(bearer?.takeIf(String::isNotEmpty)) +
+                offered.filter { it.isNotEmpty() && it !in PROTOCOL_NAMES }
+        var revoked = false
+        for (candidate in candidates) {
+            when (val check = devices.verify(candidate)) {
+                is DeviceCheck.Active -> {
+                    return Verdict.Accepted(echoProtocol = echo.takeIf { bearer == null }, deviceId = check.deviceId)
+                }
 
-            offered.any(::matches) -> {
-                Verdict.Accepted(
-                    echoProtocol = listOf(WS_PROTOCOL, TERMINAL_WS_PROTOCOL).firstOrNull { it in offered },
-                    deviceId = LEGACY_DEVICE_ID,
-                )
-            }
+                DeviceCheck.Revoked -> {
+                    revoked = true
+                }
 
-            else -> {
-                null
+                DeviceCheck.Unknown -> {
+                    Unit
+                }
             }
         }
+        return if (revoked) {
+            Verdict.Rejected(
+                HttpStatusCode.Unauthorized,
+                AuthErrorCodes.DEVICE_REVOKED,
+                "This device was revoked. Pair it again.",
+            )
+        } else {
+            null
+        }
     }
-
-    private fun matches(candidate: String): Boolean =
-        tokenDigest != null && MessageDigest.isEqual(tokenDigest, sha256(candidate))
 
     private fun hostName(hostHeader: String): String =
         if (hostHeader.startsWith("[")) {
@@ -143,12 +164,13 @@ class BridgeSecurity(
         /** The device id of the single shared token, until per-device tokens replace it. */
         const val LEGACY_DEVICE_ID = "legacy"
         private val SOCKET_PATHS = setOf("/events", "/terminal")
+        private val PROTOCOL_NAMES = setOf(WS_PROTOCOL, TERMINAL_WS_PROTOCOL)
+
+        // `/pair` has no token by design: it is where a device gets one. See DeviceRoutes.
+        private val OPEN_PATHS = setOf("/health", "/dev", "/pair")
         private const val BEARER_PREFIX = "Bearer "
         private const val MISDIRECTED_STATUS = 421
         private val MISDIRECTED_REQUEST = HttpStatusCode(MISDIRECTED_STATUS, "Misdirected Request")
-
-        // Comparing digests keeps the comparison constant-time whatever the lengths are.
-        private fun sha256(value: String): ByteArray = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
     }
 }
 

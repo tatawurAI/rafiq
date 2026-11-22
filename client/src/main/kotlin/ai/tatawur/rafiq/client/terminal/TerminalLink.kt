@@ -3,6 +3,10 @@ package ai.tatawur.rafiq.client.terminal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ProducerScope
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,6 +15,7 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.IOException
 import kotlin.time.Duration
@@ -53,6 +58,12 @@ fun interface TerminalPort {
     fun open(sessionId: String): Flow<TerminalFrame>
 }
 
+/**
+ * The phone fell too far behind the pane: more frames or bytes waited than the port holds. The
+ * port closes the socket and [TerminalLink] opens a new one, which starts with a fresh snapshot.
+ */
+class TerminalOverflowException : IOException("The phone fell behind the pane.")
+
 /** Where the Terminal view's socket stands. */
 sealed interface TerminalStatus {
     /** Not attached: the view is not showing, or it has not started yet. */
@@ -91,7 +102,8 @@ class TerminalLink(
 ) {
     @Volatile private var uplink: TerminalUplink? = null
 
-    // A fresh allow-list per socket, so a paste cut off by a drop does not carry into the next one.
+    @Volatile private var outgoing: Channel<ByteArray>? = null
+
     @Volatile private var keys = KeyUplink()
     private val viewport = MutableStateFlow<CellSize?>(null)
     private val currentStatus = MutableStateFlow<TerminalStatus>(TerminalStatus.Detached)
@@ -103,36 +115,72 @@ class TerminalLink(
         viewport.value = size
     }
 
-    /** Sends what the emulator wrote for your keys and paste, after the allow-list. */
+    /**
+     * Sends what the emulator wrote for your keys and paste, after the allow-list. The frames queue
+     * up and go out paced (see [attach]), so a long paste never trips the bridge's input limits.
+     */
     fun sendKeys(bytes: ByteArray) {
-        val target = uplink ?: return
+        val queue = outgoing ?: return
         val filter = keys
-        synchronized(filter) { filter.frames(bytes) }.forEach(target::sendBinary)
+        synchronized(filter) { filter.frames(bytes) }.forEach { queue.trySend(it) }
     }
 
     /**
      * Holds the socket while collected and emits what the emulator must apply. Cancelling the
      * collector closes the socket.
+     *
+     * It opens nothing until the screen has measured a viewport, so the pane is never resized to a
+     * guess. When the phone falls too far behind the pane ([TerminalOverflowException]) it closes
+     * the socket and opens a new one: the bridge starts every socket with a fresh snapshot, so
+     * nothing on screen is lost.
      */
-    @OptIn(FlowPreview::class) // debounce
     fun attach(): Flow<TerminalEvent> =
         channelFlow {
             currentStatus.value = TerminalStatus.Connecting
+            try {
+                viewport.filterNotNull().first()
+                var ended: String? = null
+                var again = true
+                while (again) {
+                    again = false
+                    try {
+                        ended = holdSocket(this)
+                    } catch (_: TerminalOverflowException) {
+                        currentStatus.value = TerminalStatus.Connecting
+                        again = true
+                    }
+                }
+                currentStatus.value = TerminalStatus.Ended(ended)
+            } catch (cancelled: CancellationException) {
+                currentStatus.value = TerminalStatus.Detached
+                throw cancelled
+            } catch (failure: IOException) {
+                currentStatus.value = TerminalStatus.Failed(failure.message)
+            }
+        }
+
+    /** One socket, from open to close. Returns the bridge's reason if it ended the view. */
+    @OptIn(FlowPreview::class) // debounce
+    private suspend fun holdSocket(events: ProducerScope<TerminalEvent>): String? =
+        coroutineScope {
             val decoder = TerminalStreamDecoder()
             val pane = PaneFilter()
+            val queue = Channel<ByteArray>(Channel.UNLIMITED)
             var ended: String? = null
-            var resizer: Job? = null
+            val helpers = mutableListOf<Job>()
+            // A fresh allow-list per socket, so a paste cut off by a drop does not carry into the next one.
             keys = KeyUplink()
             try {
                 port.open(sessionId).collect { frame ->
                     when (frame) {
                         is TerminalFrame.Opened -> {
                             uplink = frame.uplink
+                            outgoing = queue
                             currentStatus.value = TerminalStatus.Live
                             // The attach does not wait for the debounce. Later changes do.
                             viewport.value?.let { frame.uplink.sendText(resizeMessage(it)) }
-                            resizer?.cancel()
-                            resizer =
+                            helpers += launch { sendPaced(queue, frame.uplink) }
+                            helpers +=
                                 launch {
                                     viewport
                                         .drop(1)
@@ -145,42 +193,60 @@ class TerminalLink(
                         is TerminalFrame.Text -> {
                             val event = decoder.onText(frame.text)
                             if (event is TerminalEvent.Ended) ended = event.reason
-                            if (event != null) send(event)
+                            if (event != null) events.send(event)
                         }
 
                         is TerminalFrame.Binary -> {
-                            when (val event = decoder.onBinary(frame.bytes)) {
-                                is TerminalEvent.Snapshot -> {
-                                    pane.reset()
-                                    send(TerminalEvent.Snapshot(event.size, pane.filter(event.vt), event.window))
-                                }
-
-                                is TerminalEvent.Output -> {
-                                    val safe = pane.filter(event.bytes)
-                                    if (safe.isNotEmpty()) send(TerminalEvent.Output(safe))
-                                }
-
-                                else -> {
-                                    send(event)
-                                }
-                            }
+                            paneEvent(decoder.onBinary(frame.bytes), pane)?.let { events.send(it) }
                         }
                     }
                 }
-                currentStatus.value = TerminalStatus.Ended(ended)
-            } catch (cancelled: CancellationException) {
-                currentStatus.value = TerminalStatus.Detached
-                throw cancelled
-            } catch (failure: IOException) {
-                currentStatus.value = TerminalStatus.Failed(failure.message)
+                ended
             } finally {
                 uplink = null
-                // The socket is gone: the resize sender goes with it, so the flow can complete.
-                resizer?.cancel()
+                outgoing = null
+                queue.close()
+                // The socket is gone: its helpers go with it, so the flow can complete.
+                helpers.forEach { it.cancel() }
             }
         }
 
+    private fun paneEvent(
+        event: TerminalEvent,
+        pane: PaneFilter,
+    ): TerminalEvent? =
+        when (event) {
+            is TerminalEvent.Snapshot -> {
+                pane.reset()
+                TerminalEvent.Snapshot(event.size, pane.filter(event.vt), event.window)
+            }
+
+            is TerminalEvent.Output -> {
+                pane.filter(event.bytes).takeIf { it.isNotEmpty() }?.let { TerminalEvent.Output(it) }
+            }
+
+            else -> {
+                event
+            }
+        }
+
+    /** Sends queued key frames, pausing after each so the rate stays under [MAX_UP_BYTES_PER_SECOND]. */
+    private suspend fun sendPaced(
+        queue: Channel<ByteArray>,
+        target: TerminalUplink,
+    ) {
+        for (frame in queue) {
+            target.sendBinary(frame)
+            // A single key costs well under a millisecond, so typing is never held back.
+            delay(frame.size * MILLIS_PER_SECOND / MAX_UP_BYTES_PER_SECOND)
+        }
+    }
+
     companion object {
         val DEFAULT_RESIZE_DEBOUNCE: Duration = 150.milliseconds
+
+        /** About half the bridge's 64 KiB/s input limit. */
+        const val MAX_UP_BYTES_PER_SECOND = 32 * 1024L
+        private const val MILLIS_PER_SECOND = 1_000L
     }
 }

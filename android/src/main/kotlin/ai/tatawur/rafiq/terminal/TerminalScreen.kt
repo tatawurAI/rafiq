@@ -61,7 +61,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
-import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -103,11 +103,8 @@ fun TerminalRoute(
         }
     DisposableEffect(controller) { onDispose { controller.close() } }
     var attempt by remember { mutableIntStateOf(0) }
-    LifecycleStartEffect(controller, attempt) {
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        scope.launch { controller.run() }
-        onStopOrDispose { scope.cancel() }
-    }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(controller, attempt, lifecycle) { holdWhileStarted(lifecycle) { controller.run() } }
     GuardWindow()
 
     val typeface = remember { ResourcesCompat.getFont(context, R.font.plex_mono_regular) ?: Typeface.MONOSPACE }
@@ -135,8 +132,38 @@ fun TerminalRoute(
                 onToggleKeyboard = { keyboard = !keyboard },
             )
         },
+        notice = { PasteNotice(controller) },
     )
     PendingLink(controller)
+}
+
+/** Says a paste was refused for its length, until you dismiss it. */
+@Composable
+private fun PasteNotice(controller: TerminalController) {
+    val refused by controller.pasteRefused.collectAsStateWithLifecycle()
+    if (!refused) return
+    val spacing = RafiqTheme.spacing
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(RafiqTheme.colors.surface)
+                .padding(horizontal = spacing.medium, vertical = spacing.xSmall),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.terminal_paste_too_long),
+            style = MaterialTheme.typography.bodySmall,
+            color = RafiqTheme.colors.textSecondary,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(
+            onClick = controller::dismissPasteNotice,
+            modifier = Modifier.heightIn(min = spacing.minTouchTarget),
+        ) {
+            Text(stringResource(R.string.feedback_dismiss))
+        }
+    }
 }
 
 /** The confirmation for a link you tapped in the pane, while one waits. */

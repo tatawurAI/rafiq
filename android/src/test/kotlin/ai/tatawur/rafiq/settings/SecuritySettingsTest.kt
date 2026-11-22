@@ -1,0 +1,48 @@
+package ai.tatawur.rafiq.settings
+
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
+import java.io.IOException
+import kotlin.test.assertTrue
+
+/** The Terminal lock fails closed. */
+class SecuritySettingsTest {
+    @TempDir
+    lateinit var dir: File
+
+    @Test
+    fun a_damaged_settings_file_turns_the_lock_on() =
+        runTest {
+            val file = File(dir, "settings.preferences_pb").apply { writeBytes(byteArrayOf(0x7f, 0x01, 0x02, 0x03)) }
+            val store =
+                PreferenceDataStoreFactory.create(
+                    corruptionHandler = SecuritySettings.corruptionHandler,
+                    scope = backgroundScope,
+                    produceFile = { file },
+                )
+
+            assertTrue(SecuritySettings(store).terminalLock.first())
+        }
+
+    @Test
+    fun a_settings_file_that_cannot_be_read_counts_as_locked() =
+        runTest {
+            val unreadable =
+                object : DataStore<Preferences> {
+                    override val data: Flow<Preferences> = flow { throw IOException("read failed") }
+
+                    override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences) =
+                        throw IOException("write failed")
+                }
+
+            assertTrue(SecuritySettings(unreadable).terminalLock.first())
+        }
+}

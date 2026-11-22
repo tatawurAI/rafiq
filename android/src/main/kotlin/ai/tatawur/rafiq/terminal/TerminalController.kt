@@ -1,13 +1,14 @@
 package ai.tatawur.rafiq.terminal
 
 import ai.tatawur.rafiq.client.terminal.CellSize
+import ai.tatawur.rafiq.client.terminal.MAX_PASTE_BYTES
 import ai.tatawur.rafiq.client.terminal.MirroredWindow
 import ai.tatawur.rafiq.client.terminal.TerminalEvent
 import ai.tatawur.rafiq.client.terminal.TerminalLink
 import ai.tatawur.rafiq.client.terminal.TerminalPort
 import ai.tatawur.rafiq.client.terminal.TerminalStatus
 import ai.tatawur.rafiq.client.terminal.httpsLinkTarget
-import ai.tatawur.rafiq.client.terminal.sanitizePaste
+import ai.tatawur.rafiq.client.terminal.preparePaste
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,13 +69,17 @@ class TerminalController(
     sessionId: String,
     foreground: Color,
     background: Color,
-    private val onBell: () -> Unit,
+    onBell: () -> Unit,
 ) : AutoCloseable {
     private val link = TerminalLink(port, sessionId)
     private val currentPane = MutableStateFlow<CellSize?>(null)
     private val currentLink = MutableStateFlow<String?>(null)
     private val currentWindow = MutableStateFlow<MirroredWindow?>(null)
-    private var lastBellMs = Long.MIN_VALUE / 2
+    private val currentPasteRefused = MutableStateFlow(false)
+
+    /** True after a paste longer than [MAX_PASTE_BYTES] was refused, until you dismiss the notice. */
+    val pasteRefused: StateFlow<Boolean> = currentPasteRefused.asStateFlow()
+    private val bell = Throttle(BELL_INTERVAL_MS, onBell)
 
     /** The pane's real size, or null before the first snapshot. */
     val paneSize: StateFlow<CellSize?> = currentPane.asStateFlow()
@@ -96,7 +101,7 @@ class TerminalController(
             defaultForeground = foreground,
             defaultBackground = background,
             onKeyboardInput = link::sendKeys,
-            onBell = ::bell,
+            onBell = bell::run,
             // OSC 52 never reaches the emulator (see PaneFilter). This is the second wall.
             onClipboardCopy = { _ -> },
             onProgressChange = { _, _ -> },
@@ -115,8 +120,14 @@ class TerminalController(
 
     /** Pastes [text] from the clipboard. The emulator brackets it when the program asked for that. */
     fun paste(text: String) {
-        val safe = sanitizePaste(text)
-        if (safe.isNotEmpty()) emulator.pasteText(safe)
+        val safe = preparePaste(text)
+        currentPasteRefused.value = safe == null
+        if (!safe.isNullOrEmpty()) emulator.pasteText(safe)
+    }
+
+    /** Hides the notice about a paste that was too long. */
+    fun dismissPasteNotice() {
+        currentPasteRefused.value = false
     }
 
     /** A tap on a link in the pane. Only an `https` target is offered for confirmation. */
@@ -170,14 +181,6 @@ class TerminalController(
         }
     }
 
-    private fun bell() {
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastBellMs >= BELL_INTERVAL_MS) {
-            lastBellMs = now
-            onBell()
-        }
-    }
-
     override fun close() =
         synchronized(emulatorLock) {
             closed = true
@@ -188,5 +191,21 @@ class TerminalController(
         const val INITIAL_ROWS = 24
         const val INITIAL_COLS = 80
         const val BELL_INTERVAL_MS = 1_000L
+    }
+}
+
+/** Runs [action] at most once per [intervalMs] of the phone's uptime clock. */
+private class Throttle(
+    private val intervalMs: Long,
+    private val action: () -> Unit,
+) {
+    private var lastMs = Long.MIN_VALUE / 2
+
+    fun run() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastMs >= intervalMs) {
+            lastMs = now
+            action()
+        }
     }
 }

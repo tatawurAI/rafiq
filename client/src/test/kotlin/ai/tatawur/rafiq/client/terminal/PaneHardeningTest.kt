@@ -6,9 +6,11 @@ import kotlin.test.assertNull
 
 /** Pane bytes are untrusted: no clipboard write, no title, no image, no link without an https target (G14). */
 class PaneHardeningTest {
-    private fun down(vararg frames: String): String {
+    private fun down(vararg frames: String): String = down(*frames.map { it.toByteArray() }.toTypedArray())
+
+    private fun down(vararg frames: ByteArray): String {
         val filter = PaneFilter()
-        return frames.joinToString("") { String(filter.filter(it.toByteArray())) }
+        return String(frames.map { filter.filter(it) }.reduce { a, b -> a + b })
     }
 
     @Test
@@ -25,6 +27,19 @@ class PaneHardeningTest {
                 "\u001b]10;?\u0007", // colour query
             )
         for (sequence in hostile) assertEquals("before after", down("before $sequence", "after"), sequence)
+    }
+
+    @Test
+    fun c1_controls_written_as_utf8_are_filtered_like_their_esc_forms() {
+        // U+009D is OSC and U+0090 is DCS: the same clipboard write and image, in their C1 forms.
+        assertEquals("before after", down("before \u009d52;c;cm0gLXJmIH4=\u0007", "after"))
+        assertEquals("before after", down("before \u0090q#0;2;0;0;0#0!10~\u009c", "after"))
+        assertEquals("ab", down("a\u009d0;title\u009c", "b"))
+        // Split between the two bytes of the C1 character.
+        val osc = "\u009d52;c;eA==\u0007b".toByteArray()
+        assertEquals("ab", down(byteArrayOf('a'.code.toByte(), osc[0]), osc.copyOfRange(1, osc.size)))
+        // A C1 CSI is read as ESC [, and ordinary text with a C2 lead byte is untouched.
+        assertEquals("\u001b[31mred £", down("\u009b31mred £"))
     }
 
     @Test

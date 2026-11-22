@@ -138,6 +138,7 @@
   <string name="terminal_key_right_symbol">→</string>
   <string name="terminal_key_paste">Paste</string>
   <string name="terminal_key_keyboard">Keyboard</string>
+  <string name="terminal_paste_too_long">That paste is too long for Terminal. Paste up to 256 KB at a time.</string>
   <string name="terminal_link_title">Open this link?</string>
   <string name="terminal_link_open">Open</string>
   <string name="terminal_link_cancel">Cancel</string>

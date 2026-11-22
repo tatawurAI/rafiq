@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge
 
 import ai.tatawur.rafiq.bridge.agent.AgentAdapter
 import ai.tatawur.rafiq.bridge.agent.acp.AcpAgentAdapter
+import ai.tatawur.rafiq.bridge.hook.HookSetup
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.bridge.tmux.TerminalService
@@ -57,3 +58,10 @@ internal fun claudeReaderFor(
     terminal.source.onScan = reader::onScan
     return reader
 }
+
+/**
+ * Whether a project has the Rafiq hooks, by the hook installer. With no installer, because the hook program or the
+ * data folder is missing, no project can have them, so a prompt is refused as hooks not installed.
+ */
+internal fun hooksInstalledBy(hooks: HookSetup?): suspend (projectPath: String) -> Boolean =
+    { project -> hooks?.preview(project)?.installed ?: false }

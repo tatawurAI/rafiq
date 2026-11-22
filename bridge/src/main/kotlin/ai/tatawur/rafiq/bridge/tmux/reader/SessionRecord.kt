@@ -8,8 +8,10 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 
 /** What the reader takes from one line of Claude Code's session record. Every other line type is skipped. */
 internal sealed interface RecordEntry {
@@ -19,9 +21,13 @@ internal sealed interface RecordEntry {
         val promptId: String? = null,
     ) : RecordEntry
 
-    /** One text block of an assistant message. */
+    /**
+     * One text block of an assistant message. [key] is stable for the block: the record line's uuid and the block's
+     * place in the line, so a reply filled from the record twice is one message.
+     */
     data class AssistantText(
         val text: String,
+        val key: String? = null,
     ) : RecordEntry
 
     data class ToolUse(
@@ -62,7 +68,32 @@ internal object SessionRecord {
     private val json = Json { ignoreUnknownKeys = true }
 
     /** The record's size in bytes, or null when it cannot be read. */
-    fun size(path: Path): Long? = runCatching { Files.size(path) }.getOrNull()
+    fun size(path: Path): Long? =
+        runCatching {
+            Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).size()
+        }.getOrNull()
+
+    /**
+     * [raw], a record path from a hook, when it is safe to read: an absolute path whose folder resolves inside
+     * [root], Claude Code's folder of records, and that is a regular file or does not exist yet. A link is refused,
+     * so a hook cannot point the bridge at another file. Null otherwise, and always when [root] is null.
+     */
+    @Suppress("ReturnCount") // One early refusal per check.
+    fun safePath(
+        raw: String,
+        root: Path?,
+    ): Path? {
+        val path = runCatching { Path.of(raw) }.getOrNull()?.takeIf { it.isAbsolute }?.normalize() ?: return null
+        val realRoot = root?.let { runCatching { it.toRealPath() }.getOrNull() } ?: return null
+        val folder = path.parent?.let { runCatching { it.toRealPath() }.getOrNull() } ?: return null
+        val file = path.fileName ?: return null
+        if (!folder.startsWith(realRoot)) return null
+        val resolved = folder.resolve(file)
+        val usable =
+            !Files.exists(resolved, LinkOption.NOFOLLOW_LINKS) ||
+                Files.isRegularFile(resolved, LinkOption.NOFOLLOW_LINKS)
+        return resolved.takeIf { usable }
+    }
 
     /**
      * Where a first read of [path] starts: [FIRST_ATTACH_TAIL_BYTES] from the end, moved forward to the start
@@ -109,17 +140,31 @@ internal object SessionRecord {
         if (o.bool("isSidechain") == true || o.bool("isMeta") == true) return emptyList()
         val content = o.obj("message")?.get("content")
         return when (o.str("type")) {
-            "assistant" -> (content as? JsonArray).orEmpty().mapNotNull(::assistantBlock)
-            "user" -> userContent(content, o.str("promptId"))
-            else -> emptyList()
+            "assistant" -> {
+                val uuid = o.str("uuid")
+                (content as? JsonArray).orEmpty().mapIndexedNotNull { index, block ->
+                    assistantBlock(block, uuid?.let { "$it:$index" })
+                }
+            }
+
+            "user" -> {
+                userContent(content, o.str("promptId"))
+            }
+
+            else -> {
+                emptyList()
+            }
         }
     }
 
-    private fun assistantBlock(element: kotlinx.serialization.json.JsonElement): RecordEntry? {
+    private fun assistantBlock(
+        element: kotlinx.serialization.json.JsonElement,
+        key: String?,
+    ): RecordEntry? {
         val block = element as? JsonObject ?: return null
         return when (block.str("type")) {
             "text" -> {
-                block.str("text")?.let(RecordEntry::AssistantText)
+                block.str("text")?.let { RecordEntry.AssistantText(it, key) }
             }
 
             "tool_use" -> {
@@ -178,7 +223,7 @@ internal object SessionRecord {
         maxBytes: Int,
     ): ByteArray? =
         try {
-            FileChannel.open(path, StandardOpenOption.READ).use { channel ->
+            FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS).use { channel ->
                 val buffer = ByteBuffer.allocate(minOf(maxBytes.toLong(), maxOf(0, channel.size() - offset)).toInt())
                 while (buffer.hasRemaining() && channel.read(buffer, offset + buffer.position()) > 0) Unit
                 buffer.array().copyOf(buffer.position())

@@ -7,6 +7,7 @@ import ai.tatawur.rafiq.bridge.tmux.cleanEnvironment
 import ai.tatawur.rafiq.bridge.tmux.runCapturing
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.UUID
@@ -27,6 +28,13 @@ class TmuxPaneIo(
 ) : PaneIo {
     override suspend fun panes(): List<PaneInfo> = runCatching { server.panes() }.getOrDefault(emptyList())
 
+    override suspend fun socketPath(): String? =
+        tmux("list-sessions", "-F", "#{socket_path}")
+            ?.takeIf { it.exit == 0 }
+            ?.out
+            ?.lineSequence()
+            ?.firstOrNull(String::isNotBlank)
+
     override suspend fun agentPids(panes: List<PaneInfo>): Map<String, List<Long>> {
         if (panes.isEmpty()) return emptyMap()
         val table = processes()
@@ -46,7 +54,8 @@ class TmuxPaneIo(
         return try {
             loadBuffer(buffer, text) && tmux("paste-buffer", "-p", "-b", buffer, "-t", paneId)?.exit == 0
         } finally {
-            tmux("delete-buffer", "-b", buffer)
+            // Even when the caller is cancelled, the text must not stay in a buffer anyone could paste.
+            withContext(NonCancellable) { tmux("delete-buffer", "-b", buffer) }
         }
     }
 

@@ -131,10 +131,24 @@ class TmuxSessionSource(
                 )
             val main = AgentThread(MAIN_THREAD, id, null, ThreadKind.MAIN, name, AgentState.DONE)
             log.createSession(session, AGENT_SESSION_REF, main)
-        } else if (stored.session.agent != found.agent || announced[name] != terminalAllowed) {
-            if (stored.session.agent != found.agent) log.updateAgent(id, found.agent)
-            val updated = stored.session.copy(agent = found.agent, terminal = true, terminalAllowed = terminalAllowed)
-            log.append(id, EventPayload.SessionUpdated(updated))
+        } else {
+            // A session first listed as a shell somewhere else gets Claude's folder once Claude runs in it, so the
+            // hooks and the record are looked for in the right project.
+            val project =
+                found.projectPath?.takeIf { found.agent == AgentDetector.CLAUDE_CODE } ?: stored.session.projectPath
+            val changed = stored.session.agent != found.agent || stored.session.projectPath != project
+            if (changed || announced[name] != terminalAllowed) {
+                if (stored.session.agent != found.agent) log.updateAgent(id, found.agent)
+                if (stored.session.projectPath != project) log.updateProject(id, project)
+                val updated =
+                    stored.session.copy(
+                        agent = found.agent,
+                        projectPath = project,
+                        terminal = true,
+                        terminalAllowed = terminalAllowed,
+                    )
+                log.append(id, EventPayload.SessionUpdated(updated))
+            }
         }
         announced[name] = terminalAllowed
     }

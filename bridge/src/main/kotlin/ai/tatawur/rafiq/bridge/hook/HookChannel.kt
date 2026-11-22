@@ -158,7 +158,7 @@ class HookChannel(
                     it.version == HOOK_WIRE_VERSION &&
                     PANE.matches(it.pane) &&
                     AGENT.matches(it.agent)
-            }?.let { HookEnvelope(it.agent, it.pane, it.agentPid, it.event, clock.millis()) to it.kind }
+            }?.let { HookEnvelope(it.agent, it.pane, it.agentPid, it.event, clock.millis(), it.tmuxSocket) to it.kind }
     }
 
     private fun decode(line: String): HookRequest? =

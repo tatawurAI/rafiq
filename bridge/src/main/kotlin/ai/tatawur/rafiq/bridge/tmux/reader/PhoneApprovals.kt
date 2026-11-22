@@ -81,12 +81,11 @@ internal class PhoneApprovals(
         toolName: String,
         toolInput: JsonObject,
         toolCallId: String?,
-        suggestions: kotlinx.serialization.json.JsonArray?,
     ): PendingPhoneApproval? {
         val id = "tap_" + UUID.randomUUID().toString().replace("-", "")
         val question = if (toolName == ASK_USER_QUESTION) singleQuestion(toolInput) else null
-        val rule = sessionRuleFor(toolName, toolInput, suggestions)
-        val options = if (toolName == ASK_USER_QUESTION) answerOptions(question) else toolOptions(rule)
+        val rule = sessionRuleFor(toolName, toolInput)
+        val options = if (toolName == ASK_USER_QUESTION) answerOptions(question) else toolOptions(toolName, rule)
         return options?.let {
             PendingPhoneApproval(
                 id = id,
@@ -218,19 +217,25 @@ private const val ANSWER = "answer:"
 internal fun approvalRequest(
     approval: PendingPhoneApproval,
     expiresAtMs: Long,
-) = EventPayload.ApprovalRequest(
-    id = approval.id,
-    toolCallId = approval.toolCallId,
-    description = approvalDescription(approval.toolName, approval.toolInput),
-    options = approval.options,
-    expiresAtMs = expiresAtMs,
-    detail = approvalDetail(approval.toolName, approval.toolInput, approval.rule),
-)
+): EventPayload.ApprovalRequest {
+    val detail = approvalDetail(approval.toolName, approval.toolInput, approval.rule)
+    return EventPayload.ApprovalRequest(
+        id = approval.id,
+        toolCallId = approval.toolCallId,
+        description = approvalDescription(approval.toolName, approval.toolInput, detail),
+        options = approval.options,
+        expiresAtMs = expiresAtMs,
+        detail = detail,
+    )
+}
 
-private fun toolOptions(rule: String?): List<ApprovalOption> =
+private fun toolOptions(
+    tool: String,
+    rule: String?,
+): List<ApprovalOption> =
     listOfNotNull(
         ApprovalOption(ALLOW, ApprovalOptionKind.ALLOW_ONCE, "Allow"),
-        rule?.let { ApprovalOption(ALLOW_SESSION, ApprovalOptionKind.ALLOW_ALWAYS, "Allow for this session") },
+        rule?.let { ApprovalOption(ALLOW_SESSION, ApprovalOptionKind.ALLOW_ALWAYS, sessionRuleLabel(tool)) },
         ApprovalOption(DENY, ApprovalOptionKind.DENY, "Deny"),
     )
 

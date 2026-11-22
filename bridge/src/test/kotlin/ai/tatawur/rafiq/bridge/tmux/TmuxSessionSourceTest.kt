@@ -181,6 +181,42 @@ class TmuxSessionSourceTest {
     }
 
     @Test
+    fun a_session_listed_as_a_shell_takes_claudes_folder_once_claude_runs_in_it() {
+        val home = Files.createDirectory(dir.resolve("home"))
+        val project = Files.createDirectory(dir.resolve("weather-app")).toRealPath()
+        tmux.tmux("new-session", "-d", "-s", "weather-app", "-c", home.toString(), "-x", "120", "-y", "40", "cat")
+        val bin = Files.createDirectory(dir.resolve("bin"))
+        Files.createSymbolicLink(bin.resolve("claude"), Path.of("/bin/sleep"))
+        val pidFile = dir.resolve("claude.pid")
+        val list = bin.resolve("claude-list")
+        Files.writeString(
+            list,
+            "#!/bin/sh\nprintf '[{\"pid\": %s, \"cwd\": \"%s\"}]' \"\$(cat '$pidFile')\" '$project'\n",
+        )
+        list.toFile().setExecutable(true)
+        val bridge = open("weather-app", agents = AgentDetector(claudeCommand = list.toString()))
+        bridge.refresh()
+        val stored = {
+            runBlocking {
+                bridge.fixture.log
+                    .session("tmux-weather-app")!!
+                    .session
+            }
+        }
+        assertEquals(home.toRealPath().toString(), Path.of(stored().projectPath).toRealPath().toString())
+
+        tmux.tmux("respawn-pane", "-k", "-t", "=weather-app:", "${bin.resolve("claude")} 1000")
+        val panePid = tmux.tmux("display-message", "-p", "-t", "=weather-app:", "#{pane_pid}").trim()
+        Files.writeString(pidFile, panePid)
+        val table = runBlocking { AgentDetector.processTable() }
+        assumeTrue(AgentDetector.claudeProcessesUnder(panePid.toInt(), table).isNotEmpty(), "no process named claude")
+        bridge.refresh()
+
+        assertEquals("claude-code", stored().agent)
+        assertEquals(project.toString(), stored().projectPath)
+    }
+
+    @Test
     fun with_terminal_off_a_tmux_session_in_the_log_is_not_listed_even_when_tmux_has_it() {
         tmux.newSession("weather-app")
         val on = open("weather-app")

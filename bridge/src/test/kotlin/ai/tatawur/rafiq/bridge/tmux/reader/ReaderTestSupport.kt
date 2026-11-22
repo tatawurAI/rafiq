@@ -18,6 +18,9 @@ const val SESSION = "tmux-weather-app"
 const val PANE = "%3"
 const val PID = 4242L
 
+/** The bridge's own tmux socket, as the fake server reports it. Hook calls name it in `tmux_socket`. */
+const val SOCKET = "/tmp/rafiq-test-socket"
+
 /** The event log as the reader sees it, in memory, with the tmux session the source would have listed. */
 class FakeReaderLog : ReaderLog {
     val events = CopyOnWriteArrayList<EventPayload>()
@@ -37,6 +40,8 @@ class FakeReaderLog : ReaderLog {
     override suspend fun threads(sessionId: String): List<AgentThread> =
         listOf(AgentThread("main", SESSION, null, ThreadKind.MAIN, "weather-app", AgentState.DONE))
 
+    override suspend fun recentAgentTexts(sessionId: String): List<String> = agentTexts()
+
     inline fun <reified T : EventPayload> all(): List<T> = events.filterIsInstance<T>()
 }
 
@@ -48,7 +53,11 @@ class FakePaneIo : PaneIo {
     val pasted = CopyOnWriteArrayList<String>()
     val enters = CopyOnWriteArrayList<String>()
 
-    override suspend fun panes(): List<PaneInfo> = listOf(PaneInfo("weather-app", PANE, 100, "/work/weather-app", true))
+    var paneList = listOf(PaneInfo("weather-app", PANE, 100, "/work/weather-app", true))
+
+    override suspend fun panes(): List<PaneInfo> = paneList
+
+    override suspend fun socketPath(): String? = SOCKET
 
     override suspend fun agentPids(panes: List<PaneInfo>): Map<String, List<Long>> = mapOf(PANE to listOf(PID))
 
@@ -109,7 +118,8 @@ fun TestScope.hook(
     event: JsonObject,
     pane: String = PANE,
     pid: Long? = PID,
-) = HookEnvelope("claude-code", pane, pid, event, testScheduler.currentTime)
+    socket: String? = SOCKET,
+) = HookEnvelope("claude-code", pane, pid, event, testScheduler.currentTime, socket)
 
 /** A hook event with the fields every payload carries, plus [fields]. */
 fun event(
@@ -147,6 +157,7 @@ fun TestScope.reader(
     devices: suspend () -> List<String> = { emptyList() },
     offsets: ReaderOffsets = ReaderOffsets(null),
     hooksInstalled: suspend (String) -> Boolean = { true },
+    projectsDir: java.nio.file.Path? = null,
 ) = ClaudeReader(
     log = log,
     io = io,
@@ -157,7 +168,7 @@ fun TestScope.reader(
     devices = devices,
     offsets = offsets,
     hooksInstalled = hooksInstalled,
-    projectsDir = null,
+    projectsDir = projectsDir,
     nowMs = { testScheduler.currentTime },
     ioDispatcher = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler),
     timing = timing,

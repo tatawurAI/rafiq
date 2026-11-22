@@ -3,7 +3,9 @@ package ai.tatawur.rafiq.bridge.tmux.reader
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.bridge.tmux.PaneInfo
 import ai.tatawur.rafiq.protocol.AgentThread
+import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.EventPayload
+import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
 
 /*
@@ -22,6 +24,12 @@ interface ReaderLog {
     suspend fun session(sessionId: String): Session?
 
     suspend fun threads(sessionId: String): List<AgentThread>
+
+    /**
+     * The text of the agent messages among the session's newest events, so a reader started after a restart does
+     * not show again what an earlier run showed.
+     */
+    suspend fun recentAgentTexts(sessionId: String): List<String>
 }
 
 /** [ReaderLog] on the bridge's event log. */
@@ -38,6 +46,19 @@ class EventLogReaderLog(
     override suspend fun session(sessionId: String): Session? = log.session(sessionId)?.session
 
     override suspend fun threads(sessionId: String): List<AgentThread> = log.threads(sessionId)
+
+    override suspend fun recentAgentTexts(sessionId: String): List<String> =
+        log.latest(sessionId, RECENT_EVENTS).mapNotNull { event ->
+            (event.payload as? EventPayload.Message)
+                ?.takeIf { it.role == MessageRole.AGENT && !it.isStreaming }
+                ?.content
+                ?.filterIsInstance<ContentBlock.Markdown>()
+                ?.joinToString("") { it.markdown }
+        }
+
+    private companion object {
+        const val RECENT_EVENTS = 500
+    }
 }
 
 /** One live Claude Code process, as the agent's own session list reports it. */
@@ -67,6 +88,9 @@ fun interface AgentStatusSource {
 interface PaneIo {
     /** Every pane on the server. Empty when no server runs. */
     suspend fun panes(): List<PaneInfo>
+
+    /** The path of the server's socket, or null when no server runs. */
+    suspend fun socketPath(): String?
 
     /** The pids of the agent processes running under each pane in [panes], by pane id. */
     suspend fun agentPids(panes: List<PaneInfo>): Map<String, List<Long>>

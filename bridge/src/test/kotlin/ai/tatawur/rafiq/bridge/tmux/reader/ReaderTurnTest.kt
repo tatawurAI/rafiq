@@ -39,7 +39,7 @@ class ReaderTurnTest {
     @Test
     fun text_written_before_a_step_shows_before_its_card_even_when_its_hook_arrives_later() =
         runTest {
-            val reader = reader(log)
+            val reader = reader(log, projectsDir = dir)
             reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "check the build")))
             reader.onEvent(
                 hook(bashStep("PreToolUse", "toolu_1", "npm test")),
@@ -66,7 +66,7 @@ class ReaderTurnTest {
         runTest {
             val record = dir.resolve("record.jsonl")
             record.append(userPrompt("earlier question") + assistantText("Earlier reply."))
-            val reader = reader(log)
+            val reader = reader(log, projectsDir = dir)
             val path = "transcript_path" to record.toString()
             reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "finish up", path)))
             settle(100)
@@ -84,7 +84,7 @@ class ReaderTurnTest {
     fun a_reply_found_neither_in_the_batches_nor_the_record_is_shown_with_a_chat_incomplete_note() =
         runTest {
             val record = dir.resolve("record.jsonl").also { Files.createFile(it) }
-            val reader = reader(log)
+            val reader = reader(log, projectsDir = dir)
             val path = "transcript_path" to record.toString()
             reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "finish up", path)))
             reader.onEvent(
@@ -104,7 +104,7 @@ class ReaderTurnTest {
     fun an_esc_at_the_desk_ends_the_turn_although_no_stop_arrives() =
         runTest {
             val statuses = FakeStatuses(AgentStatus.BUSY)
-            val reader = reader(log, statuses = statuses)
+            val reader = reader(log, projectsDir = dir, statuses = statuses)
             reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "count to a million")))
             reader.onEvent(
                 hook(bashStep("PreToolUse", "toolu_1", "seq 1000000")),
@@ -125,7 +125,7 @@ class ReaderTurnTest {
     @Test
     fun a_prompt_typed_at_the_desk_is_shown_and_a_background_task_notice_is_not() =
         runTest {
-            val reader = reader(log)
+            val reader = reader(log, projectsDir = dir)
             reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "what changed today?")))
             val notice = "<task-notification>\n<status>completed</status>"
             reader.onEvent(hook(event("UserPromptSubmit", "prompt" to notice)))
@@ -138,7 +138,7 @@ class ReaderTurnTest {
     @Test
     fun a_subagent_reply_is_shown_but_claude_codes_own_helpers_are_not() =
         runTest {
-            val reader = reader(log)
+            val reader = reader(log, projectsDir = dir)
             // The prompt-suggestion helper and /compact end with an empty agent type.
             reader.onEvent(
                 hook(event("SubagentStop", "agent_type" to "", "last_assistant_message" to "cat live-check.txt")),
@@ -155,7 +155,7 @@ class ReaderTurnTest {
     @Test
     fun the_permission_mode_from_the_hooks_is_shown_on_the_session() =
         runTest {
-            val reader = reader(log)
+            val reader = reader(log, projectsDir = dir)
             reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "plan it", "permission_mode" to "plan")))
             settle()
 
@@ -176,14 +176,14 @@ class ReaderTurnTest {
             record.append(userPrompt("old question") + assistantText("Old reply."))
             val offsets = dir.resolve("offsets.json")
             val path = "transcript_path" to record.toString()
-            val first = reader(log, offsets = ReaderOffsets(offsets))
+            val first = reader(log, projectsDir = dir, offsets = ReaderOffsets(offsets))
             first.onEvent(hook(event("SessionStart", "source" to "startup", path)))
             settle()
             first.close()
             assertEquals(emptyList(), log.agentTexts(), "a session that just started has nothing to fill")
 
             record.append(userPrompt("asked while the bridge was down") + assistantText("Answered while it was down."))
-            val second = reader(log, offsets = ReaderOffsets(offsets))
+            val second = reader(log, projectsDir = dir, offsets = ReaderOffsets(offsets))
             second.onEvent(hook(event("Notification", "message" to "Claude is waiting for your input", path)))
             settle()
 
@@ -198,7 +198,7 @@ class ReaderTurnTest {
             val record = dir.resolve("record.jsonl").also { Files.createFile(it) }
             val offsets = dir.resolve("offsets.json")
             val path = "transcript_path" to record.toString()
-            val first = reader(log, offsets = ReaderOffsets(offsets))
+            val first = reader(log, projectsDir = dir, offsets = ReaderOffsets(offsets))
             first.onEvent(hook(event("SessionStart", "source" to "startup", path)))
             first.onEvent(hook(event("UserPromptSubmit", "prompt" to "what changed?", "prompt_id" to "p-1", path)))
             settle()
@@ -206,7 +206,7 @@ class ReaderTurnTest {
             // The record caught up after the bridge stopped, so the saved offset is before the prompt.
             record.append(userPrompt("what changed?", promptId = "p-1") + assistantText("Nothing yet."))
 
-            val second = reader(log, offsets = ReaderOffsets(offsets))
+            val second = reader(log, projectsDir = dir, offsets = ReaderOffsets(offsets))
             second.onEvent(hook(event("Notification", "message" to "Claude is waiting for your input", path)))
             settle()
 
@@ -219,7 +219,7 @@ class ReaderTurnTest {
         runTest {
             val old = dir.resolve("old.jsonl").also { it.append(assistantText("From before the clear.")) }
             val fresh = dir.resolve("new.jsonl").also { it.append(assistantText("Written by the clear itself.")) }
-            val reader = reader(log)
+            val reader = reader(log, projectsDir = dir)
             reader.onEvent(hook(event("SessionStart", "source" to "startup", "transcript_path" to old.toString())))
             reader.onEvent(
                 hook(
@@ -240,7 +240,7 @@ class ReaderTurnTest {
     fun a_scan_follows_every_claude_pane_in_the_session_on_its_own_thread() =
         runTest {
             val io = FakePaneIo()
-            val reader = reader(log, io = io)
+            val reader = reader(log, projectsDir = dir, io = io)
             val panes =
                 listOf(
                     PaneInfo("weather-app", PANE, 100, "/work/weather-app", true),
@@ -267,7 +267,7 @@ class ReaderTurnTest {
     fun a_claude_that_dies_mid_turn_without_a_session_end_ends_the_turn() =
         runTest {
             val statuses = FakeStatuses(AgentStatus.BUSY)
-            val reader = reader(log, statuses = statuses)
+            val reader = reader(log, projectsDir = dir, statuses = statuses)
             reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "go")))
             settle(1_000)
             statuses.present = false

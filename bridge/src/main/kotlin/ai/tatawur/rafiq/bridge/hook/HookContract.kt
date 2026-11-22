@@ -46,6 +46,8 @@ enum class HookKind {
  * @property pane `$TMUX_PANE`, for example `%3`.
  * @property agentPid the agent's process id from the hook environment, when the agent sets one.
  * @property event the agent's hook input JSON, as the agent gave it on stdin.
+ * @property tmuxSocket the tmux server's socket path, the first field of `$TMUX`, so the bridge can tell a pane
+ *   of its own server from a pane with the same id on another one. Null from an older hook program.
  */
 @Serializable
 data class HookRequest(
@@ -56,6 +58,7 @@ data class HookRequest(
     @SerialName("pane") val pane: String,
     @SerialName("agent_pid") val agentPid: Long? = null,
     @SerialName("event") val event: JsonObject,
+    @SerialName("tmux_socket") val tmuxSocket: String? = null,
 )
 
 /** The decision in a [HookReply]. Anything else counts as no reply. */
@@ -98,6 +101,7 @@ data class HookEnvelope(
     val agentPid: Long?,
     val event: JsonObject,
     val receivedAtMs: Long,
+    val tmuxSocket: String? = null,
 )
 
 /**

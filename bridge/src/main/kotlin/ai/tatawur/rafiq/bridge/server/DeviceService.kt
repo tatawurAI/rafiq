@@ -7,11 +7,13 @@ import ai.tatawur.rafiq.bridge.store.RevokeOutcome
 import ai.tatawur.rafiq.protocol.api.PairResponse
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Clock
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -106,7 +108,19 @@ class DeviceService(
 
     /** Spends [code] and returns the new device's token. */
     suspend fun redeem(code: String): RedeemResult =
-        redeemLocked(code).also { result -> if (result is RedeemResult.Paired) onPaired(result.response.deviceId) }
+        redeemLocked(code).also { result -> if (result is RedeemResult.Paired) paired(result.response.deviceId) }
+
+    /** The pairing stands whatever a listener does: a failing one is logged, never turned into a failed pairing. */
+    @Suppress("TooGenericExceptionCaught") // Any listener failure means the same: log it and keep the pairing.
+    private suspend fun paired(deviceId: String) {
+        try {
+            onPaired(deviceId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            logger.warn("A listener failed after a device was paired: {}", failure.toString())
+        }
+    }
 
     private suspend fun redeemLocked(code: String): RedeemResult =
         attempts.withLock {
@@ -170,6 +184,7 @@ class DeviceService(
 
     companion object {
         const val REVOKED_REASON = "device revoked"
+        private val logger = LoggerFactory.getLogger(DeviceService::class.java)
         private const val CODE_LENGTH = 8
         private const val CODE_GROUP = 4
 

@@ -102,6 +102,22 @@ private suspend fun ApplicationCall.respondInvalidBody() {
     )
 }
 
+/** The most prompt text the bridge takes, in UTF-8 bytes. A longer prompt is answered 413. */
+const val MAX_PROMPT_BYTES = 64 * 1024
+
+/** The longest `client_id` the bridge takes. A longer one is answered 400. */
+const val MAX_CLIENT_ID_CHARS = 64
+
+/** A prompt is typed into a pane and kept in the log, so its size is bounded well below the body limit. */
+private fun checkPromptSize(request: PromptRequest) {
+    if (request.text.toByteArray(Charsets.UTF_8).size > MAX_PROMPT_BYTES) {
+        throw PayloadTooLargeException(MAX_PROMPT_BYTES.toLong())
+    }
+    if ((request.clientId?.length ?: 0) > MAX_CLIENT_ID_CHARS) {
+        throw SessionException.Invalid("invalid_client_id", "client_id is longer than $MAX_CLIENT_ID_CHARS characters.")
+    }
+}
+
 /**
  * The session and agent routes. They stay thin: parsing here, the work in [SessionManager]. Every route
  * needs the device token (see [BridgeSecurity]). Each accepted prompt and approval answer gets an [audit] line
@@ -135,8 +151,16 @@ internal fun Route.sessionRoutes(
     post("/sessions/{id}/prompt") {
         val request = call.receive<PromptRequest>()
         val sessionId = call.parameters.getOrFail("id")
-        sessions.prompt(sessionId, request.threadId, request.text, request.clientId)
-        audit.chatPrompt(deviceOf(call), sessionId, LoggingAuditLog.sha256Hex(request.text))
+        checkPromptSize(request)
+        val device = deviceOf(call)
+        val hash = LoggingAuditLog.sha256Hex(request.text)
+        try {
+            sessions.prompt(sessionId, request.threadId, request.text, request.clientId, device)
+        } catch (refused: SessionException) {
+            audit.chatPromptRefused(device, sessionId, refused.code, hash)
+            throw refused
+        }
+        audit.chatPrompt(device, sessionId, hash)
         call.respond(HttpStatusCode.Accepted, Accepted())
     }
     post("/sessions/{id}/threads/{threadId}/cancel") {

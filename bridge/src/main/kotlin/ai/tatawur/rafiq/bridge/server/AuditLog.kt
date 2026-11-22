@@ -13,6 +13,14 @@ interface AuditLog {
         textSha256: String,
     )
 
+    /** A prompt from Chat that the bridge refused, with the refusal's [code], for example `input_not_empty`. */
+    fun chatPromptRefused(
+        deviceId: String,
+        sessionId: String,
+        code: String,
+        textSha256: String,
+    )
+
     /** An approval answered from a phone. [optionId] is the option chosen. */
     fun approvalAnswer(
         deviceId: String,

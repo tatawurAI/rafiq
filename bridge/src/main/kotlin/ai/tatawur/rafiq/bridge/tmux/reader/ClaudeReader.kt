@@ -51,6 +51,11 @@ class ClaudeReader(
     private val paneOwners = ConcurrentHashMap<String, String>()
     private val missedPanes = ConcurrentHashMap<String, Long>()
     private val known = ConcurrentHashMap<String, Long>()
+
+    /** The agent pid last proven to run inside each pane, so the process tree is read once per process. */
+    private val verified = ConcurrentHashMap<String, Long>()
+
+    @Volatile private var serverSocket: Path? = null
     private val guard = SendGuard(io, statuses)
     private val creating = Mutex()
     private val approvals =
@@ -58,24 +63,66 @@ class ClaudeReader(
             sessions[approval.sessionId.removePrefix(TMUX_SESSION_PREFIX)]?.onApprovalSettled(approval.paneId)
         })
     private val context =
-        ReaderContext(log, guard, statuses, approvals, offsets, hooksInstalled, scope, nowMs, ioDispatcher, timing)
+        ReaderContext(
+            log,
+            guard,
+            statuses,
+            approvals,
+            offsets,
+            hooksInstalled,
+            scope,
+            nowMs,
+            ioDispatcher,
+            timing,
+            projectsDir,
+            registry,
+        )
 
     override suspend fun onEvent(envelope: HookEnvelope) {
-        if (envelope.agent == CLAUDE_CODE) owner(envelope.pane)?.let { session(it) }?.onEvent(envelope)
+        route(envelope)?.onEvent(envelope)
     }
 
-    override suspend fun onPermission(envelope: HookEnvelope): HookReply? =
-        if (envelope.agent == CLAUDE_CODE) owner(envelope.pane)?.let { session(it) }?.onPermission(envelope) else null
+    override suspend fun onPermission(envelope: HookEnvelope): HookReply? = route(envelope)?.onPermission(envelope)
+
+    /**
+     * The session a hook call belongs to, or null to drop it. A call counts only when it is from Claude Code, from
+     * a pane of the bridge's own tmux server, in an allowed session, and from an agent process that runs inside
+     * that pane. A pane id alone is not enough: another tmux server has panes with the same ids, and a pane id is
+     * reused once its pane closes.
+     */
+    private suspend fun route(envelope: HookEnvelope): TmuxChatSession? =
+        if (envelope.agent == CLAUDE_CODE && onThisServer(envelope.tmuxSocket)) {
+            owner(envelope.pane)
+                ?.takeIf { agentInPane(envelope.pane, envelope.agentPid) }
+                ?.let { session(it) }
+        } else {
+            null
+        }
+
+    /** True when [socket] is the bridge's tmux server, or the hook did not say. */
+    private suspend fun onThisServer(socket: String?): Boolean {
+        if (socket == null) return true
+        val ours = serverSocket ?: io.socketPath()?.let(::canonical)?.also { serverSocket = it }
+        return ours != null && ours == canonical(socket)
+    }
+
+    private suspend fun agentInPane(
+        paneId: String,
+        agentPid: Long?,
+    ): Boolean =
+        agentPid == null || verified[paneId] == agentPid ||
+            io.runsAgent(paneId, agentPid).also { if (it) verified[paneId] = agentPid }
 
     override suspend fun prompt(
         sessionId: String,
         text: String,
         clientId: String?,
+        deviceId: String?,
     ) {
         val session =
             sessions[sessionId.removePrefix(TMUX_SESSION_PREFIX)]
                 ?: throw SessionException.Conflict(Refusal.NOT_RUNNING.code, Refusal.NOT_RUNNING.message)
-        session.prompt(text, clientId)
+        session.prompt(text, clientId, deviceId)
     }
 
     override fun ownsApproval(approvalId: String): Boolean = approvals.owns(approvalId)
@@ -103,10 +150,16 @@ class ClaudeReader(
         panes: List<PaneInfo>,
         processes: Map<Int, Pair<Int, String>>,
     ) {
-        val claude =
-            panes.filter { allows(it.sessionName) }.mapNotNull { pane ->
-                AgentDetector.claudeProcessesUnder(pane.panePid, processes).maxOrNull()?.let { pane to it.toLong() }
+        val seen = panes.map(PaneInfo::paneId).toSet()
+        // Pane ids are reused once a pane closes, so nothing is kept about a pane the scan no longer has.
+        paneOwners.keys.retainAll(seen)
+        missedPanes.keys.retainAll(seen)
+        verified.keys.retainAll(seen)
+        val candidates =
+            panes.filter { allows(it.sessionName) }.associateWith { pane ->
+                AgentDetector.claudeProcessesUnder(pane.panePid, processes).map(Int::toLong)
             }
+        val claude = candidates.mapNotNull { (pane, pids) -> pids.maxOrNull()?.let { pane to it } }
         val changed = claude.any { (pane, pid) -> known[pane.paneId] != pid }
         val listed = if (changed) statuses.statuses().orEmpty() else emptyMap()
         for ((pane, pid) in claude) {
@@ -119,7 +172,14 @@ class ClaudeReader(
             val found =
                 byName[name].orEmpty().map { (pane, pid) ->
                     val status = listed[pid]
-                    FoundPane(pane.paneId, pid, pane.isCurrent, status?.sessionId, recordPathFor(projectsDir, status))
+                    FoundPane(
+                        paneId = pane.paneId,
+                        agentPid = pid,
+                        isCurrent = pane.isCurrent,
+                        claudeSessionId = status?.sessionId,
+                        recordPath = recordPathFor(projectsDir, status),
+                        candidates = candidates[pane].orEmpty(),
+                    )
                 }
             if (found.isEmpty() && !sessions.containsKey(name)) continue
             session(name)?.onFound(found)
@@ -174,6 +234,14 @@ class ClaudeReader(
     companion object {
         const val CLAUDE_CODE = "claude-code"
         private const val MISS_RETRY_MS = 5_000L
+
+        private fun canonical(path: String): Path? =
+            runCatching {
+                Path
+                    .of(
+                        path,
+                    ).toRealPath()
+            }.getOrElse { runCatching { Path.of(path).normalize() }.getOrNull() }
 
         /** Claude Code's folder of session records, one folder per project. */
         fun defaultProjectsDir(): Path? = System.getProperty("user.home")?.let { Path.of(it, ".claude", "projects") }

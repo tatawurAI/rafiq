@@ -62,7 +62,13 @@ Rafiq is pre-alpha and nothing is released. Today the bridge runs Claude Code se
 - JDK 21
 - The Android SDK, to build the app. The app needs Android 12 (API 31) or newer.
 - [Tailscale](https://tailscale.com) on your server and on your phone
-- An ACP adapter for your agent, installed on your server. For Claude Code that is `claude-agent-acp`.
+- An ACP adapter for your agent, installed on your server. For Claude Code that is `claude-agent-acp`, from npm, and Claude Code itself must be signed in on the server:
+
+  ```sh
+  npm install -g @agentclientprotocol/claude-agent-acp
+  ```
+
+  To run it without a global install, use `npx` in `RAFIQ_AGENTS` instead, pinned to a version: `claude-code=npx -y @agentclientprotocol/claude-agent-acp@0.109.0`.
 
 ## Quickstart
 

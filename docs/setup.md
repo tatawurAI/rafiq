@@ -9,6 +9,7 @@ The examples use `box.example.ts.net` for your server's name. Use your own.
 - Tailscale on your server, signed in to the same tailnet as your phone. The commands here were checked against Tailscale 1.98. Older versions used a different `tailscale serve` syntax, so update first if a command below is refused.
 - Tailscale on your phone, connected.
 - The bridge built and configured as in the [README](../README.md#quickstart), with a device token in `RAFIQ_DEVICE_TOKEN`.
+- `claude-agent-acp` installed on your server, as the [README](../README.md#requirements) shows, and Claude Code signed in there.
 
 ## 1. Turn on HTTPS certificates for your tailnet
 

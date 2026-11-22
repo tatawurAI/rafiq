@@ -81,11 +81,8 @@ internal enum class InputBox {
  */
 @Suppress("ReturnCount") // Each sign that the box is not showing answers ABSENT right away.
 internal fun readInputBox(screen: String): InputBox {
-    val lines = screen.lines()
-    val rules = lines.indices.filter { stripEscapes(lines[it]).trimStart().startsWith(RULE) }
-    if (rules.size < 2) return InputBox.ABSENT
-    val inside = lines.subList(rules[rules.size - 2] + 1, rules.last()).filter { stripEscapes(it).isNotBlank() }
-    val first = inside.firstOrNull() ?: return InputBox.ABSENT
+    val inside = boxLines(screen)
+    val first = inside?.firstOrNull() ?: return InputBox.ABSENT
     // In shell mode the box starts with `!` in place of the prompt mark: a line is in it, to run as a command.
     if (stripEscapes(first).trimStart().startsWith(SHELL_MARK)) return InputBox.DRAFT
     val mark = first.indexOf(PROMPT_MARK)
@@ -93,6 +90,46 @@ internal fun readInputBox(screen: String): InputBox {
     val typed = listOf(first.substring(mark + PROMPT_MARK.length)) + inside.drop(1)
     return if (typed.any(::hasUndimmedText)) InputBox.DRAFT else InputBox.EMPTY
 }
+
+/** The lines between the last two rules of the screen that hold something, or null when there is no box. */
+private fun boxLines(screen: String): List<String>? {
+    val lines = screen.lines()
+    val rules = lines.indices.filter { stripEscapes(lines[it]).trimStart().startsWith(RULE) }
+    if (rules.size < 2) return null
+    return lines.subList(rules[rules.size - 2] + 1, rules.last()).filter { stripEscapes(it).isNotBlank() }
+}
+
+/**
+ * Whether the input box on [screen] shows the start of [text], right after the prompt mark or the shell mark.
+ * This is how the bridge knows, before Enter, that the box holds its paste and not a dialog or Claude's own
+ * suggestion. A long paste shows as `[Pasted text #N +M lines]`, which counts too. A `!` line shows without its
+ * `!` once the box is in shell mode.
+ */
+@Suppress("ReturnCount") // One early answer per sign that the paste is not in the box.
+internal fun boxShowsPaste(
+    screen: String,
+    text: String,
+): Boolean {
+    val first = boxLines(screen)?.firstOrNull() ?: return false
+    val shown = stripEscapes(first).replace('\u00a0', ' ').trim()
+    val content =
+        when {
+            shown.startsWith(PROMPT_MARK) -> shown.removePrefix(PROMPT_MARK)
+            shown.startsWith(SHELL_MARK) -> shown.removePrefix(SHELL_MARK)
+            else -> return false
+        }.let(::squash)
+    if (PASTED_PLACEHOLDER.containsMatchIn(content)) return true
+    val start = squash(text.lineSequence().first()).take(PASTE_PREFIX_CHARS)
+    if (start.isEmpty()) return false
+    return content.startsWith(start) || (start.startsWith(SHELL_MARK) && content.startsWith(squash(start.drop(1))))
+}
+
+private fun squash(text: String): String = text.trim().replace(Regex("\\s+"), " ")
+
+private val PASTED_PLACEHOLDER = Regex("^\\[Pasted text #\\d+")
+
+/** How much of the start of a paste must show in the box. A long first line wraps past the box's width. */
+private const val PASTE_PREFIX_CHARS = 20
 
 private val ESCAPE = Regex("\u001b\\[[0-9;?]*[ -/]*[@-~]")
 
@@ -251,19 +288,28 @@ internal class SendGuard(
             }
         if (notTyped != null) return notTyped
         delay(settle)
+        val refusal = beforeEnterCheck(target, text, approvalOpen) ?: enter(target, beforeEnter)
+        return refusal?.let(Refusal::leftInBox)
+    }
+
+    /** The checks right before Enter. Null when Enter may be pressed. */
+    private suspend fun beforeEnterCheck(
+        target: PaneTarget,
+        text: String,
+        approvalOpen: () -> Boolean,
+    ): Refusal? {
         val stillRuns = io.runsAgent(target.paneId, target.agentPid)
         val status = if (stillRuns) statusOf(target)?.status else null
-        val box = if (status == AgentStatus.IDLE) io.capture(target.paneId)?.let(::readInputBox) else null
-        val refusal =
-            when {
-                !stillRuns -> Refusal.NOT_RUNNING
-                status == AgentStatus.WAITING || approvalOpen() -> Refusal.WAITING
-                status != AgentStatus.IDLE -> Refusal.UNKNOWN
-                box == InputBox.ABSENT -> Refusal.WAITING
-                box != InputBox.DRAFT -> Refusal.UNKNOWN
-                else -> enter(target, beforeEnter)
-            }
-        return refusal?.let(Refusal::leftInBox)
+        val screen = if (status == AgentStatus.IDLE) io.capture(target.paneId) else null
+        val box = screen?.let(::readInputBox)
+        return when {
+            !stillRuns -> Refusal.NOT_RUNNING
+            status == AgentStatus.WAITING || approvalOpen() -> Refusal.WAITING
+            status != AgentStatus.IDLE -> Refusal.UNKNOWN
+            box == InputBox.ABSENT -> Refusal.WAITING
+            box != InputBox.DRAFT || !boxShowsPaste(screen.orEmpty(), text) -> Refusal.UNKNOWN
+            else -> null
+        }
     }
 
     private suspend fun enter(

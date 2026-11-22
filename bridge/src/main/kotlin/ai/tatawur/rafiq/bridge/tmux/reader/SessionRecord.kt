@@ -74,20 +74,28 @@ internal object SessionRecord {
         }.getOrNull()
 
     /**
-     * [raw], a record path from a hook, when it is safe to read: an absolute path whose folder resolves inside
-     * [root], Claude Code's folder of records, and that is a regular file or does not exist yet. A link is refused,
-     * so a hook cannot point the bridge at another file. Null otherwise, and always when [root] is null.
+     * [raw], a record path from a hook, when it is safe to read: an absolute path to a regular file, or one that does
+     * not exist yet, whose folder resolves inside [root], Claude Code's folder of records. A Claude Code that keeps
+     * its settings elsewhere (`CLAUDE_CONFIG_DIR`) writes records to `<config>/projects/<project>/<id>.jsonl`, so
+     * such a path inside [home] is accepted too. A link is refused, so a hook cannot point the bridge at another
+     * file. Null otherwise.
      */
     @Suppress("ReturnCount") // One early refusal per check.
     fun safePath(
         raw: String,
         root: Path?,
+        home: Path? = null,
     ): Path? {
         val path = runCatching { Path.of(raw) }.getOrNull()?.takeIf { it.isAbsolute }?.normalize() ?: return null
-        val realRoot = root?.let { runCatching { it.toRealPath() }.getOrNull() } ?: return null
         val folder = path.parent?.let { runCatching { it.toRealPath() }.getOrNull() } ?: return null
         val file = path.fileName ?: return null
-        if (!folder.startsWith(realRoot)) return null
+        if (!file.toString().endsWith(".jsonl")) return null
+        val realRoot = root?.let { runCatching { it.toRealPath() }.getOrNull() }
+        val realHome = home?.let { runCatching { it.toRealPath() }.getOrNull() }
+        val inRoot = realRoot != null && folder.startsWith(realRoot)
+        val inConfig =
+            realHome != null && folder.parent?.fileName?.toString() == "projects" && folder.startsWith(realHome)
+        if (!inRoot && !inConfig) return null
         val resolved = folder.resolve(file)
         val usable =
             !Files.exists(resolved, LinkOption.NOFOLLOW_LINKS) ||

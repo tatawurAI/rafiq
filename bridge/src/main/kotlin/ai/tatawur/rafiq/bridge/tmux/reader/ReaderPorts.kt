@@ -25,11 +25,17 @@ interface ReaderLog {
 
     suspend fun threads(sessionId: String): List<AgentThread>
 
+    /** The session's newest event `seq`, or 0 when it has none. */
+    suspend fun lastSeq(sessionId: String): Long
+
     /**
-     * The text of the agent messages among the session's newest events, so a reader started after a restart does
-     * not show again what an earlier run showed.
+     * The agent messages logged after [afterSeq], as id and text, oldest first. A reader started after a restart
+     * uses them so it does not show again what an earlier run showed but had not read from the record yet.
      */
-    suspend fun recentAgentTexts(sessionId: String): List<String>
+    suspend fun agentMessagesAfter(
+        sessionId: String,
+        afterSeq: Long,
+    ): List<Pair<String, String>>
 }
 
 /** [ReaderLog] on the bridge's event log. */
@@ -47,13 +53,19 @@ class EventLogReaderLog(
 
     override suspend fun threads(sessionId: String): List<AgentThread> = log.threads(sessionId)
 
-    override suspend fun recentAgentTexts(sessionId: String): List<String> =
-        log.latest(sessionId, RECENT_EVENTS).mapNotNull { event ->
+    override suspend fun lastSeq(sessionId: String): Long = log.latest(sessionId, 1).firstOrNull()?.seq ?: 0
+
+    override suspend fun agentMessagesAfter(
+        sessionId: String,
+        afterSeq: Long,
+    ): List<Pair<String, String>> =
+        log.after(sessionId, afterSeq, RECENT_EVENTS).mapNotNull { event ->
             (event.payload as? EventPayload.Message)
                 ?.takeIf { it.role == MessageRole.AGENT && !it.isStreaming }
-                ?.content
-                ?.filterIsInstance<ContentBlock.Markdown>()
-                ?.joinToString("") { it.markdown }
+                ?.let { message ->
+                    message.id to
+                        message.content.filterIsInstance<ContentBlock.Markdown>().joinToString("") { it.markdown }
+                }
         }
 
     private companion object {

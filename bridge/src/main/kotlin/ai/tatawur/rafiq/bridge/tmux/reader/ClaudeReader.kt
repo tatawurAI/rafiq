@@ -47,6 +47,7 @@ class ClaudeReader(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val timing: ReaderTiming = ReaderTiming(),
     private val present: (Session) -> Session = { it },
+    private val homeDir: Path? = System.getProperty("user.home")?.let { Path.of(it) },
 ) : HookSink,
     TmuxChat {
     private val sessions = ConcurrentHashMap<String, TmuxChatSession>()
@@ -79,6 +80,7 @@ class ClaudeReader(
             projectsDir,
             registry,
             present,
+            homeDir,
         )
 
     override suspend fun onEvent(envelope: HookEnvelope) {

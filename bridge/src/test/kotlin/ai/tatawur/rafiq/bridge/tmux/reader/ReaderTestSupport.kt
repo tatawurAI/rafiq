@@ -40,7 +40,17 @@ class FakeReaderLog : ReaderLog {
     override suspend fun threads(sessionId: String): List<AgentThread> =
         listOf(AgentThread("main", SESSION, null, ThreadKind.MAIN, "weather-app", AgentState.DONE))
 
-    override suspend fun recentAgentTexts(sessionId: String): List<String> = agentTexts()
+    override suspend fun lastSeq(sessionId: String): Long = events.size.toLong()
+
+    override suspend fun agentMessagesAfter(
+        sessionId: String,
+        afterSeq: Long,
+    ): List<Pair<String, String>> =
+        events
+            .drop(afterSeq.toInt())
+            .filterIsInstance<EventPayload.Message>()
+            .filter { it.role == ai.tatawur.rafiq.protocol.MessageRole.AGENT && !it.isStreaming }
+            .map { it.id to (it.content.single() as ai.tatawur.rafiq.protocol.ContentBlock.Markdown).markdown }
 
     inline fun <reified T : EventPayload> all(): List<T> = events.filterIsInstance<T>()
 }
@@ -68,7 +78,8 @@ class FakePaneIo : PaneIo {
         text: String,
     ): Boolean {
         pasted += text
-        screen = box("[Pasted text]")
+        // Claude shows the start of what was pasted after the prompt mark.
+        screen = box(text.lineSequence().first().take(60))
         onPaste()
         return true
     }
@@ -159,6 +170,7 @@ fun TestScope.reader(
     hooksInstalled: suspend (String) -> Boolean = { true },
     projectsDir: java.nio.file.Path? = null,
     present: (Session) -> Session = { it },
+    homeDir: java.nio.file.Path? = null,
 ) = ClaudeReader(
     log = log,
     io = io,
@@ -174,6 +186,7 @@ fun TestScope.reader(
     ioDispatcher = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler),
     timing = timing,
     present = present,
+    homeDir = homeDir,
 )
 
 /** One line of a session record, in the shape Claude Code writes. */

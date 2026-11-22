@@ -1,8 +1,10 @@
 package ai.tatawur.rafiq.bridge.tmux
 
 import ai.tatawur.rafiq.bridge.FakeAdapter
+import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.EventPayload
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -223,6 +225,37 @@ class TmuxSessionSourceTest {
                 .session
         assertEquals("plan", update.permissionMode)
         assertEquals(bridge.tmuxSource!!.present(stored()).terminalAllowed, update.terminalAllowed)
+    }
+
+    @Test
+    fun a_failed_poll_after_a_good_one_keeps_which_sessions_terminal_may_open() {
+        val failing = dir.resolve("tmux-fails")
+        val tmuxStandIn = dir.resolve("tmux")
+        Files.writeString(
+            tmuxStandIn,
+            "#!/bin/sh\n[ -e '$failing' ] && { echo boom >&2; exit 1; }\n" +
+                "case \"$1\" in\n" +
+                "  list-sessions) printf '\$1\\t0\\tweather-app\\n' ;;\n" +
+                "  list-panes) printf 'weather-app\\t%%1\\t999999\\t1\\t1\\t/tmp\\n' ;;\n" +
+                "esac\n",
+        )
+        tmuxStandIn.toFile().setExecutable(true)
+        val settings =
+            TerminalSettings(true, setOf("weather-app"), terminal = true, shellSessions = setOf("weather-app"))
+        val gate = TerminalGate(settings, TmuxServer(binary = tmuxStandIn.toString()))
+        val log = EventLog.open(null, Dispatchers.IO.limitedParallelism(1))
+        val source = TmuxSessionSource(gate, log, AgentDetector(claudeCommand = "rafiq-no-such-claude"))
+        try {
+            runBlocking { source.poll() }
+            assertTrue(gate.canOpen("weather-app"), "the good poll opens the session")
+
+            Files.createFile(failing)
+            runBlocking { source.poll() }
+
+            assertTrue(gate.canOpen("weather-app"), "one failed poll took Terminal away")
+        } finally {
+            log.close()
+        }
     }
 
     @Test

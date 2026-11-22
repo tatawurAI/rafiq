@@ -1,6 +1,8 @@
 package ai.tatawur.rafiq.bridge.tmux
 
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -103,6 +105,12 @@ class TestTmux : AutoCloseable {
     override fun close() {
         desks.forEach { it.destroyForcibly() }
         runCatching { process("tmux", "-L", socket, "kill-server").waitFor(5, TimeUnit.SECONDS) }
+        // A server that ended on its own can leave its socket file behind. This one is ours to remove.
+        runCatching {
+            val uid = process("id", "-u").text().trim()
+            val base = System.getenv("TMUX_TMPDIR") ?: "/tmp"
+            Files.deleteIfExists(Path.of(base, "tmux-$uid", socket))
+        }
     }
 
     private fun process(vararg command: String): Process =

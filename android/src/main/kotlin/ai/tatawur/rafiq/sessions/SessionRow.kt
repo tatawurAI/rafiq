@@ -11,6 +11,7 @@ import ai.tatawur.rafiq.ui.components.ConnectionBanner
 import ai.tatawur.rafiq.ui.components.FeedbackBar
 import ai.tatawur.rafiq.ui.components.StatusBadge
 import ai.tatawur.rafiq.ui.components.StatusDot
+import ai.tatawur.rafiq.ui.components.sessionStatusLabel
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
@@ -96,7 +97,7 @@ fun SessionRow(
                     fullSize = fullSizeActions,
                 )
             } else {
-                item.lastLine?.let {
+                item.lastLine?.let(::previewLine)?.takeIf { it.isNotEmpty() }?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.bodyMedium,
@@ -105,7 +106,8 @@ fun SessionRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                StatusBadge(session.status)
+                // A summary has a last line once the session has a message.
+                StatusBadge(session.status, overrideLabel = sessionStatusLabel(session.status, item.lastLine != null))
             }
         }
     }

@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.bridge.tmux
 
+import ai.tatawur.rafiq.bridge.server.LoggingAuditLog
 import ai.tatawur.rafiq.protocol.api.MAX_HISTORY_LINES
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import ai.tatawur.rafiq.protocol.protocolJson
@@ -26,6 +27,7 @@ class TerminalHistoryTest {
     private val tmux = TestTmux()
     private var bridge: RealBridge? = null
     private val calls by lazy { dir.resolve("tmux-calls.txt") }
+    private val auditLines = java.util.concurrent.CopyOnWriteArrayList<String>()
 
     @AfterEach
     fun cleanUp() {
@@ -39,8 +41,34 @@ class TerminalHistoryTest {
         Files.writeString(wrapper, "#!/bin/sh\necho \"\$@\" >> '$calls'\nexec tmux \"\$@\"\n")
         wrapper.toFile().setExecutable(true)
         val settings = TerminalSettings(true, sessions.toSet(), tmux.socket, TerminalLimits())
-        return RealBridge(dir.resolve("data"), openGate(settings, TmuxServer(tmux.socket, wrapper.toString())))
-            .also { bridge = it }
+        val gate = openGate(settings, TmuxServer(tmux.socket, wrapper.toString()))
+        return RealBridge(dir.resolve("data"), gate, audit = LoggingAuditLog(auditLines::add)).also { bridge = it }
+    }
+
+    @Test
+    fun a_device_that_reads_too_often_gets_429_and_every_read_is_audited() {
+        tmux.newSession("weather-app")
+        val bridge = bridgeFor("weather-app")
+        val window = deskWindow()
+
+        val statuses = (1..6).map { bridge.get("/terminal/history?session=tmux-weather-app&window=$window&lines=40") }
+
+        assertEquals(List(5) { 200 } + 429, statuses.map { it.statusCode() })
+        assertTrue("too_many_requests" in statuses.last().body())
+        assertEquals(
+            "2",
+            statuses
+                .last()
+                .headers()
+                .firstValue("Retry-After")
+                .orElse(""),
+        )
+        assertEquals(200, bridge.get("/terminal/history?session=tmux-weather-app", device = "tablet").statusCode())
+        assertEquals(
+            List(5) { "Terminal history read: device=phone session=tmux-weather-app window=$window lines=40" } +
+                "Terminal history read: device=tablet session=tmux-weather-app window=current lines=$MAX_HISTORY_LINES",
+            auditLines,
+        )
     }
 
     private fun recorded(): List<String> = if (Files.exists(calls)) Files.readAllLines(calls) else emptyList()

@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.bridge.tmux
 
+import ai.tatawur.rafiq.bridge.server.AuditLog
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import ai.tatawur.rafiq.bridge.sessions.TMUX_SESSION_PREFIX
 import io.ktor.server.application.ApplicationCall
@@ -13,6 +14,9 @@ class TerminalGate(
     val server: TmuxServer = TmuxServer(settings.socket),
 ) {
     val slots = TerminalSlots(settings.limits)
+
+    /** How often each device may read scrollback, and how many reads run at once. */
+    val historyLimits = HistoryLimits()
 
     /** The sizes sessions had before a view took them, so the last view to leave gives them back. */
     val sessionSizes = SessionSizes()
@@ -57,9 +61,10 @@ class TerminalService(
         route: Route,
         connections: ConnectionRegistry,
         deviceOf: (ApplicationCall) -> String,
+        audit: AuditLog,
     ) {
         route.terminalRoute(gate, connections, deviceOf)
-        route.terminalHistoryRoute(gate)
+        route.terminalHistoryRoute(gate, deviceOf, audit)
     }
 
     /**

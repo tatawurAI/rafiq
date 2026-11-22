@@ -98,7 +98,7 @@ class TmuxControlClient(
         try {
             // Set after attach: set before it, the session is destroyed at once.
             command("set-option destroy-unattached on")
-            command("refresh-client -f pause-after=$PAUSE_AFTER_SECONDS")
+            command("refresh-client -f pause-after=${limits.pauseAfterSeconds}")
             command("refresh-client -C ${limits.clampCols(cols)}x${limits.clampRows(rows)}")
             val here = command("display-message -p '#{window_id} #{pane_id}'").first().trim().split(' ')
             target.windowId = here[0]
@@ -210,7 +210,6 @@ class TmuxControlClient(
     }
 
     private companion object {
-        const val PAUSE_AFTER_SECONDS = 2
         const val INPUT_CHUNK = 256
         const val COMMAND_TIMEOUT_SECONDS = 10L
         const val CLOSE_WAIT_SECONDS = 2L

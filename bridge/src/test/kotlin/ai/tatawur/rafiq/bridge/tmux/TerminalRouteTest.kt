@@ -88,6 +88,34 @@ class TerminalRouteTest {
     }
 
     @Test
+    fun a_size_the_desk_took_is_announced_once_with_one_fresh_snapshot() {
+        tmux.newSession("weather-app")
+        val desk = tmux.attachDesk("weather-app", 120, 40)
+        val socket = bridgeFor("weather-app").terminal("weather-app")
+        socket.sendResize(60, 20)
+        socket.snapshot()
+        eventuallyEquals("the phone has the size", 60 to 20) { tmux.windowSize("weather-app") }
+
+        // The desk takes the size back in steps that all end at one size, so tmux reports several layout changes.
+        desk.send("refresh-client -C 100x30")
+        desk.typeSomething()
+        desk.typeSomething()
+        desk.typeSomething()
+        eventuallyEquals("the desk has the size", 100 to 30) { tmux.windowSize("weather-app") }
+
+        val sizes = mutableListOf<String>()
+        var snapshots = 0
+        val deadline = System.nanoTime() + SETTLE_MS * 1_000_000
+        while (System.nanoTime() < deadline) {
+            val item = runCatching { socket.next(1) }.getOrNull() ?: continue
+            if (item is Received.Text && "\"type\":\"size\"" in item.text) sizes += item.text
+            if (item is Received.Text && "\"type\":\"snapshot\"" in item.text) snapshots++
+        }
+        assertEquals(1, sizes.size, "the new size was announced more than once: $sizes")
+        assertEquals(1, snapshots, "more than one snapshot followed")
+    }
+
+    @Test
     fun a_resize_to_an_absurd_size_is_clamped_on_the_first_resize_and_on_later_ones() {
         tmux.newSession("weather-app")
         val socket = bridgeFor("weather-app").terminal("weather-app")
@@ -153,6 +181,20 @@ class TerminalRouteTest {
         socket.snapshot()
 
         // Output the bridge had to drop is replaced by a screen, which the stream then continues from.
+        socket.snapshot()
+        assertIs<Received.Binary>(socket.until { it is Received.Binary })
+    }
+
+    @Test
+    fun a_pane_tmux_paused_is_continued_and_followed_by_a_fresh_snapshot() {
+        tmux.newSession("flood", "yes")
+        // Pause as soon as any output is waiting, and leave the bridge's own queue limit out of it.
+        val limits = TerminalLimits(pauseAfterSeconds = 0, maxPendingOutputBytes = Int.MAX_VALUE)
+        val socket = bridgeFor("flood", limits = limits).terminal("flood")
+        socket.sendResize(80, 24)
+        socket.snapshot()
+
+        // A pause drops what tmux produced meanwhile. The screen that follows the continue replaces it.
         socket.snapshot()
         assertIs<Received.Binary>(socket.until { it is Received.Binary })
     }

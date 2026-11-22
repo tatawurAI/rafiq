@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge.tmux
 
 import java.net.InetAddress
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
 /**
@@ -108,6 +109,9 @@ data class TerminalSettings(
  *   is closed.
  * @property pauseAfterSeconds how long tmux lets this client fall behind before it pauses the pane. A pause
  *   is answered with a fresh snapshot.
+ * @property opensBurst how many terminals a device may open at once, before [opensPerMinute] applies.
+ * @property maxAge how long one terminal socket may stay open, whatever it is doing.
+ * @property abuseResizes how many size changes in 10 s count as abuse and end the socket. Fewer are coalesced.
  * @property resizeBurst how many size changes a socket may send at once, before [resizesPerSecond] applies.
  * @property maxPendingOutputBytes how much pane output may wait for a slow phone before the bridge drops it
  *   and sends a fresh screen instead.
@@ -124,8 +128,12 @@ data class TerminalLimits(
     val idleTimeout: Duration = DEFAULT_IDLE_TIMEOUT,
     val maxPendingOutputBytes: Int = DEFAULT_PENDING_OUTPUT_BYTES,
     val pauseAfterSeconds: Int = DEFAULT_PAUSE_AFTER_SECONDS,
+    val opensBurst: Int = DEFAULT_OPENS_BURST,
+    val opensPerMinute: Double = DEFAULT_OPENS_PER_MINUTE,
+    val maxAge: Duration = DEFAULT_MAX_AGE,
+    val abuseResizes: Int = DEFAULT_ABUSE_RESIZES,
     val resizeBurst: Int = DEFAULT_RESIZE_BURST,
-    val resizesPerSecond: Int = DEFAULT_RESIZES_PER_SECOND,
+    val resizesPerSecond: Double = DEFAULT_RESIZES_PER_SECOND,
 ) {
     fun clampCols(cols: Int): Int = cols.coerceIn(minCols, maxCols)
 
@@ -134,7 +142,11 @@ data class TerminalLimits(
     private companion object {
         const val DEFAULT_PAUSE_AFTER_SECONDS = 2
         const val DEFAULT_RESIZE_BURST = 10
-        const val DEFAULT_RESIZES_PER_SECOND = 5
+        const val DEFAULT_RESIZES_PER_SECOND = 5.0
+        const val DEFAULT_OPENS_BURST = 5
+        const val DEFAULT_OPENS_PER_MINUTE = 5.0
+        const val DEFAULT_ABUSE_RESIZES = 60
+        val DEFAULT_MAX_AGE: Duration = 8.hours
         const val DEFAULT_MIN_COLS = 20
         const val DEFAULT_MAX_COLS = 500
         const val DEFAULT_MIN_ROWS = 5

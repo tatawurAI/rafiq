@@ -336,7 +336,7 @@ class TerminalRouteTest {
         assertFalse(socket.closedWithin(1), "the same size again was counted")
 
         // The server closes part way, so a later send may find the socket closed.
-        repeat(40) { runCatching { socket.sendResize(61 + it, 20) } }
+        repeat(150) { runCatching { socket.sendResize(61 + it, 20) } }
         assertTrue(socket.closedWithin(10), "a flood of sizes was not stopped")
         eventually("the view session is gone", check = ::noViewSession)
     }
@@ -351,6 +351,75 @@ class TerminalRouteTest {
         socket.sendText("x".repeat(65))
 
         assertTrue(socket.closedWithin(10), "an oversized text frame was accepted")
+    }
+
+    @Test
+    fun a_burst_of_sizes_like_a_fold_animation_ends_at_the_last_size_and_does_not_end_the_view() {
+        tmux.newSession("weather-app")
+        val socket = bridgeFor("weather-app").terminal("weather-app")
+        socket.sendResize(60, 20)
+        socket.snapshot()
+
+        // 40 sizes at once: more than the burst, far fewer than abuse. Only the newest has to arrive.
+        repeat(40) { socket.sendResize(61 + it, 20) }
+
+        eventuallyEquals("the window ends at the last size", 100 to 20) { tmux.windowSize("weather-app") }
+        assertFalse(socket.closedWithin(1), "an animation ended the view")
+    }
+
+    @Test
+    fun a_device_that_opens_terminals_too_often_is_refused_for_a_moment() {
+        tmux.newSession("weather-app")
+        val bridge = bridgeFor("weather-app", limits = TerminalLimits(opensBurst = 2, opensPerMinute = 1.0))
+        repeat(2) {
+            val socket = bridge.terminal("weather-app", "a")
+            socket.sendResize(60, 20)
+            socket.snapshot()
+            socket.close()
+        }
+
+        val refused = bridge.terminal("weather-app", "a").until { it is Received.Closed } as Received.Closed
+
+        assertEquals(1013, refused.code)
+        assertTrue("too many terminal opens" in refused.reason, refused.reason)
+        // Another device is not held up by it.
+        val other = bridge.terminal("weather-app", "b")
+        other.sendResize(60, 20)
+        other.snapshot()
+    }
+
+    @Test
+    fun a_terminal_closes_at_its_maximum_age_even_while_output_keeps_flowing() {
+        tmux.newSession("ticker", "bash -c 'while :; do echo tick; sleep 0.1; done'")
+        val bridge = bridgeFor("ticker", limits = TerminalLimits(maxAge = 1500.milliseconds))
+        val socket = bridge.terminal("ticker")
+        socket.sendResize(60, 20)
+        socket.snapshot()
+
+        assertTrue(socket.closedWithin(15), "a busy terminal stayed open past its maximum age")
+        eventually("the view session is gone", check = ::noViewSession)
+    }
+
+    @Test
+    fun a_held_escape_is_never_sent_after_the_key_that_followed_it() {
+        val keys = dir.resolve("keys.bin")
+        tmux.newSession("weather-app", "sh -c 'stty raw -echo; cat > $keys'")
+        val socket = bridgeFor("weather-app").terminal("weather-app")
+        socket.sendResize(60, 20)
+        socket.snapshot()
+
+        // Each Escape is followed by a key right at the moment the wait for more of a sequence runs out.
+        repeat(ROUNDS) {
+            socket.sendKeys(byteArrayOf(0x1b))
+            Thread.sleep(ESCAPE_EDGE_MS)
+            socket.sendKeys("x".toByteArray())
+        }
+
+        eventually({ "all keys arrived, file has ${if (Files.exists(keys)) Files.size(keys) else -1} bytes" }) {
+            Files.exists(keys) && Files.size(keys) >= ROUNDS * 2L
+        }
+        val text = Files.readAllBytes(keys).toString(Charsets.ISO_8859_1)
+        assertFalse("x\u001b" in text.replace("\u001bx", ""), "an Escape arrived after the key that followed it")
     }
 
     @Test
@@ -450,6 +519,8 @@ class TerminalRouteTest {
         val LINE = Regex("L(\\d+)\r?\n")
         val SCREEN_LINE = Regex("L(\\d+)")
         const val CLAIM_THROTTLE_MS = 1100L
+        const val ROUNDS = 120
+        const val ESCAPE_EDGE_MS = 59L
         const val STALL_MS = 5000L
         const val REVOKE_SETTLE_MS = 400L
         const val SETTLE_MS = 2500L

@@ -34,9 +34,12 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerializationException
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.seconds
 
 /** Turns every failure into the one [ApiError] shape, so clients parse a single error format. */
 internal fun io.ktor.server.application.Application.installErrorShape() {
@@ -167,7 +170,12 @@ internal fun Route.eventsRoute(
         // Revoking the device ends this socket at once. The stream below stops when the socket closes.
         val registration =
             connections.register(deviceOf(call), "events") { reason ->
-                close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, reason))
+                // A phone that stopped reading cannot hold the revoke up: after a second the socket is cancelled.
+                val closed =
+                    withTimeoutOrNull(
+                        REVOKE_CLOSE_WAIT,
+                    ) { close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, reason)) }
+                if (closed == null) cancel()
             }
         // A cancelled or dropped connection leaves this block by an exception, and must still leave the registry.
         try {
@@ -208,3 +216,5 @@ internal fun Route.devRoutes(sessions: SessionManager) {
 
 private fun io.ktor.http.Parameters.getOrFail(name: String): String =
     this[name] ?: throw BadRequestException("Missing path parameter '$name'.")
+
+private val REVOKE_CLOSE_WAIT = 1.seconds

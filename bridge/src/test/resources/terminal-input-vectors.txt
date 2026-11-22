@@ -85,3 +85,9 @@ split	\e | [3~	an Escape and the rest of Delete in the next frame
 split	\e[ | 3~	Delete split after the bracket
 split	\e[1;5 | C	Ctrl+Right split before its final byte
 split	\xf0\x9f | \x91\x8d	an emoji split between frames
+reject	\e] | 11;rgb:0000/0000/0000\x07	an OSC opener at the end of a frame, its body in the next
+reject	\eP | >|libvterm(0.3)\e\\	DCS split
+reject	\e_ | Gi=1;OK\e\\	APC split
+reject	\e^ | abc\e\\	PM split
+reject	\eX | abc\e\\	SOS split
+reject	\e] | 52;c;aGk=\e | \\	an OSC split three ways, its ST split too

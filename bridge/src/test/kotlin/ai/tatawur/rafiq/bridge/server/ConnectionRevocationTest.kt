@@ -4,6 +4,7 @@ import ai.tatawur.rafiq.bridge.seed
 import ai.tatawur.rafiq.bridge.tmux.RealBridge
 import ai.tatawur.rafiq.bridge.tmux.Received
 import ai.tatawur.rafiq.bridge.tmux.eventually
+import ai.tatawur.rafiq.protocol.EventPayload
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Timeout
@@ -45,15 +46,43 @@ class ConnectionRevocationTest {
     }
 
     @Test
-    fun a_connection_that_drops_without_a_close_frame_leaves_the_registry() {
+    fun a_handler_that_is_cancelled_mid_stream_leaves_the_registry() {
         val bridge = RealBridge(dir.resolve("data"), gate = null).also { bridge = it }
         runBlocking { bridge.fixture.log.seed() }
         val socket = bridge.socket("/events?session=ses_1&after=0", device = "phone-3")
         socket.until { it is Received.Text }
         assertEquals(1, bridge.connections.openCount("phone-3"))
 
-        socket.drop()
+        // Stopping the server cancels the handler's coroutine while it is streaming. No close frame, no return.
+        bridge.stopServer()
 
-        eventually("the registry forgets a dropped socket") { bridge.connections.openCount("phone-3") == 0 }
+        eventually("the registry forgets a cancelled handler") { bridge.connections.openCount("phone-3") == 0 }
+    }
+
+    @Test
+    fun revoking_a_device_does_not_wait_for_a_phone_that_stopped_reading() {
+        val bridge = RealBridge(dir.resolve("data"), gate = null).also { bridge = it }
+        runBlocking {
+            bridge.fixture.log.seed()
+            // Enough to fill every buffer between the server and a phone that reads nothing.
+            repeat(BIG_EVENTS) {
+                bridge.fixture.log.append("ses_1", EventPayload.MessageDelta("m", "main", "x".repeat(BIG_TEXT)))
+            }
+        }
+        val socket = bridge.socket("/events?session=ses_1&after=0", device = "phone-4")
+        socket.stall()
+        eventually("the registry has the socket") { bridge.connections.openCount("phone-4") == 1 }
+        Thread.sleep(SETTLE_MS)
+
+        val revoke = Thread { runBlocking { bridge.connections.closeAll("phone-4", "device_revoked") } }
+        revoke.start()
+        revoke.join(JOIN_MS)
+
+        assertEquals(false, revoke.isAlive, "the revoke waited for a phone that was not reading")
     }
 }
+
+private const val BIG_EVENTS = 3000
+private const val BIG_TEXT = 8000
+private const val SETTLE_MS = 1500L
+private const val JOIN_MS = 15_000L

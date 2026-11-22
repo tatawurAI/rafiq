@@ -61,25 +61,47 @@ internal class TermQueue(
     }
 }
 
+/** What [TerminalSlots.acquire] decided. */
+sealed interface SlotResult {
+    /** The socket may open. Close [slot] when it ends. */
+    class Granted(
+        val slot: AutoCloseable,
+    ) : SlotResult
+
+    /** The device or the bridge already has all the sockets it may have open. */
+    data object AtLimit : SlotResult
+
+    /** The device opened terminals too often. It may try again in a moment. */
+    data object TooManyOpens : SlotResult
+}
+
 /**
  * Counts the open terminal sockets, per device and in total, so one phone cannot start every tmux client
- * the server will give it.
+ * the server will give it. It also limits how often a device may open one: every open starts a tmux client
+ * and a view session, so a phone that connects and leaves in a loop would cost the server real work.
  */
 class TerminalSlots(
     private val limits: TerminalLimits,
+    private val nowNanos: () -> Long = System::nanoTime,
 ) {
     private val perDevice = mutableMapOf<String, Int>()
+    private val opens = mutableMapOf<String, TokenBucket>()
     private var total = 0
 
-    /** A slot for [deviceId], or null when the device or the bridge is at its limit. Close it when the socket ends. */
+    /** A slot for [deviceId], or why not. A refusal for a full house costs the device nothing. */
     @Synchronized
-    fun acquire(deviceId: String): AutoCloseable? {
+    fun acquire(deviceId: String): SlotResult {
         val held = perDevice[deviceId] ?: 0
-        if (held >= limits.maxPerDevice || total >= limits.maxTotal) return null
+        if (held >= limits.maxPerDevice || total >= limits.maxTotal) return SlotResult.AtLimit
+        val bucket =
+            opens.getOrPut(
+                deviceId,
+            ) { TokenBucket(limits.opensBurst, limits.opensPerMinute / SECONDS_PER_MINUTE, nowNanos) }
+        if (!bucket.tryTake()) return SlotResult.TooManyOpens
         perDevice[deviceId] = held + 1
         total++
         var released = false
-        return AutoCloseable { release(deviceId, released.also { released = true }) }
+        return SlotResult.Granted(AutoCloseable { release(deviceId, released.also { released = true }) })
     }
 
     @Synchronized
@@ -123,7 +145,7 @@ internal class InputBudget(
 /** A token bucket: up to [burst] at once, then [perSecond] a second. For things a phone has no reason to spam. */
 internal class TokenBucket(
     private val burst: Int,
-    private val perSecond: Int,
+    private val perSecond: Double,
     private val nowNanos: () -> Long = System::nanoTime,
 ) {
     private var tokens = burst.toDouble()
@@ -144,3 +166,5 @@ internal class TokenBucket(
         const val NANOS_PER_SECOND = 1_000_000_000.0
     }
 }
+
+private const val SECONDS_PER_MINUTE = 60.0

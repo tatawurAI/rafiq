@@ -62,15 +62,15 @@ class TerminalInputFilter {
     }
 
     /**
-     * Releases what a frame left held when no more came: a lone Escape is the Escape key, and `ESC [` or
-     * `ESC O` is Alt plus that key. Anything else held is dropped, as it will never finish.
+     * Releases what a frame left held when no more came: a lone Escape is the Escape key, and `ESC` plus `[`, `O` or a
+     * string opener is Alt plus that key. Anything else held is dropped, as it will never finish.
      */
     @Synchronized
     fun flush(): ByteArray {
         val keys =
             held.takeIf {
                 !inPaste && !inString && it.isNotEmpty() && it[0].toInt() == ESC &&
-                    (it.size == 1 || (it.size == ALT_LENGTH && it[1].toInt().toChar() in "[O"))
+                    (it.size == 1 || (it.size == ALT_LENGTH && it[1].toInt() in ALT_AFTER_WAIT))
             }
         held = ByteArray(0)
         return keys ?: ByteArray(0)
@@ -187,7 +187,7 @@ class TerminalInputFilter {
             }
 
             next in STRING_OPENERS -> {
-                stringOrAlt(data, at, out)
+                stringOrAlt(data, at)
             }
 
             next in SPACE..DEL -> {
@@ -206,15 +206,12 @@ class TerminalInputFilter {
     private fun stringOrAlt(
         data: ByteArray,
         at: Int,
-        out: ByteArrayOutputStream,
     ): Int {
-        if (at + ALT_LENGTH >= data.size) {
-            out.write(ESC)
-            out.write(data[at + 1].toInt())
-        } else {
-            inString = true
-            stringLength = 0
-        }
+        // At the very end the opener may still be followed by the body of a string in the next frame, so it is
+        // held like a lone Escape. Released after a wait, it is Alt plus the letter.
+        if (at + ALT_LENGTH >= data.size) return INCOMPLETE
+        inString = true
+        stringLength = 0
         return ALT_LENGTH
     }
 
@@ -334,6 +331,9 @@ class TerminalInputFilter {
         val PARAMETER_BYTES = 0x30..0x3F
         val INTERMEDIATE_BYTES = 0x20..0x2F
         val FINAL_BYTES = 0x40..0x7E
+
+        /** What `ESC` plus one byte held at the end of a frame is, when nothing follows: Alt plus that key. */
+        val ALT_AFTER_WAIT = setOf('['.code, 'O'.code, 'P'.code, ']'.code, 'X'.code, '^'.code, '_'.code)
 
         /** `P` DCS, `]` OSC, `X` SOS, `^` PM, `_` APC. Alone at the end they are Alt plus the letter. */
         val STRING_OPENERS = setOf('P'.code, ']'.code, 'X'.code, '^'.code, '_'.code)

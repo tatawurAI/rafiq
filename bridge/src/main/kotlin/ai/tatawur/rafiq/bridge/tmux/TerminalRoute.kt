@@ -27,6 +27,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
@@ -42,7 +44,9 @@ private val log = LoggerFactory.getLogger("ai.tatawur.rafiq.bridge.tmux.Terminal
 
 private val CLAIM_INTERVAL = 1.seconds
 private val FIRST_RESIZE_WAIT = 2.seconds
+private val TRY_AGAIN = CloseReason.Codes.TRY_AGAIN_LATER
 private val END_SEND_WAIT = 1.seconds
+private val RESIZE_RETRY = 100.milliseconds
 private val ESCAPE_WAIT = 60.milliseconds
 private const val DEFAULT_COLS = 80
 private const val DEFAULT_ROWS = 24
@@ -78,11 +82,21 @@ fun Route.terminalRoute(
             return@webSocket
         }
         val device = deviceOf(call)
-        val slot = gate.slots.acquire(device)
-        if (slot == null) {
-            close(CloseReason(CloseReason.Codes.TRY_AGAIN_LATER, "too many terminals open"))
-            return@webSocket
-        }
+        val slot =
+            when (val result = gate.slots.acquire(device)) {
+                is SlotResult.Granted -> {
+                    result.slot
+                }
+
+                SlotResult.AtLimit -> {
+                    null.also { close(CloseReason(TRY_AGAIN, "too many terminals open")) }
+                }
+
+                SlotResult.TooManyOpens -> {
+                    null.also { close(CloseReason(TRY_AGAIN, "too many terminal opens, wait a moment")) }
+                }
+            }
+        if (slot == null) return@webSocket
         val connection = TerminalConnection(gate, this, name, device, call.request.origin.remoteHost)
         // Revoking the device ends the view at once and detaches it, like any other close.
         val registration = connections.register(device, "terminal") { reason -> connection.end(reason) }
@@ -115,6 +129,13 @@ private class TerminalConnection(
     private val resizes = AtomicLong()
     private val ended = AtomicBoolean(false)
     private val resizeBucket = TokenBucket(limits.resizeBurst, limits.resizesPerSecond)
+    private val abuseBucket = TokenBucket(limits.abuseResizes, limits.abuseResizes / ABUSE_WINDOW_SECONDS)
+    private val keyLock = Mutex()
+    private val resizeLock = Mutex()
+
+    @Volatile
+    private var pendingSize: Pair<Int, Int>? = null
+    private var resizeApplier: Job? = null
 
     @Volatile
     private var requestedSize: Pair<Int, Int>? = null
@@ -323,12 +344,47 @@ private class TerminalConnection(
         if (message !is TerminalResize || message.cols <= 0 || message.rows <= 0) return true
         val size = message.cols to message.rows
         if (size == requestedSize) return true
-        if (!resizeBucket.tryTake()) return refuse("too many resizes")
+        // Many sizes in a short time is a fold or keyboard animation: only the newest matters. Far more than
+        // that is abuse.
+        if (!abuseBucket.tryTake()) return refuse("too many resizes")
         requestedSize = size
-        resizes.incrementAndGet()
-        withContext(Dispatchers.IO) { client.resize(message.cols, message.rows) }
-        lastClaim.set(System.nanoTime())
+        resizeLock.withLock {
+            if (resizeBucket.tryTake()) {
+                pendingSize = null
+                applySize(size, client)
+            } else {
+                pendingSize = size
+                if (resizeApplier?.isActive !=
+                    true
+                ) {
+                    resizeApplier = scope?.launch(Dispatchers.IO) { applyWhenAllowed(client) }
+                }
+            }
+        }
         return true
+    }
+
+    private suspend fun applySize(
+        size: Pair<Int, Int>,
+        client: TmuxControlClient,
+    ) {
+        resizes.incrementAndGet()
+        withContext(Dispatchers.IO) { client.resize(size.first, size.second) }
+        lastClaim.set(System.nanoTime())
+    }
+
+    /** Applies the newest size that was asked for while the bucket was empty, as soon as a token returns. */
+    private suspend fun applyWhenAllowed(client: TmuxControlClient) {
+        while (!ended.get()) {
+            delay(RESIZE_RETRY)
+            val ready =
+                resizeLock.withLock {
+                    val size = pendingSize
+                    if (size != null && resizeBucket.tryTake()) size.also { pendingSize = null } else null
+                }
+            if (ready != null) applySize(ready, client)
+            if (pendingSize == null) return
+        }
     }
 
     private suspend fun refuse(reason: String): Boolean {
@@ -346,17 +402,21 @@ private class TerminalConnection(
         if (!budget.allows(bytes.size)) return refuse("too much input")
         bytesUp.addAndGet(bytes.size.toLong())
         escapeFlush?.cancel()
-        val keys = filter.filter(bytes)
-        // A frame that ends on a lone Escape is the Escape key unless the rest of a sequence follows at once.
-        if (filter.hasHeld) escapeFlush = scope?.launch(Dispatchers.IO) { releaseHeldKey(client) }
-        if (keys.isNotEmpty()) {
-            withContext(Dispatchers.IO) {
-                client.sendInput(keys)
-                // The desk may have typed since, and tmux gives the size to whoever acted last.
-                val now = System.nanoTime()
-                if (now - lastClaim.get() >= CLAIM_INTERVAL.inWholeNanoseconds) {
-                    lastClaim.set(now)
-                    client.claimSize()
+        // Filtering and sending are one step under the lock, as are flushing and sending in releaseHeldKey, so a
+        // held Escape can never reach the pane after the key that came after it.
+        keyLock.withLock {
+            val keys = filter.filter(bytes)
+            // A frame that ends on a lone Escape is the Escape key unless the rest of a sequence follows at once.
+            if (filter.hasHeld) escapeFlush = scope?.launch(Dispatchers.IO) { releaseHeldKey(client) }
+            if (keys.isNotEmpty()) {
+                withContext(Dispatchers.IO) {
+                    client.sendInput(keys)
+                    // The desk may have typed since, and tmux gives the size to whoever acted last.
+                    val now = System.nanoTime()
+                    if (now - lastClaim.get() >= CLAIM_INTERVAL.inWholeNanoseconds) {
+                        lastClaim.set(now)
+                        client.claimSize()
+                    }
                 }
             }
         }
@@ -365,14 +425,23 @@ private class TerminalConnection(
 
     private suspend fun releaseHeldKey(client: TmuxControlClient) {
         delay(ESCAPE_WAIT)
-        val keys = filter.flush()
-        if (keys.isNotEmpty() && !ended.get()) client.sendInput(keys)
+        // Not cancellable from here: a key that was taken out of the filter must reach the pane.
+        withContext(NonCancellable + Dispatchers.IO) {
+            keyLock.withLock {
+                val keys = filter.flush()
+                if (keys.isNotEmpty() && !ended.get()) client.sendInput(keys)
+            }
+        }
     }
 
     private suspend fun closeWhenIdle() {
         val idle = limits.idleTimeout
         while (socket.isActive) {
             delay((idle / IDLE_CHECKS).coerceIn(MIN_IDLE_CHECK, MAX_IDLE_CHECK))
+            if (opened.elapsedNow() >= limits.maxAge) {
+                end("This terminal was open for the longest time allowed. Open it again.")
+                return
+            }
             if (System.nanoTime() - lastActivity.get() >= idle.inWholeNanoseconds) {
                 end("Closed after being idle.")
                 return
@@ -407,6 +476,7 @@ private class TerminalConnection(
     private companion object {
         const val VIEW_ID_LENGTH = 8
         const val IDLE_CHECKS = 4
+        const val ABUSE_WINDOW_SECONDS = 10.0
         const val CLOSE_REASON_MAX = 100
         val MIN_IDLE_CHECK = 50.milliseconds
         val MAX_IDLE_CHECK = 5.seconds

@@ -128,6 +128,11 @@ class RealBridge(
             HttpResponse.BodyHandlers.ofString(),
         )
 
+    /** Stops the server while sockets are open, which cancels every handler. */
+    fun stopServer() {
+        server.stop(0, 1000)
+    }
+
     override fun close() {
         sockets.forEach(TestSocket::close)
         server.stop(0, 0)

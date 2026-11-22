@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.sessions
 
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.EchoState
+import ai.tatawur.rafiq.client.PRESUMED_LOST
 import ai.tatawur.rafiq.client.PromptEcho
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.TurnPhase
@@ -188,6 +189,7 @@ fun refusalText(
             SendRefusal.STATE_UNKNOWN -> R.string.refusal_state_unknown
             SendRefusal.HOOKS_NOT_INSTALLED -> R.string.refusal_hooks_not_installed
             SendRefusal.NOT_CONFIRMED -> R.string.refusal_not_confirmed
+            PRESUMED_LOST -> R.string.refusal_presumed_lost
             else -> null
         }
     // The queue's size is your server's choice, so its own words come first.

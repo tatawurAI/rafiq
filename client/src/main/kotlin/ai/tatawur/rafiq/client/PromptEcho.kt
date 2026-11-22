@@ -29,6 +29,9 @@ data class PromptEcho(
     val message: String? = null,
 )
 
+/** The code of an echo that was queued when the event socket reconnected, so your server may have lost it. */
+const val PRESUMED_LOST = "presumed_lost"
+
 /** Where a [PromptEcho] is on its way. */
 enum class EchoState {
     /** Your server took the prompt and has not said more yet. */
@@ -46,6 +49,9 @@ enum class EchoState {
  * echo, and a late delivery after "not delivered" still clears it. A delivery state this build does not
  * know keeps the echo as sent, so nothing vanishes unseen.
  *
+ * @param presumedLost prompts that were still queued when the event socket reconnected. Your server holds
+ *   its queue in memory, so after a restart they would never get a final state: they show as not delivered
+ *   with [PRESUMED_LOST] until a later state for them arrives.
  * @param messageKeys the keys of the messages in the timeline. Your server writes a `!` line or a local
  *   slash command as the message `user:<client id>` just before it says the prompt was delivered, so an
  *   echo goes as soon as that message is there and never shows next to it.
@@ -54,12 +60,22 @@ fun promptEchoes(
     sent: List<SentPrompt>,
     deliveries: Map<String, EventPayload.PromptDelivery>,
     messageKeys: Set<String> = emptySet(),
+    presumedLost: Set<String> = emptySet(),
 ): List<PromptEcho> =
     sent.mapNotNull { prompt ->
         val delivery = deliveries[prompt.clientId]
         when {
-            "user:${prompt.clientId}" in messageKeys -> null
-            else -> echoFor(prompt, delivery)
+            "user:${prompt.clientId}" in messageKeys -> {
+                null
+            }
+
+            delivery?.state == DeliveryState.QUEUED && prompt.clientId in presumedLost -> {
+                PromptEcho(prompt.clientId, prompt.text, EchoState.NOT_DELIVERED, PRESUMED_LOST)
+            }
+
+            else -> {
+                echoFor(prompt, delivery)
+            }
         }
     }
 

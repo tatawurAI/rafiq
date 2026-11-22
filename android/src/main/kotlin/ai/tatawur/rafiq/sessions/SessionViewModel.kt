@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.sessions
 import ai.tatawur.rafiq.client.ApprovalCard
 import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.ConnectionState
+import ai.tatawur.rafiq.client.EchoState
 import ai.tatawur.rafiq.client.PromptEcho
 import ai.tatawur.rafiq.client.SentPrompt
 import ai.tatawur.rafiq.client.SessionRepository
@@ -127,6 +128,7 @@ class SessionViewModel(
         val refusal: ComposerRefusal? = null,
         val hooksMissing: Boolean = false,
         val hooksDismissed: Boolean = false,
+        val presumedLost: Set<String> = emptySet(),
     )
 
     private val local = MutableStateFlow(Local())
@@ -150,7 +152,7 @@ class SessionViewModel(
                 feedback = local.feedback,
                 connection = connection,
                 scrollToKey = local.scrollToKey,
-                echoes = promptEchoes(local.sent, screen.deliveries, screen.userMessageKeys()),
+                echoes = promptEchoes(local.sent, screen.deliveries, screen.userMessageKeys(), local.presumedLost),
                 refusal = local.refusal,
                 offerHooks = local.hooksMissing && !local.hooksDismissed,
             )
@@ -159,6 +161,35 @@ class SessionViewModel(
             SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS),
             SessionUiState(screen = SessionScreenState(sessionId)),
         )
+
+    init {
+        viewModelScope.launch { markQueuedOnReconnect() }
+    }
+
+    /**
+     * Each time the event socket comes back after being down, prompts still queued may be gone: your server
+     * keeps its queue in memory only. They show as not delivered until a later state for them arrives.
+     */
+    private suspend fun markQueuedOnReconnect() {
+        var wasLive = false
+        var dropped = false
+        repository.connection.collect { connection ->
+            val live = connection == ConnectionState.Live
+            if (live && wasLive && dropped) {
+                val queued =
+                    promptEchoes(local.value.sent, state.value.screen.deliveries)
+                        .filter { it.state == EchoState.QUEUED }
+                        .mapTo(mutableSetOf()) { it.clientId }
+                local.update { it.copy(presumedLost = it.presumedLost + queued) }
+            }
+            if (live) {
+                wasLive = true
+                dropped = false
+            } else if (wasLive) {
+                dropped = true
+            }
+        }
+    }
 
     fun selectThread(threadId: String) {
         local.update { it.copy(selectedThreadId = threadId) }

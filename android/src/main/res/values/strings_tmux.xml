@@ -18,6 +18,7 @@
   <string name="refusal_state_unknown">Your server cannot tell if it is safe to type right now. Try again in a moment.</string>
   <string name="refusal_hooks_not_installed">Chat needs Rafiq hooks in this project before you can send.</string>
   <string name="refusal_not_confirmed">Your server typed it but could not confirm the agent got it. Check Terminal.</string>
+  <string name="refusal_presumed_lost">your server may have restarted. Check Terminal.</string>
   <string name="refusal_queue_full">Three messages are already waiting. Try again when the agent is free.</string>
   <string name="refusal_dismiss">Dismiss</string>
   <string name="notice_ask_at_desk">No answer from your phone in time. Answer at the desk: %1$s</string>

@@ -47,6 +47,7 @@ class BridgeSecurity(
     sealed interface Verdict {
         data class Accepted(
             val echoProtocol: String? = null,
+            val deviceId: String? = null,
         ) : Verdict
 
         data class Rejected(
@@ -100,14 +101,25 @@ class BridgeSecurity(
                 }?.substring(BEARER_PREFIX.length)
         val offered =
             webSocketProtocols
-                ?.takeIf { path == "/events" }
+                ?.takeIf { path in SOCKET_PATHS }
                 ?.split(',')
                 ?.map(String::trim)
                 .orEmpty()
         return when {
-            bearer != null && matches(bearer.trim()) -> Verdict.Accepted()
-            offered.any(::matches) -> Verdict.Accepted(echoProtocol = WS_PROTOCOL.takeIf { it in offered })
-            else -> null
+            bearer != null && matches(bearer.trim()) -> {
+                Verdict.Accepted(deviceId = LEGACY_DEVICE_ID)
+            }
+
+            offered.any(::matches) -> {
+                Verdict.Accepted(
+                    echoProtocol = listOf(WS_PROTOCOL, TERMINAL_WS_PROTOCOL).firstOrNull { it in offered },
+                    deviceId = LEGACY_DEVICE_ID,
+                )
+            }
+
+            else -> {
+                null
+            }
         }
     }
 
@@ -124,6 +136,13 @@ class BridgeSecurity(
     companion object {
         /** The WebSocket subprotocol a browser lists next to the token: `new WebSocket(url, ["rafiq.v1", token])`. */
         const val WS_PROTOCOL = "rafiq.v1"
+
+        /** The subprotocol of `/terminal`, listed the same way next to the token. */
+        const val TERMINAL_WS_PROTOCOL = "rafiq.term.v1"
+
+        /** The device id of the single shared token, until per-device tokens replace it. */
+        const val LEGACY_DEVICE_ID = "legacy"
+        private val SOCKET_PATHS = setOf("/events", "/terminal")
         private const val BEARER_PREFIX = "Bearer "
         private const val MISDIRECTED_STATUS = 421
         private val MISDIRECTED_REQUEST = HttpStatusCode(MISDIRECTED_STATUS, "Misdirected Request")
@@ -153,6 +172,7 @@ internal fun Application.installSecurity(security: BridgeSecurity) {
             }
 
             is BridgeSecurity.Verdict.Accepted -> {
+                verdict.deviceId?.let { call.attributes.put(DevicePrincipalKey, DevicePrincipal(it)) }
                 verdict.echoProtocol?.let { call.response.header(HttpHeaders.SecWebSocketProtocol, it) }
             }
         }

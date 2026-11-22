@@ -132,6 +132,34 @@ class HookProgramTest {
     }
 
     @Test
+    fun the_real_channel_and_the_program_agree_on_the_wire() {
+        val seen = CompletableDeferred<HookEnvelope>()
+        HookChannel(
+            dir,
+            object : HookSink {
+                override suspend fun onEvent(envelope: HookEnvelope) = Unit
+
+                override suspend fun onPermission(envelope: HookEnvelope): HookReply {
+                    seen.complete(envelope)
+                    return HookReply(HookDecision.ALLOW_SESSION, rule = "Bash(npm test)")
+                }
+            },
+            scope,
+        ).start().use {
+            val run = runHook(BASH_REQUEST)
+
+            val expected =
+                """{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow",""" +
+                    """"updatedPermissions":[{"type":"addRules",""" +
+                    """"rules":[{"toolName":"Bash","ruleContent":"npm test"}],""" +
+                    """"behavior":"allow","destination":"session"}]}}}"""
+            assertEquals(Json.parseToJsonElement(expected), Json.parseToJsonElement(run.out))
+            assertEquals("%3", seen.getCompleted().pane)
+            assertEquals(4242L, seen.getCompleted().agentPid)
+        }
+    }
+
+    @Test
     fun garbage_an_oversize_reply_or_an_unknown_decision_prints_nothing() {
         val replies =
             listOf(

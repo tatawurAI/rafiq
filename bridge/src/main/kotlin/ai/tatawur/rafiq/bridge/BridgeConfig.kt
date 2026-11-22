@@ -17,8 +17,10 @@ import java.nio.file.Path
  * @property allowedHosts extra `Host` header values the bridge accepts, from `RAFIQ_ALLOWED_HOSTS`, for
  *   example your Tailscale name. The bind address and `localhost` are always accepted.
  * @property devPage whether to serve the development page at `/dev`, from `RAFIQ_DEV_PAGE=1`.
- * @property terminal the Terminal gate, from `RAFIQ_TERMINAL`, `RAFIQ_TMUX_SESSIONS` and `RAFIQ_TMUX_SOCKET`. Off
- *   unless you turn it on.
+ * @property terminal the tmux gate, from `RAFIQ_TMUX`, `RAFIQ_TERMINAL`, `RAFIQ_TMUX_SESSIONS`,
+ *   `RAFIQ_TERMINAL_SHELLS` and `RAFIQ_TMUX_SOCKET`. Off unless you turn it on.
+ * @property tailscaleLogin from `RAFIQ_TAILSCALE_LOGIN`: the Tailscale login every request must come from, as
+ *   `tailscale serve` names it, or null to skip that check. See `TailscaleIdentityCheck`.
  */
 class BridgeConfig(
     val bindAddress: String,
@@ -29,12 +31,14 @@ class BridgeConfig(
     val devPage: Boolean = false,
     val allowedHosts: List<String> = emptyList(),
     val terminal: TerminalSettings = TerminalSettings.OFF,
+    val tailscaleLogin: String? = null,
 ) {
     // Configuration objects end up in logs. The token must never be one of the things printed.
     override fun toString(): String =
         "BridgeConfig(bindAddress=$bindAddress, port=$port, dataDir=$dataDir, " +
             "deviceToken=${if (deviceToken == null) "unset" else "set"}, agents=${agents.map(AgentSpec::id)}, " +
-            "devPage=$devPage, allowedHosts=$allowedHosts, terminal=${terminal.enabled})"
+            "devPage=$devPage, allowedHosts=$allowedHosts, tmux=${terminal.enabled}, terminal=${terminal.terminal}, " +
+            "tailscaleLogin=${if (tailscaleLogin == null) "unset" else "set"})"
 
     companion object {
         const val DEFAULT_BIND_ADDRESS = "127.0.0.1"
@@ -50,7 +54,8 @@ class BridgeConfig(
          * @throws IllegalArgumentException if `RAFIQ_PORT` is not a port number, so a typo fails at
          *   start-up instead of the bridge listening somewhere unexpected. It also refuses agents without
          *   a device token of at least [MIN_TOKEN_LENGTH] characters, because anything that reaches the
-         *   port could otherwise run them.
+         *   port could otherwise run them. And it refuses `RAFIQ_TAILSCALE_LOGIN` with a bind address other than
+         *   loopback, because the identity header is then something any client could send.
          */
         fun fromEnvironment(environment: Map<String, String>): BridgeConfig {
             fun read(name: String): String? = environment[name]?.trim()?.takeIf { it.isNotEmpty() }
@@ -70,6 +75,14 @@ class BridgeConfig(
             }
 
             val bindAddress = read("RAFIQ_BIND_ADDRESS") ?: DEFAULT_BIND_ADDRESS
+            val tailscaleLogin = read(TAILSCALE_LOGIN)
+            require(tailscaleLogin == null || LOGIN.matches(tailscaleLogin)) {
+                "$TAILSCALE_LOGIN must be one Tailscale login, for example alex@example.com, with no spaces or commas."
+            }
+            require(tailscaleLogin == null || TerminalSettings.isLoopback(bindAddress)) {
+                "$TAILSCALE_LOGIN is set, so RAFIQ_BIND_ADDRESS must be a loopback address, got '$bindAddress'. " +
+                    "The identity header can be trusted only from tailscale serve on the same machine."
+            }
             return BridgeConfig(
                 bindAddress = bindAddress,
                 port = port,
@@ -84,6 +97,7 @@ class BridgeConfig(
                         .orEmpty()
                         .filter(String::isNotEmpty),
                 terminal = TerminalSettings.fromEnvironment(::read, bindAddress),
+                tailscaleLogin = tailscaleLogin,
             )
         }
 
@@ -119,6 +133,12 @@ class BridgeConfig(
         }
 
         private val AGENT_ID = Regex("[a-z0-9][a-z0-9-]*")
+
+        /** The variable that turns on the Tailscale identity check. */
+        const val TAILSCALE_LOGIN = "RAFIQ_TAILSCALE_LOGIN"
+
+        // Printable ASCII with no space or comma, so a list or a stray quote fails at start-up.
+        private val LOGIN = Regex("[!-~&&[^,]]+")
     }
 }
 

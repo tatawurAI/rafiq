@@ -66,6 +66,9 @@ class IssuedCode(
  * - Wrong codes are counted across all callers, because behind `tailscale serve` every caller is
  *   `127.0.0.1`. After [maxFailures] wrong codes within [failureWindow], every attempt gets
  *   [RedeemResult.Throttled] until the oldest failure ages out, including a correct one.
+ * - Making a new code with `rafiq-bridge pair` clears the count, so a stranger's wrong guesses cannot lock
+ *   the owner out for good. The cost is that someone at the CLI can reset the limit, which already means
+ *   they can pair a device.
  * - Attempts are serialised by one lock held across the database check, so parallel guesses cannot
  *   exceed the limit.
  * - A device token is 256 random bits. Only its digest is stored.
@@ -91,6 +94,9 @@ class DeviceService(
         val code = CharArray(CODE_LENGTH) { CODE_ALPHABET[random.nextInt(CODE_ALPHABET.length)] }.concatToString()
         val expiresAtMs = clock.millis() + codeLifetime.inWholeMilliseconds
         store.addPairingCode(digest(code), name, expiresAtMs, clock.millis())
+        // The owner is at the CLI, so a lockout that strangers caused ends here. Otherwise anyone who can reach
+        // /pair could keep you from ever pairing.
+        attempts.withLock { failures.clear() }
         return IssuedCode("${code.take(CODE_GROUP)}-${code.drop(CODE_GROUP)}", name, expiresAtMs)
     }
 

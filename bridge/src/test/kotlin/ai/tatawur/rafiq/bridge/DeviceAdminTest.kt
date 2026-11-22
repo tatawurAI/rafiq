@@ -124,4 +124,83 @@ class DeviceAdminTest {
 
     private fun restart() =
         DeviceAdminServer(DeviceAdminServer.socketPathFor(dataDir), devices.service, null, scope).start()
+
+    @Test
+    fun a_busy_database_gets_an_error_answer_and_the_socket_keeps_answering() {
+        server.close()
+        devices.close()
+        // A short busy wait, so the test does not sit for the production five seconds.
+        devices = DeviceFixture(dataDir, busyTimeoutMs = 200)
+        server = restart()
+        val socket = DeviceAdminServer.socketPathFor(dataDir)
+        assertTrue(
+            java.nio.file.Files
+                .exists(socket),
+        )
+
+        java.sql.DriverManager.getConnection("jdbc:sqlite:${dataDir.resolve("rafiq.db")}").use { other ->
+            other.createStatement().use { it.execute("BEGIN IMMEDIATE") }
+            val busy = cli("pair", "--name", "Pixel")
+            assertEquals(1, busy.code)
+            assertTrue("Try again" in busy.err, busy.err)
+            other.createStatement().use { it.execute("ROLLBACK") }
+        }
+
+        val after = cli("devices")
+        assertEquals(0, after.code, after.err)
+    }
+
+    @Test
+    fun a_command_gives_up_when_the_bridge_never_answers() {
+        server.close()
+        val socket = DeviceAdminServer.socketPathFor(dataDir)
+        val mute =
+            java.nio.channels.ServerSocketChannel
+                .open(java.net.StandardProtocolFamily.UNIX)
+        mute.bind(java.net.UnixDomainSocketAddress.of(socket))
+        try {
+            val out = ByteArrayOutputStream()
+            val err = ByteArrayOutputStream()
+            val code =
+                DeviceCli.run(
+                    listOf("devices"),
+                    mapOf("RAFIQ_DATA_DIR" to dataDir.toString()),
+                    PrintStream(out),
+                    PrintStream(err),
+                    answerTimeout = kotlin.time.Duration.parse("300ms"),
+                )
+            assertEquals(1, code)
+            assertTrue("did not answer" in err.toString(), err.toString())
+        } finally {
+            mute.close()
+            java.nio.file.Files
+                .deleteIfExists(socket)
+        }
+    }
+
+    @Test
+    fun a_data_folder_whose_socket_path_is_too_long_fails_and_names_the_variable() {
+        val long = Path.of("/tmp/" + "a".repeat(150))
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                DeviceAdminServer(DeviceAdminServer.socketPathFor(long), devices.service, null, scope).start()
+            }
+        assertTrue("RAFIQ_DATA_DIR" in failure.message.orEmpty(), failure.message)
+        assertTrue(!Files.exists(long))
+    }
+
+    @Test
+    fun a_bridge_without_a_data_folder_warns_that_revocation_is_not_saved() {
+        assertTrue(
+            "revocations are not saved" in
+                ai.tatawur.rafiq.bridge.store.DeviceStore
+                    .persistenceWarning(null)
+                    .orEmpty(),
+        )
+        assertEquals(
+            null,
+            ai.tatawur.rafiq.bridge.store.DeviceStore
+                .persistenceWarning(dataDir),
+        )
+    }
 }

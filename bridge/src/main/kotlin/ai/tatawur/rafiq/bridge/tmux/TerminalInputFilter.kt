@@ -226,6 +226,10 @@ class TerminalInputFilter {
     ): Int {
         val csi = csi(data, at) ?: return 1
         if (csi.incomplete) return INCOMPLETE
+        if (csi.text == "M") {
+            // An old style mouse report: three more bytes follow the final M and are not keys either.
+            return if (at + csi.length + X10_MOUSE_BYTES > data.size) INCOMPLETE else csi.length + X10_MOUSE_BYTES
+        }
         if (csi.text == PASTE_START) {
             out.write(PASTE_START_BYTES)
             inPaste = true
@@ -319,6 +323,7 @@ class TerminalInputFilter {
         const val MAX_CSI_LENGTH = 24
         const val MAX_STRING = 4096
         const val ALT_LENGTH = 2
+        const val X10_MOUSE_BYTES = 3
         const val SS3_FINAL = 2
         const val THREE_BYTES = 3
         const val FOUR_BYTES = 4

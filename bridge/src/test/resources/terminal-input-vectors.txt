@@ -48,6 +48,8 @@ accept	\e[1;2P	Shift+F1
 accept	\e[3;5~	Ctrl+Delete
 accept	\e[97;5u	CSI u: Ctrl+a
 accept	\e[13;2u	CSI u: Shift+Enter
+accept	\e[5;2~	Shift+Page up
+accept	\e[13u	CSI u without a modifier
 accept	\e[27u	CSI u without a modifier
 accept	\eOj	keypad *
 accept	\eOk	keypad +
@@ -72,7 +74,9 @@ reject	\eXabc\e\\	SOS
 reject	\e[1;17A	modifier 17
 reject	\e[1;1A	modifier 1
 reject	\e[97;5v	not a key final
-reject	\e[M	mouse report opener
+reject	\e[M !!	old style mouse report with its three bytes
+reject	\e[?1u	key protocol report
+reject	\e[1;17C	modifier past 16
 reject	\e[<0;10;5M	SGR mouse report
 reject	\eOZ	not a keypad final
 reject	\x90\x9b\x9d	C1 controls

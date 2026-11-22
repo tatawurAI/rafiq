@@ -185,15 +185,22 @@ class TerminalRouteTest {
     fun a_fifth_socket_and_a_third_from_one_device_are_refused() {
         tmux.newSession("weather-app")
         val bridge = bridgeFor("weather-app")
-        val first =
-            listOf("a", "a", "b", "c").map { device ->
-                bridge.terminal("weather-app", device).also { it.sendResize(60, 20) }
-            }
-        first.forEach { it.snapshot() }
 
+        fun open(device: String): TestSocket {
+            val socket = bridge.terminal("weather-app", device)
+            socket.sendResize(60, 20)
+            socket.snapshot()
+            return socket
+        }
+        val first = listOf(open("a"), open("a"))
+
+        // Two sockets in all: only the per-device limit can refuse a third from the same device.
         val thirdFromOneDevice = bridge.terminal("weather-app", "a")
         assertEquals(1013, (thirdFromOneDevice.until { it is Received.Closed } as Received.Closed).code)
 
+        // Four in all: now the total limit refuses a socket from a device that has none open.
+        open("b")
+        open("c")
         val fifthSocket = bridge.terminal("weather-app", "d")
         assertEquals(1013, (fifthSocket.until { it is Received.Closed } as Received.Closed).code)
 

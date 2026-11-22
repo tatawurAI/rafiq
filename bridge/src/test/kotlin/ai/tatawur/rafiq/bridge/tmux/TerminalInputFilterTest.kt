@@ -6,81 +6,123 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+/**
+ * The allow-list of key encodings. The vectors are in `terminal-input-vectors.txt`, which the app mirrors.
+ */
 class TerminalInputFilterTest {
-    private fun bytes(text: String) = text.toByteArray(Charsets.UTF_8)
+    private class Vector(
+        val verdict: String,
+        val frames: List<ByteArray>,
+        val note: String,
+    )
 
-    private fun filter(
-        text: String,
-        filter: TerminalInputFilter = TerminalInputFilter(),
-    ) = String(filter.filter(bytes(text)), Charsets.UTF_8)
+    private fun unescape(text: String): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c != '\\') {
+                out.write(c.toString().toByteArray(Charsets.UTF_8))
+                i++
+                continue
+            }
+            val next = text[i + 1]
+            when (next) {
+                'e' -> out.write(0x1b)
+                'r' -> out.write('\r'.code)
+                'n' -> out.write('\n'.code)
+                't' -> out.write('\t'.code)
+                '\\' -> out.write('\\'.code)
+                'x' -> out.write(text.substring(i + 2, i + 4).toInt(16))
+                else -> error("Unknown escape \\$next")
+            }
+            i += if (next == 'x') 4 else 2
+        }
+        return out.toByteArray()
+    }
 
-    @Test
-    fun what_a_keyboard_sends_goes_through_unchanged() {
-        val keys =
-            listOf(
-                "ls -la\r",
-                "héllo مرحبا 👍",
-                "\t",
-                "\u007f",
-                "\u0003",
-                "\u001b", // text, Tab, Backspace, Ctrl+C, Esc
-                "\u001b[A",
-                "\u001b[B",
-                "\u001bOA",
-                "\u001bOH", // arrows, normal and application mode, Home
-                "\u001b[3~",
-                "\u001b[5~",
-                "\u001b[15~",
-                "\u001b[Z", // Delete, page up, F5, Shift+Tab
-                "\u001b[1;5C",
-                "\u001b[1;2P",
-                "\u001bx", // Ctrl+Right, Shift+F1, Alt+x
-            )
-        for (key in keys) assertEquals(key, filter(key), "key ${key.replace("\u001b", "ESC")}")
+    private val vectors: List<Vector> =
+        checkNotNull(javaClass.getResourceAsStream("/terminal-input-vectors.txt"))
+            .bufferedReader()
+            .readLines()
+            .filter { it.isNotBlank() && !it.startsWith("#") }
+            .map { line ->
+                val (verdict, bytes, note) = line.split('\t')
+                Vector(verdict, bytes.split(" | ").map(::unescape), note)
+            }
+
+    /** What comes out for the frames, then for the wait after the last one. */
+    private fun run(frames: List<ByteArray>): ByteArray {
+        val filter = TerminalInputFilter()
+        val out = java.io.ByteArrayOutputStream()
+        frames.forEach { out.write(filter.filter(it)) }
+        out.write(filter.flush())
+        return out.toByteArray()
     }
 
     @Test
-    fun terminal_replies_and_sequences_that_are_not_keys_are_dropped() {
-        val notKeys =
-            listOf(
-                "\u001b[?62;22c",
-                "\u001b[>1;10;0c", // device attributes
-                "\u001b[12;40R",
-                "\u001b[1;5R", // cursor position, also when it looks like a modified F3
-                "\u001b[0n",
-                "\u001b[?2004;1\$y", // status and mode reports
-                "\u001b[I",
-                "\u001b[O", // focus
-                "\u001b]11;rgb:0000/0000/0000\u0007",
-                "\u001b]52;c;aGk=\u001b\\", // colour reply, clipboard
-                "\u001bP>|libvterm(0.3)\u001b\\",
-                "\u001b[97;5u", // version reply, a key protocol the pane never asked for
-                "\u0090\u009b\u009d",
-                "\u001b[12;4", // C1 controls, a sequence cut short
-            )
-        for (reply in notKeys) assertEquals("", filter(reply), reply.replace("\u001b", "ESC"))
-        // Invalid UTF-8 never reaches the pane either. The valid byte between the bad ones does.
-        assertContentEquals(
-            byteArrayOf(0x28),
-            TerminalInputFilter().filter(byteArrayOf(0xC3.toByte(), 0x28, 0xFF.toByte())),
-        )
+    fun every_vector_gets_its_verdict() {
+        assertTrue(vectors.size > 50, "the vector file was not read")
+        for (v in vectors) {
+            val whole = v.frames.reduce { a, b -> a + b }
+            val label = "${v.verdict} ${v.note}"
+            when (v.verdict) {
+                "accept", "split" -> assertContentEquals(whole, run(v.frames), label)
+                "reject" -> assertContentEquals(ByteArray(0), run(v.frames), label)
+                else -> error("Unknown verdict ${v.verdict}")
+            }
+        }
     }
 
     @Test
     fun a_reply_between_keys_is_cut_out_and_the_keys_around_it_stay() {
-        assertEquals("a\u001b[Bb", filter("a\u001b[?62c\u001b[B\u001b[5;5Rb"))
+        assertEquals("a\u001b[Bb", String(run(listOf("a\u001b[?62c\u001b[B\u001b[5;5Rb".toByteArray()))))
     }
 
     @Test
-    fun a_paste_keeps_its_text_and_loses_any_escape_inside_it_even_across_frames() {
+    fun a_lone_escape_waits_for_the_next_frame_and_is_released_when_none_comes() {
+        val filter = TerminalInputFilter()
+
+        assertEquals("", String(filter.filter("\u001b".toByteArray())))
+        assertTrue(filter.hasHeld)
+        assertEquals("\u001b", String(filter.flush()))
+        assertFalse(filter.hasHeld)
+        // Not released twice, and not turned into text.
+        assertEquals("", String(filter.flush()))
+    }
+
+    @Test
+    fun a_paste_keeps_its_text_loses_escapes_inside_it_and_ends_on_a_marker_split_over_frames() {
         val paste = TerminalInputFilter()
 
-        assertEquals("\u001b[200~line one\r\nline\ttwo", filter("\u001b[200~line one\r\nline\ttwo", paste))
+        assertEquals(
+            "\u001b[200~line one\r\nline\ttwo",
+            String(paste.filter("\u001b[200~line one\r\nline\ttwo".toByteArray())),
+        )
         assertTrue(paste.isPasting)
-        // A reply and an Escape inside the paste are text-only: the escape goes, the rest is harmless text.
-        assertEquals(" more", filter("\u001b[12;40R\u001b[31m more", paste))
-        assertEquals("\u001b[201~", filter("\u001b[201~", paste))
+        // A reply and a colour change inside the paste are not text: they go, the rest is harmless text.
+        assertEquals(" more", String(paste.filter("\u001b[12;40R\u001b[31m more".toByteArray())))
+        // The end marker arrives in two frames. Losing it would leave the pane waiting for the end of the paste.
+        assertEquals("", String(paste.filter("\u001b[20".toByteArray())))
+        assertEquals("\u001b[201~", String(paste.filter("1~".toByteArray())))
         assertFalse(paste.isPasting)
-        assertEquals("x", filter("x", paste))
+        assertEquals("x", String(paste.filter("x".toByteArray())))
+    }
+
+    @Test
+    fun a_string_opened_by_an_opener_with_content_ends_where_the_terminal_ends_it_even_over_frames() {
+        val filter = TerminalInputFilter()
+
+        // An OSC cut in two: nothing of it is typed, and typing after it passes.
+        assertEquals("", String(filter.filter("\u001b]11;rgb:00".toByteArray())))
+        assertEquals("ok", String(filter.filter("00/00\u0007ok".toByteArray())))
+    }
+
+    @Test
+    fun invalid_utf8_between_valid_bytes_drops_only_the_bad_bytes() {
+        assertContentEquals(
+            byteArrayOf(0x28),
+            TerminalInputFilter().filter(byteArrayOf(0xC3.toByte(), 0x28, 0xFF.toByte())),
+        )
     }
 }

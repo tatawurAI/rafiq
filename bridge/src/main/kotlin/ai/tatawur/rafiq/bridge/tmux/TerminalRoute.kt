@@ -18,8 +18,11 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -28,6 +31,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.milliseconds
@@ -38,6 +42,8 @@ private val log = LoggerFactory.getLogger("ai.tatawur.rafiq.bridge.tmux.Terminal
 
 private val CLAIM_INTERVAL = 1.seconds
 private val FIRST_RESIZE_WAIT = 2.seconds
+private val END_SEND_WAIT = 1.seconds
+private val ESCAPE_WAIT = 60.milliseconds
 private const val DEFAULT_COLS = 80
 private const val DEFAULT_ROWS = 24
 
@@ -107,8 +113,17 @@ private class TerminalConnection(
     private val bytesDown = AtomicLong()
     private val bytesUp = AtomicLong()
     private val resizes = AtomicLong()
+    private val ended = AtomicBoolean(false)
+    private val resizeBucket = TokenBucket(limits.resizeBurst, limits.resizesPerSecond)
 
-    @Suppress("TooGenericExceptionCaught") // Whatever stops the attach, the phone is told and the client is closed.
+    @Volatile
+    private var requestedSize: Pair<Int, Int>? = null
+
+    @Volatile
+    private var scope: CoroutineScope? = null
+    private var escapeFlush: Job? = null
+
+    @Suppress("TooGenericExceptionCaught", "ReturnCount") // Whatever stops the attach, the phone is told.
     suspend fun run() {
         if (!tmuxIsNewEnough()) {
             socket.close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "tmux 3.2 or newer is needed"))
@@ -119,13 +134,16 @@ private class TerminalConnection(
             socket.close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "no such session"))
             return
         }
+        // A phone that left before its first size is not attached at a guess.
         val first = FirstFrames.read(socket)
+        if (first == null || !socket.isActive) return
+        requestedSize = first.requested
         val queue = TermQueue(limits.maxPendingOutputBytes)
         val client =
             TmuxControlClient(
                 gate.server,
                 session.id,
-                TmuxServer.VIEW_PREFIX + UUID.randomUUID().toString().take(VIEW_ID_LENGTH),
+                gate.viewPrefix + UUID.randomUUID().toString().take(VIEW_ID_LENGTH),
                 limits,
                 queue::offer,
             )
@@ -187,6 +205,7 @@ private class TerminalConnection(
         queue: TermQueue,
         early: List<Frame.Binary>,
     ) = coroutineScope {
+        scope = this
         val downstream =
             launch(Dispatchers.IO) {
                 var open = true
@@ -214,7 +233,11 @@ private class TerminalConnection(
     ): Boolean =
         when (item) {
             is TermItem.Output -> {
-                true.also { sendBytes(item.bytes) }
+                // Pane output that reaches the phone counts as activity, so watching an agent work never idles out.
+                true.also {
+                    sendBytes(item.bytes)
+                    lastActivity.set(System.nanoTime())
+                }
             }
 
             is TermItem.Screen -> {
@@ -255,6 +278,7 @@ private class TerminalConnection(
     private suspend fun onLayoutChange(client: TmuxControlClient): Boolean {
         val size = runCatching { client.paneSize() }.getOrNull()
         if (size != null && size != lastSize) {
+            lastSize = size
             send(TerminalSize(size.first, size.second))
             client.requestSnapshot()
         }
@@ -275,25 +299,43 @@ private class TerminalConnection(
         frame: Frame,
         client: TmuxControlClient,
     ): Boolean {
-        when (frame) {
+        // Once the view is ending, nothing more from the phone reaches the pane, however long the close takes.
+        if (ended.get()) return false
+        return when (frame) {
             is Frame.Text -> onText(frame.readText(), client)
-            is Frame.Binary -> return onKeys(frame.readBytes(), client)
-            else -> Unit
+            is Frame.Binary -> onKeys(frame.readBytes(), client)
+            else -> true
         }
-        return true
     }
 
+    /**
+     * A text frame counts toward the input budget. A size change also costs a token. A repeat of the last size
+     * is free.
+     */
+    @Suppress("ReturnCount") // Each refusal leaves at once.
     private suspend fun onText(
         text: String,
         client: TmuxControlClient,
-    ) {
+    ): Boolean {
         lastActivity.set(System.nanoTime())
+        if (!budget.allows(text.length)) return refuse("too much input")
         val message = runCatching { terminalJson.decodeFromString(TerminalMessage.serializer(), text) }.getOrNull()
-        if (message is TerminalResize && message.cols > 0 && message.rows > 0) {
-            resizes.incrementAndGet()
-            withContext(Dispatchers.IO) { client.resize(message.cols, message.rows) }
-            lastClaim.set(System.nanoTime())
+        if (message !is TerminalResize || message.cols <= 0 || message.rows <= 0) return true
+        val size = message.cols to message.rows
+        if (size == requestedSize) return true
+        if (!resizeBucket.tryTake()) return refuse("too many resizes")
+        requestedSize = size
+        resizes.incrementAndGet()
+        withContext(Dispatchers.IO) { client.resize(message.cols, message.rows) }
+        lastClaim.set(System.nanoTime())
+        return true
+    }
+
+    private suspend fun refuse(reason: String): Boolean {
+        if (ended.compareAndSet(false, true)) {
+            withTimeoutOrNull(END_SEND_WAIT) { socket.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, reason)) }
         }
+        return false
     }
 
     private suspend fun onKeys(
@@ -301,12 +343,12 @@ private class TerminalConnection(
         client: TmuxControlClient,
     ): Boolean {
         lastActivity.set(System.nanoTime())
-        if (!budget.allows(bytes.size)) {
-            socket.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "too much input"))
-            return false
-        }
+        if (!budget.allows(bytes.size)) return refuse("too much input")
         bytesUp.addAndGet(bytes.size.toLong())
+        escapeFlush?.cancel()
         val keys = filter.filter(bytes)
+        // A frame that ends on a lone Escape is the Escape key unless the rest of a sequence follows at once.
+        if (filter.hasHeld) escapeFlush = scope?.launch(Dispatchers.IO) { releaseHeldKey(client) }
         if (keys.isNotEmpty()) {
             withContext(Dispatchers.IO) {
                 client.sendInput(keys)
@@ -321,6 +363,12 @@ private class TerminalConnection(
         return true
     }
 
+    private suspend fun releaseHeldKey(client: TmuxControlClient) {
+        delay(ESCAPE_WAIT)
+        val keys = filter.flush()
+        if (keys.isNotEmpty() && !ended.get()) client.sendInput(keys)
+    }
+
     private suspend fun closeWhenIdle() {
         val idle = limits.idleTimeout
         while (socket.isActive) {
@@ -332,10 +380,19 @@ private class TerminalConnection(
         }
     }
 
-    /** Tells the phone why, then closes the socket. Closing ends the view and detaches it. */
+    /**
+     * Tells the phone why, then closes the socket, which ends the view and detaches it. It runs once, and
+     * from the moment it starts nothing more from the phone is read. A phone that has stopped reading cannot
+     * hold it up: the message and the close each get [END_SEND_WAIT], and then the socket is cancelled.
+     */
     suspend fun end(reason: String) {
-        runCatching { send(TerminalEnded(reason)) }
-        socket.close(CloseReason(CloseReason.Codes.NORMAL, reason.take(CLOSE_REASON_MAX)))
+        if (!ended.compareAndSet(false, true)) return
+        withTimeoutOrNull(END_SEND_WAIT) { runCatching { send(TerminalEnded(reason)) } }
+        val closed =
+            withTimeoutOrNull(END_SEND_WAIT) {
+                socket.close(CloseReason(CloseReason.Codes.NORMAL, reason.take(CLOSE_REASON_MAX)))
+            }
+        if (closed == null) socket.cancel()
     }
 
     private suspend fun send(message: TerminalMessage) {
@@ -361,33 +418,34 @@ private class FirstFrames(
     val cols: Int,
     val rows: Int,
     val early: List<Frame.Binary>,
+    /** What the phone asked for, before the clamp, or null when it asked for nothing in time. */
+    val requested: Pair<Int, Int>?,
 ) {
     companion object {
-        suspend fun read(socket: DefaultWebSocketSession): FirstFrames {
-            var cols = DEFAULT_COLS
-            var rows = DEFAULT_ROWS
+        /** Null when the socket closed before a size came. A phone that is merely slow gets 80x24 after 2 s. */
+        suspend fun read(socket: DefaultWebSocketSession): FirstFrames? {
             val early = mutableListOf<Frame.Binary>()
-            withTimeoutOrNull(FIRST_RESIZE_WAIT) {
-                for (frame in socket.incoming) {
-                    if (frame is Frame.Binary) {
-                        early += frame
-                    } else if (frame is Frame.Text) {
-                        val message =
-                            runCatching {
-                                terminalJson.decodeFromString(
-                                    TerminalMessage.serializer(),
-                                    frame.readText(),
-                                )
-                            }.getOrNull()
-                        if (message is TerminalResize && message.cols > 0 && message.rows > 0) {
-                            cols = message.cols
-                            rows = message.rows
-                            break
+            var asked: Pair<Int, Int>? = null
+            val outcome =
+                withTimeoutOrNull(FIRST_RESIZE_WAIT) {
+                    for (frame in socket.incoming) {
+                        if (frame is Frame.Binary) {
+                            early += frame
+                        } else if (frame is Frame.Text) {
+                            val message = decode(frame.readText())
+                            if (message is TerminalResize && message.cols > 0 && message.rows > 0) {
+                                asked = message.cols to message.rows
+                                return@withTimeoutOrNull true
+                            }
                         }
                     }
+                    false
                 }
-            }
-            return FirstFrames(cols, rows, early)
+            if (outcome == false) return null
+            return FirstFrames(asked?.first ?: DEFAULT_COLS, asked?.second ?: DEFAULT_ROWS, early, asked)
         }
+
+        private fun decode(text: String): TerminalMessage? =
+            runCatching { terminalJson.decodeFromString(TerminalMessage.serializer(), text) }.getOrNull()
     }
 }

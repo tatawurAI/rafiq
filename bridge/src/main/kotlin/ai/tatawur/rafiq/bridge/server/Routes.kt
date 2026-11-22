@@ -169,26 +169,30 @@ internal fun Route.eventsRoute(
             connections.register(deviceOf(call), "events") { reason ->
                 close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, reason))
             }
-        val stream =
-            launch {
-                try {
-                    streamer.stream(sessionId, after ?: 0) { event ->
-                        send(Frame.Text(protocolJson.encodeToString(Event.serializer(), event)))
+        // A cancelled or dropped connection leaves this block by an exception, and must still leave the registry.
+        try {
+            val stream =
+                launch {
+                    try {
+                        streamer.stream(sessionId, after ?: 0) { event ->
+                            send(Frame.Text(protocolJson.encodeToString(Event.serializer(), event)))
+                        }
+                    } catch (_: SlowConsumerException) {
+                        closeReason = CloseReason(CloseReason.Codes.TRY_AGAIN_LATER, "too slow, reconnect and replay")
                     }
-                } catch (_: SlowConsumerException) {
-                    closeReason = CloseReason(CloseReason.Codes.TRY_AGAIN_LATER, "too slow, reconnect and replay")
                 }
-            }
-        // The client sends nothing we act on, but we must read to notice it leaving.
-        val watcher =
-            launch {
-                for (frame in incoming) if (frame is Frame.Text) frame.readText()
-                stream.cancel()
-            }
-        stream.join()
-        watcher.cancel()
-        registration.close()
-        close(closeReason)
+            // The client sends nothing we act on, but we must read to notice it leaving.
+            val watcher =
+                launch {
+                    for (frame in incoming) if (frame is Frame.Text) frame.readText()
+                    stream.cancel()
+                }
+            stream.join()
+            watcher.cancel()
+            close(closeReason)
+        } finally {
+            registration.close()
+        }
     }
 }
 

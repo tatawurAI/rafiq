@@ -104,7 +104,11 @@ data class TerminalSettings(
  * @property minCols the clamp on the phone's width in columns, on the first resize and on every later one.
  * @property maxFrameBytes the largest binary frame of key bytes the bridge accepts.
  * @property maxInputBytesPerSecond how much input one socket may send per second, a paste included.
- * @property idleTimeout how long a socket may go without the phone sending a frame before it is closed.
+ * @property idleTimeout how long a socket may go without the phone sending a frame, or output reaching it, before it
+ *   is closed.
+ * @property pauseAfterSeconds how long tmux lets this client fall behind before it pauses the pane. A pause
+ *   is answered with a fresh snapshot.
+ * @property resizeBurst how many size changes a socket may send at once, before [resizesPerSecond] applies.
  * @property maxPendingOutputBytes how much pane output may wait for a slow phone before the bridge drops it
  *   and sends a fresh screen instead.
  */
@@ -119,12 +123,18 @@ data class TerminalLimits(
     val maxInputBytesPerSecond: Int = DEFAULT_INPUT_BYTES_PER_SECOND,
     val idleTimeout: Duration = DEFAULT_IDLE_TIMEOUT,
     val maxPendingOutputBytes: Int = DEFAULT_PENDING_OUTPUT_BYTES,
+    val pauseAfterSeconds: Int = DEFAULT_PAUSE_AFTER_SECONDS,
+    val resizeBurst: Int = DEFAULT_RESIZE_BURST,
+    val resizesPerSecond: Int = DEFAULT_RESIZES_PER_SECOND,
 ) {
     fun clampCols(cols: Int): Int = cols.coerceIn(minCols, maxCols)
 
     fun clampRows(rows: Int): Int = rows.coerceIn(minRows, maxRows)
 
     private companion object {
+        const val DEFAULT_PAUSE_AFTER_SECONDS = 2
+        const val DEFAULT_RESIZE_BURST = 10
+        const val DEFAULT_RESIZES_PER_SECOND = 5
         const val DEFAULT_MIN_COLS = 20
         const val DEFAULT_MAX_COLS = 500
         const val DEFAULT_MIN_ROWS = 5

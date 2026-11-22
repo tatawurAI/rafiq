@@ -146,6 +146,9 @@ class TestSocket(
     private val queue = LinkedBlockingQueue<Received>()
     private val socket: WebSocket
 
+    @Volatile
+    private var stalled = false
+
     init {
         val text = StringBuilder()
         val binary = java.io.ByteArrayOutputStream()
@@ -158,7 +161,7 @@ class TestSocket(
                 ): CompletionStage<*>? {
                     text.append(data)
                     if (last) queue.add(Received.Text(text.toString()).also { text.setLength(0) })
-                    webSocket.request(1)
+                    if (!stalled) webSocket.request(1)
                     return null
                 }
 
@@ -170,7 +173,7 @@ class TestSocket(
                     val bytes = ByteArray(data.remaining()).also(data::get)
                     binary.write(bytes)
                     if (last) queue.add(Received.Binary(binary.toByteArray()).also { binary.reset() })
-                    webSocket.request(1)
+                    if (!stalled) webSocket.request(1)
                     return null
                 }
 
@@ -228,6 +231,30 @@ class TestSocket(
     fun next(seconds: Long = TIMEOUT_SECONDS): Received =
         queue.poll(seconds, TimeUnit.SECONDS) ?: throw AssertionError("Nothing arrived within $seconds s.")
 
+    /** Stops reading from the server, as a phone on a bad connection does. The server's sends back up. */
+    fun stall() {
+        stalled = true
+    }
+
+    /** True if the server closes the socket within [seconds]. What else arrives meanwhile is dropped. */
+    fun closedWithin(seconds: Long): Boolean = closedWithinMs(seconds * MS_PER_SECOND)
+
+    @Suppress("ReturnCount") // The first closed frame ends the wait.
+    fun closedWithinMs(millis: Long): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis)
+        while (System.nanoTime() < deadline) {
+            val left = (deadline - System.nanoTime()).coerceAtLeast(1)
+            val item = queue.poll(left, TimeUnit.NANOSECONDS) ?: return false
+            if (item is Received.Closed) return true
+        }
+        return false
+    }
+
+    /** Drops the connection without a close frame, as a phone leaving the network does. */
+    fun drop() {
+        socket.abort()
+    }
+
     /** Reads until [match] holds for a received item, and returns it. Items before it are dropped. */
     fun until(
         seconds: Long = TIMEOUT_SECONDS,
@@ -249,6 +276,7 @@ class TestSocket(
 
     private companion object {
         const val TIMEOUT_SECONDS = 20L
+        const val MS_PER_SECOND = 1000L
     }
 }
 

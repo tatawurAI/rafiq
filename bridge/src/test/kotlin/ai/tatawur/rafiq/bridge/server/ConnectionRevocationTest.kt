@@ -43,4 +43,17 @@ class ConnectionRevocationTest {
         ended.close()
         eventually("the registry forgets a socket that ended") { bridge.connections.openCount("phone-2") == 0 }
     }
+
+    @Test
+    fun a_connection_that_drops_without_a_close_frame_leaves_the_registry() {
+        val bridge = RealBridge(dir.resolve("data"), gate = null).also { bridge = it }
+        runBlocking { bridge.fixture.log.seed() }
+        val socket = bridge.socket("/events?session=ses_1&after=0", device = "phone-3")
+        socket.until { it is Received.Text }
+        assertEquals(1, bridge.connections.openCount("phone-3"))
+
+        socket.drop()
+
+        eventually("the registry forgets a dropped socket") { bridge.connections.openCount("phone-3") == 0 }
+    }
 }

@@ -3,8 +3,6 @@ package ai.tatawur.rafiq.bridge.tmux
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /** tmux could not be run, or it failed in a way that is not "no server is running". */
 class TmuxException(
@@ -15,6 +13,8 @@ class TmuxException(
 data class TmuxSession(
     val id: String,
     val name: String,
+    /** How many clients are attached to it right now. */
+    val attached: Int = 0,
 )
 
 /** One pane of a tmux session. */
@@ -65,10 +65,14 @@ class TmuxServer(
      * @throws TmuxException when tmux cannot be run or fails for another reason.
      */
     suspend fun sessions(): List<TmuxSession> =
-        listing("list-sessions", "-F", "#{session_id}\t#{session_name}")
+        listing("list-sessions", "-F", "#{session_id}\t#{session_attached}\t#{session_name}")
             .mapNotNull { line ->
-                val parts = line.split('\t', limit = 2)
-                if (parts.size == 2 && parts[0].startsWith("$")) TmuxSession(parts[0], parts[1]) else null
+                val parts = line.split('\t', limit = SESSION_FIELDS)
+                if (parts.size == SESSION_FIELDS && parts[0].startsWith("$")) {
+                    TmuxSession(parts[0], parts[2], parts[ATTACHED].toIntOrNull() ?: 0)
+                } else {
+                    null
+                }
             }
 
     /** The session whose name is exactly [name]. A name that merely starts with it does not count. */
@@ -92,23 +96,20 @@ class TmuxServer(
         }
 
     /**
-     * Ends the view sessions an earlier bridge left behind. Only sessions with the [VIEW_PREFIX] name this
-     * bridge gives its own are touched, and only on this server.
+     * Ends the view sessions an earlier bridge left behind. A leftover has a name this bridge gives its views
+     * (`rafiq-view-` and an id) and no client attached. A view another bridge is using has a client, and a
+     * session of your own with a similar name does not match the pattern, so neither is touched. Only this
+     * server is looked at.
      */
     suspend fun killLeftoverViews() {
-        for (session in sessions().filter { it.name.startsWith(VIEW_PREFIX) }) {
+        for (session in sessions().filter { it.attached == 0 && LEFTOVER_VIEW.matches(it.name) }) {
             run("kill-session", "-t", session.id)
         }
     }
 
-    private class Result(
-        val exit: Int,
-        val out: String,
-        val err: String,
-    )
-
     /** Runs one tmux command. Null when the program could not be started or was killed for hanging. */
-    private suspend fun run(vararg args: String): Result? = withContext(io) { exec(commandLine(*args)) }
+    private suspend fun run(vararg args: String): ProcessResult? =
+        withContext(io) { runCapturing(commandLine(*args), EXEC_TIMEOUT_SECONDS) }
 
     private suspend fun listing(vararg args: String): List<String> {
         val result = run(*args) ?: throw TmuxException("tmux could not be run.")
@@ -117,26 +118,6 @@ class TmuxServer(
             throw TmuxException("tmux ${args.first()} failed: ${result.err.trim()}")
         }
         return result.out.lines().filter(String::isNotBlank)
-    }
-
-    @Suppress("TooGenericExceptionCaught") // A tmux that cannot start is the same answer as one that fails.
-    private fun exec(command: List<String>): Result? {
-        val process =
-            try {
-                ProcessBuilder(command).also(::cleanEnvironment).start()
-            } catch (_: Exception) {
-                return null
-            }
-        process.outputStream.close()
-        // A tmux that hangs is killed, which also ends the reads below.
-        val watchdog = killer.schedule({ process.destroyForcibly() }, EXEC_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        try {
-            val out = process.inputStream.readBytes().toString(Charsets.UTF_8)
-            val err = process.errorStream.readBytes().toString(Charsets.UTF_8)
-            return Result(process.waitFor(), out, err)
-        } finally {
-            watchdog.cancel(false)
-        }
     }
 
     companion object {
@@ -151,8 +132,13 @@ class TmuxServer(
             version.first > MINIMUM_VERSION.first ||
                 (version.first == MINIMUM_VERSION.first && version.second >= MINIMUM_VERSION.second)
 
+        /** `rafiq-view-<process nonce>-<id>`, or the older `rafiq-view-<id>`. */
+        private val LEFTOVER_VIEW = Regex("rafiq-view-([0-9a-f]{6}-)?[0-9a-f]{8}")
+
         private const val EXEC_TIMEOUT_SECONDS = 5L
         private const val PANE_FIELDS = 6
+        private const val SESSION_FIELDS = 3
+        private const val ATTACHED = 1
         private const val PID = 2
         private const val WINDOW_ACTIVE = 3
         private const val PANE_ACTIVE = 4
@@ -161,18 +147,5 @@ class TmuxServer(
 
         /** What tmux says when no server is running on the socket: none was started, or its last session ended. */
         private val NO_SERVER = listOf("no server running", "error connecting to")
-        private val killer =
-            Executors.newSingleThreadScheduledExecutor { task ->
-                Thread(task, "tmux-exec-watchdog").apply {
-                    isDaemon =
-                        true
-                }
-            }
     }
-}
-
-/** `TMUX` would point tmux at another server. The device token has no business in a tmux process. */
-private fun cleanEnvironment(builder: ProcessBuilder) {
-    builder.environment().remove("TMUX")
-    builder.environment().remove("RAFIQ_DEVICE_TOKEN")
 }

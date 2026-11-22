@@ -65,6 +65,8 @@ class TerminalRouteTest {
         socket.snapshot()
         eventuallyEquals("the window takes the phone's size", 60 to 20) { tmux.windowSize("weather-app") }
         assertFalse(noViewSession(), "a view session exists while the socket is open")
+        val views = tmux.sessionNames().filter { it.startsWith(TmuxServer.VIEW_PREFIX) }
+        assertTrue(views.all { Regex("rafiq-view-[0-9a-f]{6}-[0-9a-f]{8}").matches(it) }, "view names: $views")
 
         // The desk types, so the window follows the desk. A phone resize must win it back, not only ask.
         desk.typeSomething()
@@ -83,6 +85,34 @@ class TerminalRouteTest {
 
         eventuallyEquals("the desk gets its size back", 120 to 40) { tmux.windowSize("weather-app") }
         eventually("no view session remains", check = ::noViewSession)
+    }
+
+    @Test
+    fun a_size_the_desk_took_is_announced_once_with_one_fresh_snapshot() {
+        tmux.newSession("weather-app")
+        val desk = tmux.attachDesk("weather-app", 120, 40)
+        val socket = bridgeFor("weather-app").terminal("weather-app")
+        socket.sendResize(60, 20)
+        socket.snapshot()
+        eventuallyEquals("the phone has the size", 60 to 20) { tmux.windowSize("weather-app") }
+
+        // The desk takes the size back in steps that all end at one size, so tmux reports several layout changes.
+        desk.send("refresh-client -C 100x30")
+        desk.typeSomething()
+        desk.typeSomething()
+        desk.typeSomething()
+        eventuallyEquals("the desk has the size", 100 to 30) { tmux.windowSize("weather-app") }
+
+        val sizes = mutableListOf<String>()
+        var snapshots = 0
+        val deadline = System.nanoTime() + SETTLE_MS * 1_000_000
+        while (System.nanoTime() < deadline) {
+            val item = runCatching { socket.next(1) }.getOrNull() ?: continue
+            if (item is Received.Text && "\"type\":\"size\"" in item.text) sizes += item.text
+            if (item is Received.Text && "\"type\":\"snapshot\"" in item.text) snapshots++
+        }
+        assertEquals(1, sizes.size, "the new size was announced more than once: $sizes")
+        assertEquals(1, snapshots, "more than one snapshot followed")
     }
 
     @Test
@@ -151,6 +181,20 @@ class TerminalRouteTest {
         socket.snapshot()
 
         // Output the bridge had to drop is replaced by a screen, which the stream then continues from.
+        socket.snapshot()
+        assertIs<Received.Binary>(socket.until { it is Received.Binary })
+    }
+
+    @Test
+    fun a_pane_tmux_paused_is_continued_and_followed_by_a_fresh_snapshot() {
+        tmux.newSession("flood", "yes")
+        // Pause as soon as any output is waiting, and leave the bridge's own queue limit out of it.
+        val limits = TerminalLimits(pauseAfterSeconds = 0, maxPendingOutputBytes = Int.MAX_VALUE)
+        val socket = bridgeFor("flood", limits = limits).terminal("flood")
+        socket.sendResize(80, 24)
+        socket.snapshot()
+
+        // A pause drops what tmux produced meanwhile. The screen that follows the continue replaces it.
         socket.snapshot()
         assertIs<Received.Binary>(socket.until { it is Received.Binary })
     }
@@ -258,6 +302,94 @@ class TerminalRouteTest {
     }
 
     @Test
+    fun a_revoked_phone_that_stopped_reading_cannot_type_after_the_revoke() {
+        val keys = dir.resolve("keys.txt")
+        // The pane floods the phone with output and keeps everything typed in a file.
+        tmux.newSession("flood", "sh -c 'yes & cat > $keys'")
+        val bridge = bridgeFor("flood")
+        val socket = bridge.terminal("flood")
+        socket.sendResize(80, 24)
+        socket.snapshot()
+        socket.sendKeys("BEFORE\r".toByteArray())
+        eventually("the first line reaches the pane") { Files.exists(keys) && "BEFORE" in Files.readString(keys) }
+
+        // The phone stops reading, so the server's own messages to it back up, and keeps typing.
+        socket.stall()
+        Thread.sleep(STALL_MS)
+        val revoke = Thread { runBlocking { bridge.connections.closeAll("phone", "device_revoked") } }.apply { start() }
+        Thread.sleep(REVOKE_SETTLE_MS)
+        socket.sendKeys("AFTER\r".toByteArray())
+        revoke.join(30_000)
+
+        Thread.sleep(REVOKE_SETTLE_MS)
+        assertFalse("AFTER" in Files.readString(keys), "keys typed after the revoke reached the pane")
+    }
+
+    @Test
+    fun a_repeat_of_the_current_size_is_free_and_a_flood_of_new_sizes_closes_the_socket() {
+        tmux.newSession("weather-app")
+        val socket = bridgeFor("weather-app").terminal("weather-app")
+        socket.sendResize(60, 20)
+        socket.snapshot()
+
+        repeat(40) { socket.sendResize(60, 20) }
+        assertFalse(socket.closedWithin(1), "the same size again was counted")
+
+        // The server closes part way, so a later send may find the socket closed.
+        repeat(40) { runCatching { socket.sendResize(61 + it, 20) } }
+        assertTrue(socket.closedWithin(10), "a flood of sizes was not stopped")
+        eventually("the view session is gone", check = ::noViewSession)
+    }
+
+    @Test
+    fun a_text_frame_counts_toward_the_input_limits_like_keys() {
+        tmux.newSession("weather-app")
+        val socket = bridgeFor("weather-app", limits = TerminalLimits(maxFrameBytes = 64)).terminal("weather-app")
+        socket.sendResize(60, 20)
+        socket.snapshot()
+
+        socket.sendText("x".repeat(65))
+
+        assertTrue(socket.closedWithin(10), "an oversized text frame was accepted")
+    }
+
+    @Test
+    fun a_socket_that_closed_before_its_first_size_is_never_attached() {
+        tmux.newSession("weather-app")
+        val calls = dir.resolve("tmux-calls.txt")
+        val wrapper = dir.resolve("tmux-wrapper")
+        Files.writeString(wrapper, "#!/bin/sh\necho \"\$@\" >> '$calls'\nexec tmux \"\$@\"\n")
+        wrapper.toFile().setExecutable(true)
+        val bridge = bridgeFor("weather-app", server = TmuxServer(tmux.socket, wrapper.toString()))
+
+        bridge.terminal("weather-app").close()
+
+        Thread.sleep(SETTLE_MS)
+        assertFalse("new-session" in Files.readString(calls), "a view was attached at a guessed size")
+    }
+
+    @Test
+    fun a_phone_watching_output_or_resizing_is_not_idle_but_a_silent_one_is() {
+        tmux.newSession("ticker", "bash -c 'while :; do echo tick; sleep 0.1; done'")
+        val limits = TerminalLimits(idleTimeout = 600.milliseconds)
+        tmux.newSession("quiet")
+        val bridge = bridgeFor("ticker", "quiet", limits = limits)
+        val watching = bridge.terminal("ticker")
+        watching.sendResize(60, 20)
+        watching.snapshot()
+        assertFalse(watching.closedWithin(3), "a phone that is watching output was closed as idle")
+
+        val resizing = bridge.terminal("quiet")
+        resizing.sendResize(60, 20)
+        resizing.snapshot()
+        repeat(8) {
+            // Longer than the idle limit in all, though each gap is shorter.
+            assertFalse(resizing.closedWithinMs(300), "a phone that kept resizing was closed as idle")
+            resizing.sendResize(61 + it, 20)
+        }
+    }
+
+    @Test
     fun only_the_exact_session_name_on_the_allow_list_can_be_opened() {
         tmux.newSession("weather-app-2")
         val bridge = bridgeFor("weather-app")
@@ -318,5 +450,8 @@ class TerminalRouteTest {
         val LINE = Regex("L(\\d+)\r?\n")
         val SCREEN_LINE = Regex("L(\\d+)")
         const val CLAIM_THROTTLE_MS = 1100L
+        const val STALL_MS = 5000L
+        const val REVOKE_SETTLE_MS = 400L
+        const val SETTLE_MS = 2500L
     }
 }

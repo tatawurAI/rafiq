@@ -144,7 +144,7 @@ class DeviceRoutesTest {
             assertEquals(HttpStatusCode.Unauthorized, wrong.status)
             assertTrue(""""code":"invalid_pairing_code"""" in wrong.bodyAsText())
 
-            repeat(4) { http.post("/pair") { jsonBody(PairRequest("AAAA-AAAA")) } }
+            repeat(99) { http.post("/pair") { jsonBody(PairRequest("AAAA-AAAA")) } }
             val locked = http.post("/pair") { jsonBody(PairRequest("AAAA-AAAA")) }
             assertEquals(HttpStatusCode.TooManyRequests, locked.status)
             assertNotNull(locked.headers[HttpHeaders.RetryAfter]?.toLongOrNull())

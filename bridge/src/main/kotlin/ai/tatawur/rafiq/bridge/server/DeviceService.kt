@@ -165,7 +165,10 @@ class DeviceService(
         const val REVOKED_REASON = "device revoked"
         private const val CODE_LENGTH = 8
         private const val CODE_GROUP = 4
-        private const val MAX_FAILURES = 5
+
+        // 100 guesses per window against a 40-bit code that lives 10 minutes is about 1e-9. A low cap would let
+        // anyone who can reach /pair lock pairing again at once with a few junk codes.
+        private const val MAX_FAILURES = 100
         private const val TOKEN_BYTES = 32
         private const val ID_BYTES = 6
         private const val MS = 1000L

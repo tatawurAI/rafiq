@@ -66,7 +66,7 @@ class DeviceServiceTest {
             val devices = fixture()
             val code = devices.service.issueCode("phone").code
 
-            repeat(5) { assertEquals(RedeemResult.Invalid, devices.service.redeem("AAAAAAAA")) }
+            repeat(100) { assertEquals(RedeemResult.Invalid, devices.service.redeem("AAAAAAAA")) }
             val locked = devices.service.redeem(code)
             assertIs<RedeemResult.Throttled>(locked)
             assertTrue(locked.retryAfterSeconds in 1..300)
@@ -147,7 +147,7 @@ class DeviceServiceTest {
     fun making_a_new_code_ends_a_lockout_that_strangers_caused() =
         runBlocking {
             val devices = fixture()
-            repeat(5) { devices.service.redeem("AAAAAAAA") }
+            repeat(100) { devices.service.redeem("AAAAAAAA") }
             assertIs<RedeemResult.Throttled>(devices.service.redeem("AAAAAAAA"))
 
             val code = devices.service.issueCode("phone").code

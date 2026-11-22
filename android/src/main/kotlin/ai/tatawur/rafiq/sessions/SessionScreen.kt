@@ -131,6 +131,7 @@ fun SessionScreen(
 ) {
     // Held above the split: folding moves the timeline between panes, and it keeps its place.
     val scroll = rememberTimelineScroll(state.selectedThread?.id)
+    val screenActions = remember(actions, scroll) { actions.scrollingOnSend(scroll) }
     // The bottom pane drops the pinned approval while you type, so the timeline's card then keeps
     // its own buttons.
     val answeredBelow = !WindowInsets.isImeVisible
@@ -138,13 +139,13 @@ fun SessionScreen(
         hinge = hinge,
         modifier = modifier,
         fitBottomToKeyboard = true,
-        single = { SingleColumnSession(state, actions, dictation, scroll) },
+        single = { SingleColumnSession(state, screenActions, dictation, scroll) },
         top = {
             Column(modifier = Modifier.fillMaxSize()) {
-                TimelinePane(state, actions, compact = false, scroll, pinnedAnsweredBelow = answeredBelow) {}
+                TimelinePane(state, screenActions, compact = false, scroll, pinnedAnsweredBelow = answeredBelow) {}
             }
         },
-        bottom = { SessionBottomPane(state, actions, dictation) },
+        bottom = { SessionBottomPane(state, screenActions, dictation) },
     )
 }
 
@@ -339,3 +340,16 @@ private fun SessionScreenOfflinePreview() {
         }
     }
 }
+
+/** Sending a message or a quick prompt always takes the timeline to its newest item. */
+private fun SessionActions.scrollingOnSend(scroll: TimelineScroll): SessionActions =
+    copy(
+        onSend = {
+            scroll.sent()
+            onSend()
+        },
+        onQuickReply = { reply ->
+            if (reply is QuickReply.Prompt) scroll.sent()
+            onQuickReply(reply)
+        },
+    )

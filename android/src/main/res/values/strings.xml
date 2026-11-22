@@ -59,6 +59,7 @@
   <string name="thread_empty">Nothing in this thread yet.</string>
   <string name="cancel_turn">Stop this thread</string>
   <string name="jump_to_latest">Jump to latest</string>
+  <string name="new_messages">New messages</string>
   <string name="streaming">Writing</string>
   <string name="image_placeholder">Image: %1$s</string>
   <string name="image_placeholder_no_alt">Image</string>

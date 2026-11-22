@@ -50,7 +50,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -65,7 +64,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.launch
 
 /**
  * The selected thread's items. It follows new content while you are at the bottom and stays put
@@ -90,13 +88,20 @@ internal fun Timeline(
     val spacing = RafiqTheme.spacing
     val items = state.timeline
     val listState = scroll.listState(items.lastIndex)
-    var follow by scroll::follow
-    val scope = rememberCoroutineScope()
-    FollowWhileAtBottom(listState) { follow = it }
+    val lastIndex by rememberUpdatedState(items.lastIndex)
+    FollowWhileAtBottom(listState, scroll::userSettled)
     ReportPinnedCard(listState, items, state.pinned?.id, onPinnedCardOnScreen)
 
+    // Runs each time Chat is shown again, for example after Terminal or another screen.
+    LaunchedEffect(Unit) { scroll.returned() }
     LaunchedEffect(items.size, items.lastOrNull()) {
-        if (follow && state.scrollToKey == null) listState.scrollToEnd(items.lastIndex)
+        if (state.scrollToKey == null) scroll.contentChanged(items.lastOrNull()?.key)
+    }
+    LaunchedEffect(scroll.pendingScrollToEnd) {
+        if (scroll.pendingScrollToEnd) {
+            listState.scrollToEnd(lastIndex)
+            scroll.scrolledToEnd()
+        }
     }
     LaunchedEffect(state.scrollToKey) {
         val target = state.scrollToKey ?: return@LaunchedEffect
@@ -105,7 +110,7 @@ internal fun Timeline(
                 it.key == target || (it as? TimelineItem.Tool)?.approval?.toolCallId == target
             }
         if (index >= 0) {
-            follow = false
+            scroll.jumpedAway()
             listState.animateScrollToItem(index)
         }
         actions.onScrolledToKey()
@@ -127,14 +132,11 @@ internal fun Timeline(
                 TimelineEntry(item, state.answering, actions.onApprove, answerBelow)
             }
         }
-        if (!follow) {
-            JumpToLatestButton(
-                onClick = {
-                    follow = true
-                    scope.launch { listState.scrollToEnd(items.lastIndex) }
-                },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
+        val rule = scroll.rule
+        val toBottom = Modifier.align(Alignment.BottomCenter)
+        when {
+            rule.newBelow -> NewMessagesPill(onClick = scroll::jumpedToLatest, modifier = toBottom)
+            !rule.following -> JumpToLatestButton(onClick = scroll::jumpedToLatest, modifier = toBottom)
         }
     }
 }
@@ -186,6 +188,47 @@ private fun JumpToLatestButton(
             contentDescription = stringResource(R.string.jump_to_latest),
             modifier = Modifier.size(spacing.icon),
         )
+    }
+}
+
+/** Shown instead of [JumpToLatestButton] when messages arrived below while you read higher up. */
+@Composable
+internal fun NewMessagesPill(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val spacing = RafiqTheme.spacing
+    Surface(
+        onClick = onClick,
+        modifier = modifier.padding(spacing.small).heightIn(min = spacing.minTouchTarget),
+        shape = RafiqTheme.shapes.pill,
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = spacing.medium, vertical = spacing.smallMedium),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_arrow_down),
+                contentDescription = null,
+                modifier = Modifier.size(spacing.icon),
+            )
+            Text(text = stringResource(R.string.new_messages), style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+@Preview(name = "New messages pill", widthDp = 360)
+@Composable
+private fun NewMessagesPillPreview() {
+    RafiqTheme {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                NewMessagesPill(onClick = {})
+            }
+        }
     }
 }
 

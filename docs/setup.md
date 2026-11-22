@@ -138,6 +138,9 @@ A listed session shows in your session list with the agent that runs in it. Its 
 |---|---|
 | `421`, `misdirected_request` | The name is missing from `RAFIQ_ALLOWED_HOSTS`, or it does not match the name you used in the app. |
 | `401`, `unauthorized` | The phone's token is not one the bridge knows. Pair again. |
+| `401`, `device_revoked` | You revoked this phone with `rafiq-bridge revoke`, or unpaired it in the app. Pair it again. |
+| `401`, `invalid_pairing_code` | The code is wrong, expired or already used. Run `rafiq-bridge pair` for a new one. |
+| `429`, `too_many_attempts` | Five wrong codes in five minutes. Wait a few minutes, then run `rafiq-bridge pair` for a new code. |
 | The app says your server removed the phone | The phone was revoked. Run `rafiq-bridge pair` again. |
 | The app says the code is wrong | Codes work once and expire after 10 minutes. Run `rafiq-bridge pair` for a new one. |
 | `403`, `forbidden_origin` | A browser page on another site called the bridge. The app sends no `Origin`, so this is not the app. |

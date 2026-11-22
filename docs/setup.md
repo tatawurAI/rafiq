@@ -130,6 +130,8 @@ What it does not do:
 
 Terminal shows a tmux session on your server in the app, and sends your keys to it. It is a remote shell. It is off until you turn it on, and it reaches only the sessions you name.
 
+**Changed, and it can break an existing setup:** a plain shell session, one with no agent in it, now opens in Terminal only if you list it in `RAFIQ_TERMINAL_SHELLS`. Before, `RAFIQ_TERMINAL=1` let your phone open every session in `RAFIQ_TMUX_SESSIONS`. If a session you used to open now shows no Terminal toggle, add its name to `RAFIQ_TERMINAL_SHELLS`.
+
 You need tmux 3.2 or newer on your server, and the default `window-size latest`.
 
 There are two switches. `RAFIQ_TMUX=1` lists your tmux sessions, so you can chat with the agent in them. `RAFIQ_TERMINAL=1` also lets your phone open them in Terminal, and turns on the list by itself. To list and open the sessions where an agent runs:
@@ -139,7 +141,7 @@ export RAFIQ_TERMINAL=1
 export RAFIQ_TMUX_SESSIONS=weather-app,docs-site
 ```
 
-A session with no agent in it, such as a plain shell, is listed but does not open in Terminal until you name it a second time. This is a change: with `RAFIQ_TERMINAL=1` alone, a plain shell used to open, and now it needs `RAFIQ_TERMINAL_SHELLS`.
+A session with no agent in it, such as a plain shell, is listed but does not open in Terminal until you name it a second time.
 
 ```sh
 export RAFIQ_TERMINAL_SHELLS=docs-site

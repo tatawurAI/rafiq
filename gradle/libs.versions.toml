@@ -8,23 +8,25 @@ jvmTarget = "21"
 
 kotlin = "2.4.21"
 agp = "9.5.2"
-android-compileSdk = "36"
+android-compileSdk = "37"
 android-targetSdk = "36"
 android-minSdk = "31"
 
-# The newest Compose BOM whose libraries still accept compileSdk 36. Later BOMs
-# require compileSdk 37.
-compose-bom = "2026.06.01"
+# The Compose BOM the terminal emulator (termlib) is built against. It needs compileSdk 37.
+compose-bom = "2026.09.00"
 activity-compose = "1.13.0"
 
-# App UI (screens and navigation). The newest release that still accepts compileSdk 36:
-# navigation-compose 2.10 needs compileSdk 37. Lifecycle shares the data layer's entry below.
-navigation-compose = "2.9.8"
-# Markdown in chat bubbles. Apache-2.0. Later releases need compileSdk 37. It brings no
+# App UI (screens and navigation). 2.10 needs compileSdk 37. Lifecycle shares the data layer's
+# entry below.
+navigation-compose = "2.10.2"
+# Markdown in chat bubbles. Apache-2.0. Releases after 0.41 need compileSdk 37. It brings no
 # Compose artifacts of its own, so the Compose BOM decides those versions.
-markdown-renderer = "0.41.0"
-# Fold posture (hinge position and state) for the half-folded layout. 1.5 accepts compileSdk 36.
+markdown-renderer = "0.46.0"
+# Fold posture (hinge position and state) for the half-folded layout.
 window = "1.5.0"
+# The Terminal view's emulator. Apache-2.0, with libvterm (MIT). Pinned to the newest 0.3 release:
+# it has the parser overflow clamp, the native session close() and the resize crash fix.
+termlib = "0.3.15"
 
 kotlinx-serialization = "1.13.0"
 kotlinx-coroutines = "1.11.0"
@@ -41,11 +43,10 @@ junit = "5.14.4"
 # The app's data layer: event cache, network, token storage and app lifecycle.
 ksp = "2.3.13"
 room = "2.8.5"
-# OkHttp and lifecycle are the newest releases that still accept compileSdk 36. OkHttp 5.5 and
-# lifecycle 2.11 require compileSdk 37.
-okhttp = "5.4.0"
+# OkHttp 5.5 and lifecycle 2.11 need compileSdk 37.
+okhttp = "5.5.1"
 datastore = "1.3.0"
-lifecycle = "2.10.0"
+lifecycle = "2.11.1"
 
 spotless = "8.11.0"
 ktlint = "1.8.0"
@@ -87,6 +88,7 @@ navigation-compose = { module = "androidx.navigation:navigation-compose", versio
 lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 window = { module = "androidx.window:window", version.ref = "window" }
+termlib = { module = "org.connectbot:termlib", version.ref = "termlib" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 

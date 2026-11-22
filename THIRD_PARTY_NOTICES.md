@@ -22,6 +22,15 @@ The app renders chat messages with the following library. It is a Gradle depende
 |---|---|---|---|
 | Multiplatform Markdown Renderer | Markdown in chat messages | Apache-2.0 | https://github.com/mikepenz/multiplatform-markdown-renderer |
 
+## Terminal emulator
+
+The Terminal view draws a tmux pane with the following library and the native library it bundles. The library is a Gradle dependency, listed here because it ships native code that is not built from this repository.
+
+| Library | Used for | Licence | Source |
+|---|---|---|---|
+| ConnectBot termlib | The Terminal view | Apache-2.0 | https://github.com/connectbot/termlib |
+| libvterm, bundled in termlib | Parsing terminal output | MIT | https://www.leonerd.org.uk/code/libvterm/ |
+
 ## Gradle dependencies
 
 Licences for Gradle dependencies are listed by a report task added in a later change. This file does not carry a hand-maintained dependency list, because it would drift from `gradle/libs.versions.toml`.

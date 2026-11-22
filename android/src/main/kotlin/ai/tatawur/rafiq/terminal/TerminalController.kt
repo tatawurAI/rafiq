@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.terminal
 
 import ai.tatawur.rafiq.client.terminal.CellSize
+import ai.tatawur.rafiq.client.terminal.MirroredWindow
 import ai.tatawur.rafiq.client.terminal.TerminalEvent
 import ai.tatawur.rafiq.client.terminal.TerminalLink
 import ai.tatawur.rafiq.client.terminal.TerminalPort
@@ -72,12 +73,16 @@ class TerminalController(
     private val link = TerminalLink(port, sessionId)
     private val currentPane = MutableStateFlow<CellSize?>(null)
     private val currentLink = MutableStateFlow<String?>(null)
+    private val currentWindow = MutableStateFlow<MirroredWindow?>(null)
     private var lastBellMs = Long.MIN_VALUE / 2
 
     /** The pane's real size, or null before the first snapshot. */
     val paneSize: StateFlow<CellSize?> = currentPane.asStateFlow()
 
     val status: StateFlow<TerminalStatus> = link.status
+
+    /** The tmux window being mirrored, or null while unknown or from a bridge that does not say. */
+    val window: StateFlow<MirroredWindow?> = currentWindow.asStateFlow()
 
     /** A link you tapped that is waiting for your confirmation, as its real `https` target. */
     val pendingLink: StateFlow<String?> = currentLink.asStateFlow()
@@ -146,6 +151,7 @@ class TerminalController(
                 emulator.resize(event.size.rows.coerceAtLeast(1), event.size.cols.coerceAtLeast(1))
                 emulator.writeInput(event.vt)
                 currentPane.value = event.size
+                currentWindow.value = event.window
             }
 
             is TerminalEvent.Output -> {

@@ -152,7 +152,7 @@ class TerminalLink(
                             when (val event = decoder.onBinary(frame.bytes)) {
                                 is TerminalEvent.Snapshot -> {
                                     pane.reset()
-                                    send(TerminalEvent.Snapshot(event.size, pane.filter(event.vt)))
+                                    send(TerminalEvent.Snapshot(event.size, pane.filter(event.vt), event.window))
                                 }
 
                                 is TerminalEvent.Output -> {

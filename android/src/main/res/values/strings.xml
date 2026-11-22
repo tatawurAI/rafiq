@@ -117,6 +117,8 @@
   <string name="view_chat">Chat</string>
   <string name="view_terminal">Terminal</string>
   <string name="view_toggle">Show Chat or Terminal</string>
+  <string name="terminal_window">Window %1$d: %2$s</string>
+  <string name="terminal_window_unnamed">Window %1$d</string>
   <string name="terminal_connecting">Connecting to the pane.</string>
   <string name="terminal_ended">The terminal ended: %1$s</string>
   <string name="terminal_closed">Your server closed the terminal.</string>

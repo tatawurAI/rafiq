@@ -33,4 +33,21 @@ class TerminalWireTest {
         assertEquals(null, decoder.onText("not json"))
         assertIs<TerminalEvent.Output>(decoder.onBinary("x".toByteArray()))
     }
+
+    @Test
+    fun the_snapshot_names_the_mirrored_window_as_plain_text_and_none_when_the_bridge_leaves_it_out() {
+        fun windowOf(json: String): MirroredWindow? {
+            val decoder = TerminalStreamDecoder()
+            decoder.onText(json)
+            return (decoder.onBinary(ByteArray(0)) as TerminalEvent.Snapshot).window
+        }
+        val base = """{"type":"snapshot","cols":80,"rows":24,"cursor_x":0,"cursor_y":0"""
+
+        assertEquals(MirroredWindow(1, "build"), windowOf("""$base,"window":{"index":1,"name":"build"}}"""))
+        assertEquals(null, windowOf("$base}"))
+        // The name is tmux's and can hold anything: control characters go and it is cut short.
+        val hostile = "\\u001b[2Jx" + "y".repeat(100)
+        val window = windowOf("""$base,"window":{"index":3,"name":"$hostile"}}""")
+        assertEquals(MirroredWindow(3, ("[2Jx" + "y".repeat(100)).take(MirroredWindow.MAX_NAME)), window)
+    }
 }

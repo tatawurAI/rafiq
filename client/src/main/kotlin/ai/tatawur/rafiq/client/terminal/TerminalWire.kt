@@ -16,6 +16,27 @@ data class CellSize(
     val rows: Int,
 )
 
+/**
+ * The tmux window the mirrored pane is in, for the Terminal header. The name comes from your
+ * server's tmux and is shown as plain text: control characters are dropped and it is cut to
+ * [MAX_NAME] characters, so a hostile window name cannot break the header.
+ */
+data class MirroredWindow(
+    val index: Int,
+    val name: String,
+) {
+    companion object {
+        const val MAX_NAME = 40
+
+        /** The window of [snapshot], or null when the bridge did not send one. */
+        fun of(snapshot: TerminalSnapshot): MirroredWindow? =
+            snapshot.window?.let { window ->
+                val clean = window.name.filterNot { it.isISOControl() }.trim()
+                MirroredWindow(window.index, clean.take(MAX_NAME))
+            }
+    }
+}
+
 /** What the emulator must do with one step of `WS /terminal`, after the frames are paired up. */
 sealed interface TerminalEvent {
     /**
@@ -25,6 +46,7 @@ sealed interface TerminalEvent {
     class Snapshot(
         val size: CellSize,
         val vt: ByteArray,
+        val window: MirroredWindow? = null,
     ) : TerminalEvent
 
     /** Pane output to write as it is. */
@@ -85,7 +107,11 @@ class TerminalStreamDecoder {
     fun onBinary(bytes: ByteArray): TerminalEvent {
         val snapshot = pending ?: return TerminalEvent.Output(bytes)
         pending = null
-        return TerminalEvent.Snapshot(CellSize(snapshot.cols, snapshot.rows), snapshotToVt(snapshot, bytes))
+        return TerminalEvent.Snapshot(
+            CellSize(snapshot.cols, snapshot.rows),
+            snapshotToVt(snapshot, bytes),
+            MirroredWindow.of(snapshot),
+        )
     }
 }
 

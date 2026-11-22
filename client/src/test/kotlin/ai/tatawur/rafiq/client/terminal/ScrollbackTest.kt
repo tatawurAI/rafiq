@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.client.terminal
 
 import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -26,17 +27,37 @@ class ScrollbackTest {
     }
 
     @Test
-    fun a_swipe_toward_older_lines_shows_the_history_as_plain_text_and_new_output_returns_to_live() =
+    fun a_swipe_toward_older_lines_loads_then_shows_the_history_as_plain_text() =
         runTest {
             val sent = mutableListOf<String>()
-            val scrollback = scrollback(shell, sent)
+            val answer = CompletableDeferred<CommandResult<TerminalHistory>>()
+            val scrollback = Scrollback(backgroundScope, { answer.await() }) { sent += String(it) }
 
             scrollback.gestureStarted()
             scrollback.step(older = true)
             testScheduler.runCurrent()
+            assertEquals(ScrollbackState.Loading, scrollback.state.value)
+
+            answer.complete(CommandResult.Ok(shell))
+            testScheduler.runCurrent()
 
             assertEquals(ScrollbackState.Showing(listOf("$ ls", "README.md", "link")), scrollback.state.value)
             assertEquals(emptyList(), sent)
+        }
+
+    @Test
+    fun new_output_keeps_the_overlay_open_and_offers_new_output_until_you_go_back_to_live() =
+        runTest {
+            // An agent's spinner redraws all the time, so output alone must never close the history.
+            val scrollback = scrollback(shell, mutableListOf())
+            scrollback.gestureStarted()
+            scrollback.step(older = true)
+            testScheduler.runCurrent()
+
+            scrollback.onOutput()
+
+            val shown = assertIs<ScrollbackState.Showing>(scrollback.state.value)
+            assertEquals(true, shown.newOutput)
 
             scrollback.backToLive()
             assertEquals(ScrollbackState.Live, scrollback.state.value)

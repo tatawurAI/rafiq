@@ -1,14 +1,18 @@
 package ai.tatawur.rafiq.terminal
 
 import ai.tatawur.rafiq.R
+import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.terminal.MirroredWindow
 import ai.tatawur.rafiq.client.terminal.ScrollbackState
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import ai.tatawur.rafiq.ui.theme.plexMono
+import androidx.activity.compose.BackHandler
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -201,54 +206,115 @@ private fun steps(
 
 /**
  * The pane's history over the live screen, oldest line first and opened at the newest. Reading it
- * changes nothing on your server. New output, typing and "Back to live" close it.
+ * changes nothing on your server. It stays open while the pane keeps drawing, with a "New output"
+ * chip, and closes when you type, tap "Back to live" or the chip, or press Back.
  */
 @Composable
 internal fun HistoryOverlay(controller: TerminalController) {
-    val state by controller.scrollback.state.collectAsStateWithLifecycle()
-    val spacing = RafiqTheme.spacing
+    val scrollback = controller.scrollback
+    val state by scrollback.state.collectAsStateWithLifecycle()
+    BackHandler(enabled = state != ScrollbackState.Live, onBack = scrollback::backToLive)
     when (val shown = state) {
         ScrollbackState.Live -> {}
 
+        ScrollbackState.Loading -> {
+            NoticeStrip(stringResource(R.string.terminal_history_loading), scrollback::backToLive)
+        }
+
         is ScrollbackState.Failed -> {
-            NoticeStrip(stringResource(R.string.terminal_history_failed), controller.scrollback::backToLive)
+            NoticeStrip(stringResource(historyFailure(shown.result)), scrollback::backToLive)
         }
 
         is ScrollbackState.Showing -> {
-            Column(modifier = Modifier.fillMaxSize().background(RafiqTheme.colors.ground)) {
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .background(RafiqTheme.colors.surface)
-                            .padding(start = spacing.medium),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        stringResource(R.string.terminal_history_title),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = RafiqTheme.colors.textSecondary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        onClick = controller.scrollback::backToLive,
-                        modifier = Modifier.heightIn(min = spacing.minTouchTarget),
-                    ) { Text(stringResource(R.string.terminal_back_to_live)) }
+            HistoryLines(shown, scrollback::backToLive)
+        }
+    }
+}
+
+@Composable
+private fun HistoryLines(
+    shown: ScrollbackState.Showing,
+    onLive: () -> Unit,
+) {
+    val spacing = RafiqTheme.spacing
+    Box(modifier = Modifier.fillMaxSize().background(RafiqTheme.colors.ground)) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .background(
+                            RafiqTheme.colors.surface,
+                        ).padding(start = spacing.medium),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.terminal_history_title),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = RafiqTheme.colors.textSecondary,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onLive, modifier = Modifier.heightIn(min = spacing.minTouchTarget)) {
+                    Text(stringResource(R.string.terminal_back_to_live))
                 }
-                val list = rememberLazyListState(initialFirstVisibleItemIndex = shown.lines.lastIndex.coerceAtLeast(0))
-                LazyColumn(
-                    state = list,
-                    modifier = Modifier.fillMaxSize().padding(horizontal = spacing.small),
-                ) {
-                    items(shown.lines) { line ->
-                        Text(
-                            line.ifEmpty { " " },
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = plexMono),
-                            color = RafiqTheme.colors.text,
-                        )
-                    }
+            }
+            val list = rememberLazyListState(initialFirstVisibleItemIndex = shown.lines.lastIndex.coerceAtLeast(0))
+            LazyColumn(state = list, modifier = Modifier.fillMaxSize().padding(horizontal = spacing.small)) {
+                items(shown.lines) { line ->
+                    Text(
+                        line.ifEmpty { " " },
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = plexMono),
+                        color = RafiqTheme.colors.text,
+                    )
+                }
+            }
+        }
+        if (shown.newOutput) {
+            Surface(
+                onClick = onLive,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(spacing.small)
+                        .heightIn(min = spacing.minTouchTarget),
+                shape = RafiqTheme.shapes.pill,
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = spacing.medium)) {
+                    Text(stringResource(R.string.terminal_new_output), style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
     }
 }
+
+/** A short plain reason the history could not be read. */
+@StringRes
+private fun historyFailure(result: CommandResult<Nothing>): Int =
+    when (result) {
+        CommandResult.NotFound -> {
+            R.string.terminal_history_not_found
+        }
+
+        CommandResult.Offline -> {
+            R.string.terminal_history_offline
+        }
+
+        is CommandResult.Failed -> {
+            if (result.code ==
+                INVALID_QUERY
+            ) {
+                R.string.terminal_history_bad_request
+            } else {
+                R.string.terminal_history_failed
+            }
+        }
+
+        else -> {
+            R.string.terminal_history_failed
+        }
+    }
+
+// The history route's answer to a request it cannot read (400).
+private const val INVALID_QUERY = "invalid_query"

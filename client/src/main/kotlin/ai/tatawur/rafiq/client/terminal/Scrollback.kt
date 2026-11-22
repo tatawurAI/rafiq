@@ -15,9 +15,17 @@ sealed interface ScrollbackState {
     /** The live screen, with nothing over it. */
     data object Live : ScrollbackState
 
-    /** The pane's history, oldest line first, over the live screen. */
+    /** A swipe toward older lines asked your server for the history, and the answer has not come yet. */
+    data object Loading : ScrollbackState
+
+    /**
+     * The pane's history, oldest line first, over the live screen. It stays open while the pane keeps
+     * drawing, for example an agent's spinner. [newOutput] is true once the pane drew something since it
+     * opened, so the view can offer to go back to live.
+     */
     data class Showing(
         val lines: List<String>,
+        val newOutput: Boolean = false,
     ) : ScrollbackState
 
     /** The history could not be read. The live screen stays. */
@@ -37,7 +45,7 @@ sealed interface ScrollbackState {
  * alternate screen at any time.
  *
  * The view reports a swipe as [gestureStarted], then one [step] for each few rows the finger moves. New
- * output and typing call [backToLive].
+ * output calls [onOutput], which only marks the overlay. Typing, "Back to live" and Back call [backToLive].
  *
  * @param fetch reads the history of the pane the phone shows.
  * @param sendKeys sends scroll keys to the pane, through the key allow-list.
@@ -66,6 +74,7 @@ class Scrollback(
     /** A new swipe began. */
     fun gestureStarted() {
         asking?.cancel()
+        if (current.value == ScrollbackState.Loading) current.value = ScrollbackState.Live
         waitingSteps.clear()
         keySteps = 0
         gesture = if (current.value is ScrollbackState.Showing) Gesture.OVERLAY else Gesture.NONE
@@ -77,6 +86,7 @@ class Scrollback(
             Gesture.NONE -> {
                 waitingSteps += older
                 gesture = Gesture.ASKING
+                if (older) current.value = ScrollbackState.Loading
                 asking = scope.launch { answer(fetch()) }
             }
 
@@ -93,9 +103,16 @@ class Scrollback(
         }
     }
 
-    /** New output arrived, you typed, or you tapped "Back to live". */
+    /** The pane drew something. An open overlay stays, and says new output is waiting. */
+    fun onOutput() {
+        val shown = current.value
+        if (shown is ScrollbackState.Showing && !shown.newOutput) current.value = shown.copy(newOutput = true)
+    }
+
+    /** You typed, tapped "Back to live" or "New output", or pressed Back. */
     fun backToLive() {
-        if (current.value is ScrollbackState.Showing || current.value is ScrollbackState.Failed) {
+        if (current.value != ScrollbackState.Live) {
+            asking?.cancel()
             current.value = ScrollbackState.Live
             gesture = Gesture.NONE
         }
@@ -112,6 +129,7 @@ class Scrollback(
 
             result.value.alternateScreen -> {
                 gesture = Gesture.KEYS
+                current.value = ScrollbackState.Live
                 steps.forEach(::scrollKeys)
             }
 
@@ -123,6 +141,7 @@ class Scrollback(
 
             else -> {
                 gesture = Gesture.NONE
+                current.value = ScrollbackState.Live
             }
         }
     }

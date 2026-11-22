@@ -66,7 +66,12 @@
   <string name="settings_approval_lock_detail">An approval lets the agent run a command on your server. With this on, your phone asks again after 30 seconds and whenever the app was in the background.</string>
 
   <!-- Terminal: scrollback and windows. -->
+  <string name="terminal_history_loading">Loading history</string>
   <string name="terminal_history_failed">The history could not be read.</string>
+  <string name="terminal_history_not_found">This window or session is gone, so it has no history.</string>
+  <string name="terminal_history_offline">Your phone cannot reach your server, so the history is not available.</string>
+  <string name="terminal_history_bad_request">Your server could not read the history request.</string>
+  <string name="terminal_new_output">New output</string>
   <string name="terminal_history_title">History. Your desk sees no change.</string>
   <string name="terminal_back_to_live">Back to live</string>
   <string name="terminal_windows_title">Show a window</string>

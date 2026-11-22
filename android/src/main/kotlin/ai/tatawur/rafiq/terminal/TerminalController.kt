@@ -172,12 +172,9 @@ class TerminalController(
         link.sendKeys(bytes)
     }
 
-    /** Back to live, on the main thread where the gestures drive [scrollback]. */
+    /** Back to live, on the main thread where the gestures drive [scrollback]. Typing does this. */
     private fun leaveHistory() {
-        val shown = scrollback.state.value
-        if (shown is ScrollbackState.Showing || shown is ScrollbackState.Failed) {
-            scope.launch { scrollback.backToLive() }
-        }
+        if (scrollback.state.value != ScrollbackState.Live) scope.launch { scrollback.backToLive() }
     }
 
     /** Sends one key from the key row, with the armed modifiers. */
@@ -236,7 +233,8 @@ class TerminalController(
 
             is TerminalEvent.Output -> {
                 emulator.writeInput(event.bytes)
-                leaveHistory()
+                // The history stays open: a spinner would otherwise close it at once.
+                if (scrollback.state.value is ScrollbackState.Showing) scope.launch { scrollback.onOutput() }
             }
 
             is TerminalEvent.Windows -> {

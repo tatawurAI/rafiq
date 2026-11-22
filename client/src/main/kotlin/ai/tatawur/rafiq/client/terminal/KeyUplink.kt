@@ -362,8 +362,8 @@ internal object KeyEncodings {
         return end
     }
 
-    // SGR mouse wheel up (64) or down (65), at a 1-based column and row.
-    private val SGR_WHEEL = Regex("<6[45];[1-9][0-9]{0,4};[1-9][0-9]{0,4}")
+    // SGR mouse wheel up (64) or down (65), at a column and row of 1 to 9999 with no leading zero.
+    private val SGR_WHEEL = Regex("<6[45];[1-9][0-9]{0,3};[1-9][0-9]{0,3}")
 
     private const val ESC: Byte = 0x1b
     private const val BEL: Byte = 0x07

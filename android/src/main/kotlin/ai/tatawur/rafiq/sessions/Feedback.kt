@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.sessions
 
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.CommandResult
+import ai.tatawur.rafiq.client.IDENTITY_MISMATCH
 import androidx.annotation.StringRes
 
 /**
@@ -34,6 +35,11 @@ sealed interface Feedback {
         override val textRes = R.string.feedback_unauthorized
     }
 
+    /** Your server accepts only its owner's Tailscale login. Not a token problem: the pairing stays. */
+    data object IdentityRefused : Feedback {
+        override val textRes = R.string.connection_identity_refused
+    }
+
     data class Failed(
         val message: String,
     ) : Feedback {
@@ -50,7 +56,7 @@ fun CommandResult<*>.feedback(): Feedback? =
         CommandResult.Offline -> Feedback.Offline
         CommandResult.NotFound -> Feedback.NotFound
         CommandResult.Unauthorized -> Feedback.Unauthorized
-        is CommandResult.Failed -> Feedback.Failed(message)
+        is CommandResult.Failed -> if (code == IDENTITY_MISMATCH) Feedback.IdentityRefused else Feedback.Failed(message)
     }
 
 /**

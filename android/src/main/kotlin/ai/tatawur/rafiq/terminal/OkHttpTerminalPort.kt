@@ -7,6 +7,7 @@ import ai.tatawur.rafiq.client.terminal.TerminalFrame
 import ai.tatawur.rafiq.client.terminal.TerminalOverflowException
 import ai.tatawur.rafiq.client.terminal.TerminalPort
 import ai.tatawur.rafiq.client.terminal.TerminalUplink
+import ai.tatawur.rafiq.data.errorCode
 import ai.tatawur.rafiq.protocol.api.TERMINAL_WS_PROTOCOL
 import android.net.Uri
 import kotlinx.coroutines.flow.Flow
@@ -93,9 +94,20 @@ class OkHttpTerminalPort(
             val status = response?.code
             queue.close(
                 when {
-                    status != null && status != SWITCHING_PROTOCOLS -> HandshakeRejectedException(status)
-                    t is IOException -> t
-                    else -> IOException("The terminal connection failed.", t)
+                    status != null && status != SWITCHING_PROTOCOLS -> {
+                        HandshakeRejectedException(
+                            status,
+                            response.errorCode(),
+                        )
+                    }
+
+                    t is IOException -> {
+                        t
+                    }
+
+                    else -> {
+                        IOException("The terminal connection failed.", t)
+                    }
                 },
             )
         }

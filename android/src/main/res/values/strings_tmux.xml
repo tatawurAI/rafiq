@@ -75,4 +75,7 @@
   <string name="terminal_windows_close">Close</string>
   <string name="terminal_window_shown">%1$s, shown</string>
   <string name="row_terminal_unavailable">No Terminal</string>
+
+  <!-- Your server checks the Tailscale login (#61). -->
+  <string name="connection_identity_refused">Your server only accepts your own Tailscale login. Sign this phone in to your tailnet.</string>
 </resources>

@@ -8,6 +8,7 @@ import ai.tatawur.rafiq.client.sync.HttpRequest
 import ai.tatawur.rafiq.client.sync.HttpResponse
 import ai.tatawur.rafiq.client.sync.HttpTransport
 import ai.tatawur.rafiq.client.sync.SocketFrame
+import ai.tatawur.rafiq.client.sync.apiErrorCode
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -209,9 +210,7 @@ class OkHttpEventSource(
                             channel.close(
                                 when {
                                     status != null && status != SWITCHING_PROTOCOLS -> {
-                                        HandshakeRejectedException(
-                                            status,
-                                        )
+                                        HandshakeRejectedException(status, response.errorCode())
                                     }
 
                                     t is IOException -> {
@@ -237,3 +236,18 @@ class OkHttpEventSource(
         const val SWITCHING_PROTOCOLS = 101
     }
 }
+
+/**
+ * The error code in a refused handshake's body, for example `identity_mismatch`, or null. Reads at most a
+ * kilobyte and never the token.
+ */
+internal fun Response.errorCode(): String? =
+    try {
+        apiErrorCode(peekBody(ERROR_PEEK_BYTES).string())
+    } catch (_: IOException) {
+        null
+    } catch (_: IllegalStateException) {
+        null
+    }
+
+private const val ERROR_PEEK_BYTES = 1024L

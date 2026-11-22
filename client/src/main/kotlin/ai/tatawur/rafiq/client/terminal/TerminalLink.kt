@@ -1,5 +1,7 @@
 package ai.tatawur.rafiq.client.terminal
 
+import ai.tatawur.rafiq.client.IDENTITY_MISMATCH
+import ai.tatawur.rafiq.client.sync.HandshakeRejectedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -167,7 +169,8 @@ class TerminalLink(
                 currentStatus.value = TerminalStatus.Detached
                 throw cancelled
             } catch (failure: IOException) {
-                currentStatus.value = TerminalStatus.Failed(failure.message)
+                val identity = (failure as? HandshakeRejectedException)?.code == IDENTITY_MISMATCH
+                currentStatus.value = TerminalStatus.Failed(if (identity) IDENTITY_REFUSED else failure.message)
             }
         }
 
@@ -306,6 +309,9 @@ class TerminalLink(
 
     companion object {
         val DEFAULT_RESIZE_DEBOUNCE: Duration = 150.milliseconds
+
+        /** The [TerminalStatus.Failed] message when your server accepts only its owner's Tailscale login. */
+        const val IDENTITY_REFUSED = "Your server only accepts your own Tailscale login."
 
         /** The [TerminalStatus.Failed] message after [MAX_OVERFLOWS] overflows in [OVERFLOW_WINDOW]. */
         const val FELL_BEHIND = "The screen could not keep up. Tap to retry."

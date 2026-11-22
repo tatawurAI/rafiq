@@ -135,8 +135,13 @@ private fun StatusStrip(
             }
 
             is TerminalStatus.Failed -> {
-                val fellBehind = status.message == TerminalLink.FELL_BEHIND
-                stringResource(if (fellBehind) R.string.terminal_fell_behind else R.string.terminal_failed)
+                stringResource(
+                    when (status.message) {
+                        TerminalLink.FELL_BEHIND -> R.string.terminal_fell_behind
+                        TerminalLink.IDENTITY_REFUSED -> R.string.connection_identity_refused
+                        else -> R.string.terminal_failed
+                    },
+                )
             }
         } ?: return
     val spacing = RafiqTheme.spacing

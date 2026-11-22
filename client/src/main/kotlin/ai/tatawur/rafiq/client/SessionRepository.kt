@@ -114,7 +114,16 @@ sealed interface ConnectionState {
 
     /** The bridge refused the device token. The user has to pair again. */
     data object Unauthorized : ConnectionState
+
+    /**
+     * Your server accepts only its owner's Tailscale login, and this phone reached it signed in as someone
+     * else. The pairing and token stay: signing the phone in to your own tailnet fixes it.
+     */
+    data object IdentityRefused : ConnectionState
 }
+
+/** The error code your server answers with when the phone's Tailscale login is not its owner's (403). */
+const val IDENTITY_MISMATCH = "identity_mismatch"
 
 /** The outcome of a call to the bridge. Screens branch on the kind, never on message text. */
 sealed interface CommandResult<out T> {

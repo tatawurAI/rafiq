@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.client.sync
 
 import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.ConnectionState
+import ai.tatawur.rafiq.client.IDENTITY_MISMATCH
 import ai.tatawur.rafiq.client.Reduction
 import ai.tatawur.rafiq.client.SessionListItem
 import ai.tatawur.rafiq.client.SessionReducer
@@ -194,13 +195,26 @@ class SyncingSessionRepository(
                 link.value = ConnectionState.Unauthorized
                 return
             }
-            // The socket was making progress, so the missing events are a replay away.
-            if (result.end == StreamEnd.GAP && result.progressed) continue
-            // A refused host or origin (421, 403) needs a change on your server, so asking again soon is
-            // pointless. Wait the longest backoff straight away.
-            if (result.end == StreamEnd.REJECTED) attempt = LONGEST_BACKOFF
-            waitToRetry(backoff.delayFor(attempt))
-            attempt++
+            when {
+                // A change on your tailnet fixes it, not a new pairing: say so, keep the token, retry slowly.
+                result.end == StreamEnd.IDENTITY -> {
+                    link.value = ConnectionState.IdentityRefused
+                    waitLongest()
+                }
+
+                // The socket was making progress, so the missing events are a replay away.
+                result.end == StreamEnd.GAP && result.progressed -> {
+                    Unit
+                }
+
+                else -> {
+                    // A refused host or origin (421, 403) needs a change on your server, so asking again soon
+                    // is pointless. Wait the longest backoff straight away.
+                    if (result.end == StreamEnd.REJECTED) attempt = LONGEST_BACKOFF
+                    waitToRetry(backoff.delayFor(attempt))
+                    attempt++
+                }
+            }
         }
     }
 
@@ -237,7 +251,7 @@ class SyncingSessionRepository(
             } catch (broken: StreamBroken) {
                 broken.end
             } catch (rejected: HandshakeRejectedException) {
-                handshakeEnd(rejected.status)
+                if (rejected.code == IDENTITY_MISMATCH) StreamEnd.IDENTITY else handshakeEnd(rejected.status)
             } catch (_: Exception) {
                 StreamEnd.DROPPED
             }
@@ -291,6 +305,14 @@ class SyncingSessionRepository(
         }
     }
 
+    /** Waits the longest backoff, keeping the current link state, or less if the network comes back. */
+    private suspend fun waitLongest() {
+        withTimeoutOrNull(backoff.delayFor(LONGEST_BACKOFF)) {
+            conditions.networkAvailable.first { !it }
+            conditions.networkAvailable.first { it }
+        }
+    }
+
     /** Waits out [wait], or until the network comes back, whichever is first. */
     private suspend fun waitToRetry(wait: Duration) {
         val network = conditions.networkAvailable
@@ -313,14 +335,12 @@ class SyncingSessionRepository(
 
     private fun <T> CommandResult<T>.noting(): CommandResult<T> =
         also {
-            if (it == CommandResult.Unauthorized &&
-                credentials.value != null
-            ) {
-                link.value = ConnectionState.Unauthorized
-            }
+            if (credentials.value == null) return@also
+            if (it == CommandResult.Unauthorized) link.value = ConnectionState.Unauthorized
+            if (it is CommandResult.Failed && it.code == IDENTITY_MISMATCH) link.value = ConnectionState.IdentityRefused
         }
 
-    private enum class StreamEnd { DROPPED, GAP, REFUSED, REJECTED }
+    private enum class StreamEnd { DROPPED, GAP, REFUSED, REJECTED, IDENTITY }
 
     private data class ConnectResult(
         val end: StreamEnd,

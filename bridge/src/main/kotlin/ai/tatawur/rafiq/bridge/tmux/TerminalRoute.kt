@@ -1,8 +1,10 @@
 package ai.tatawur.rafiq.bridge.tmux
 
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
-import ai.tatawur.rafiq.bridge.sessions.TMUX_SESSION_PREFIX
+import ai.tatawur.rafiq.bridge.sessions.SessionException
+import ai.tatawur.rafiq.protocol.api.MAX_HISTORY_LINES
 import ai.tatawur.rafiq.protocol.api.TerminalEnded
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import ai.tatawur.rafiq.protocol.api.TerminalListWindows
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
 import ai.tatawur.rafiq.protocol.api.TerminalNotice
@@ -13,7 +15,9 @@ import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
 import ai.tatawur.rafiq.protocol.api.terminalJson
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.origin
+import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.get
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.DefaultWebSocketSession
@@ -80,11 +84,7 @@ fun Route.terminalRoute(
     deviceOf: (ApplicationCall) -> String,
 ) {
     webSocket("/terminal") {
-        val name =
-            call.request.queryParameters["session"]
-                ?.takeIf { it.startsWith(TMUX_SESSION_PREFIX) }
-                ?.removePrefix(TMUX_SESSION_PREFIX)
-                ?.takeIf(gate.settings::allows)
+        val name = gate.allowedName(call.request.queryParameters["session"])
         if (name == null) {
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "no such session"))
             return@webSocket
@@ -116,6 +116,34 @@ fun Route.terminalRoute(
         }
     }
 }
+
+/**
+ * `GET /terminal/history?session=<id>&window=<index>&lines=<n>`: read-only scrollback of the pane the phone
+ * shows, as [TerminalHistory]. `lines` is capped at [MAX_HISTORY_LINES], and is that cap when left out. Without
+ * `window`, the session's current window. Reading never changes the window, its size or what the desk sees.
+ *
+ * It sits behind the device token like every route, and reaches only an allowed session, by the same rule as
+ * `WS /terminal`. Anything else is `404 session_not_found`, so the answer does not say which tmux sessions
+ * exist.
+ */
+fun Route.terminalHistoryRoute(gate: TerminalGate) {
+    get("/terminal/history") {
+        val query = call.request.queryParameters
+        val window = query["window"]?.let { it.toIntOrNull()?.takeIf { index -> index >= 0 } ?: invalidQuery() }
+        val lines = query["lines"]?.let { it.toIntOrNull()?.takeIf { n -> n > 0 } ?: invalidQuery() }
+        val name =
+            gate.allowedName(query["session"])?.takeIf { runCatching { gate.server.session(it) }.getOrNull() != null }
+                ?: throw SessionException.NotFound("session_not_found", "No such tmux session.")
+        val history =
+            gate.server.history(name, window, (lines ?: MAX_HISTORY_LINES).coerceAtMost(MAX_HISTORY_LINES))
+                ?: throw SessionException.NotFound("no_such_window", "That window is not in this session.")
+        val lineCount = if (history.text.isEmpty()) 0 else history.text.count { it == '\n' } + 1
+        call.respond(TerminalHistory(history.text, lineCount, history.cols, history.alternateScreen))
+    }
+}
+
+private fun invalidQuery(): Nothing =
+    throw SessionException.Invalid("invalid_query", "window and lines are whole numbers.")
 
 /** One open terminal socket, from attach to detach. */
 @Suppress("TooManyFunctions") // One function for each thing a terminal socket does.

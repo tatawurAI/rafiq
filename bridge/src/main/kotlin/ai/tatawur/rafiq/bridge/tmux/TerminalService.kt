@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.bridge.tmux
 
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
+import ai.tatawur.rafiq.bridge.sessions.TMUX_SESSION_PREFIX
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.routing.Route
 import org.slf4j.LoggerFactory
@@ -16,12 +17,23 @@ class TerminalGate(
     /** The sizes sessions had before a view took them, so the last view to leave gives them back. */
     val sessionSizes = SessionSizes()
 
+    /**
+     * The tmux session name a request may reach, from its `session` parameter (`tmux-<name>`), or null. Both
+     * terminal routes ask here, so a session is reachable by one rule.
+     */
+    fun allowedName(sessionParameter: String?): String? =
+        sessionParameter
+            ?.takeIf { it.startsWith(TMUX_SESSION_PREFIX) }
+            ?.removePrefix(TMUX_SESSION_PREFIX)
+            ?.takeIf(settings::allows)
+
     /** The name every view of this bridge process starts with: `rafiq-view-<nonce>-`. */
     val viewPrefix: String = TmuxServer.VIEW_PREFIX + UUID.randomUUID().toString().take(NONCE_LENGTH) + "-"
 }
 
 /**
- * Everything the bridge starts when Terminal is on: the `WS /terminal` route and the tmux session source.
+ * Everything the bridge starts when Terminal is on: the `WS /terminal` and `GET /terminal/history` routes and
+ * the tmux session source.
  * With Terminal off the bridge builds none of it, so no tmux command ever runs.
  */
 class TerminalService(
@@ -34,6 +46,7 @@ class TerminalService(
         deviceOf: (ApplicationCall) -> String,
     ) {
         route.terminalRoute(gate, connections, deviceOf)
+        route.terminalHistoryRoute(gate)
     }
 
     /**

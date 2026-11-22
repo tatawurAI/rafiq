@@ -49,6 +49,9 @@ object SendRefusal {
     /** The project has no Rafiq hooks, so replies and delivery cannot be seen. */
     const val HOOKS_NOT_INSTALLED = "hooks_not_installed"
 
+    /** Three messages are already waiting for the agent to be free. */
+    const val QUEUE_FULL = "queue_full"
+
     /** The text was sent but no sign that it landed came back in time. */
     const val NOT_CONFIRMED = "not_confirmed"
 }

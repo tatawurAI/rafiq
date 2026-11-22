@@ -40,4 +40,10 @@ object AuthErrorCodes {
 
     /** `POST /pair` was tried too often. The `Retry-After` header says how many seconds to wait. */
     const val TOO_MANY_ATTEMPTS = "too_many_attempts"
+
+    /**
+     * A 403: the bridge checks your Tailscale login, and this request came from another login, a tagged device or
+     * no login at all. The app says so and keeps its token.
+     */
+    const val IDENTITY_MISMATCH = "identity_mismatch"
 }

@@ -10,7 +10,11 @@ import kotlinx.serialization.Serializable
  * @property projectPath the project folder on your server, as an absolute path.
  * @property createdAtMs when the session started, in milliseconds since the Unix epoch.
  * @property updatedAtMs when any field last changed, in milliseconds since the Unix epoch.
- * @property terminal true when the session runs in a tmux pane on your server, so the app offers the Terminal view.
+ * @property terminal true when the session runs in a tmux pane on your server.
+ * @property terminalAllowed false when the session is listed but the bridge will not open it in Terminal, so the
+ *   app hides the Terminal toggle. Only meaningful when [terminal] is true.
+ * @property permissionMode the agent's own permission mode, as the agent names it, or null when not known.
+ *   The app shows it as a label.
  */
 @Serializable
 data class Session(
@@ -22,6 +26,8 @@ data class Session(
     @SerialName("created_at_ms") val createdAtMs: Long,
     @SerialName("updated_at_ms") val updatedAtMs: Long,
     @SerialName("terminal") val terminal: Boolean = false,
+    @SerialName("terminal_allowed") val terminalAllowed: Boolean = true,
+    @SerialName("permission_mode") val permissionMode: String? = null,
 )
 
 /**

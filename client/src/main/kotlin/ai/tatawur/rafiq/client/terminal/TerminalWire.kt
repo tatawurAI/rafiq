@@ -1,11 +1,15 @@
 package ai.tatawur.rafiq.client.terminal
 
 import ai.tatawur.rafiq.protocol.api.TerminalEnded
+import ai.tatawur.rafiq.protocol.api.TerminalListWindows
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
+import ai.tatawur.rafiq.protocol.api.TerminalNotice
 import ai.tatawur.rafiq.protocol.api.TerminalResize
+import ai.tatawur.rafiq.protocol.api.TerminalSelectWindow
 import ai.tatawur.rafiq.protocol.api.TerminalSize
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
 import ai.tatawur.rafiq.protocol.api.TerminalUnknown
+import ai.tatawur.rafiq.protocol.api.TerminalWindows
 import ai.tatawur.rafiq.protocol.api.terminalJson
 import kotlinx.serialization.SerializationException
 import java.io.ByteArrayOutputStream
@@ -97,7 +101,12 @@ class TerminalStreamDecoder {
                 TerminalEvent.Ended(message.reason)
             }
 
-            is TerminalResize, TerminalUnknown, null -> {
+            // Wave 2 contract: the app lane handles windows and notices.
+            is TerminalWindows, is TerminalNotice -> {
+                null
+            }
+
+            is TerminalResize, TerminalListWindows, is TerminalSelectWindow, TerminalUnknown, null -> {
                 null
             }
         }

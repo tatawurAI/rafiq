@@ -96,6 +96,8 @@ sealed interface EventPayload {
      * option's [ApprovalOption.id].
      *
      * @property expiresAtMs when the request lapses, in milliseconds since the Unix epoch, or null if it does not.
+     * @property detail the full text you are approving and the rule "allow for this session" adds. Null from an
+     *   agent that gives neither, in which case the app shows [description].
      */
     @Serializable
     @SerialName("approval_request")
@@ -105,6 +107,7 @@ sealed interface EventPayload {
         @SerialName("description") val description: String,
         @SerialName("options") val options: List<ApprovalOption>,
         @SerialName("expires_at_ms") val expiresAtMs: Long? = null,
+        @SerialName("detail") val detail: ApprovalDetail? = null,
     ) : Known
 
     /**
@@ -177,6 +180,52 @@ sealed interface EventPayload {
         @SerialName("change_type") val changeType: FileChangeKind = FileChangeKind.UNKNOWN,
         @SerialName("diff_ref") val diffRef: String? = null,
         @SerialName("git_status") val gitStatus: String? = null,
+    ) : Known
+
+    /**
+     * What a thread's current turn is doing, for the progress line under the last message. Sent when any
+     * field changes. A turn that ends sends [TurnPhase.IDLE].
+     *
+     * @property currentStep a short label for the tool step in flight, or null when none is.
+     * @property startedAtMs when the turn started, in milliseconds since the Unix epoch, so the app can show
+     *   the elapsed time without a tick from the bridge. Null when no turn is running.
+     */
+    @Serializable
+    @SerialName("turn_progress")
+    data class TurnProgress(
+        @SerialName("thread_id") val threadId: String,
+        @SerialName("phase") val phase: TurnPhase = TurnPhase.UNKNOWN,
+        @SerialName("current_step") val currentStep: String? = null,
+        @SerialName("started_at_ms") val startedAtMs: Long? = null,
+    ) : Known
+
+    /**
+     * What happened to a prompt you sent, after the bridge accepted it. Matched to the prompt by [clientId],
+     * the id the app put in its [ai.tatawur.rafiq.protocol.api.PromptRequest]. Sent again as the state moves on.
+     *
+     * @property code a stable name for why it was not delivered, one of
+     *   [ai.tatawur.rafiq.protocol.api.SendRefusal]. Null unless [state] is [DeliveryState.NOT_DELIVERED].
+     * @property message the reason in plain words, for the composer.
+     */
+    @Serializable
+    @SerialName("prompt_delivery")
+    data class PromptDelivery(
+        @SerialName("client_id") val clientId: String,
+        @SerialName("thread_id") val threadId: String,
+        @SerialName("state") val state: DeliveryState = DeliveryState.UNKNOWN,
+        @SerialName("code") val code: String? = null,
+        @SerialName("message") val message: String? = null,
+    ) : Known
+
+    /**
+     * The bridge found that Chat may be missing part of a turn, for example because the joined reply does not
+     * match the agent's own record. The app shows a note that points to Terminal.
+     */
+    @Serializable
+    @SerialName("chat_incomplete")
+    data class ChatIncomplete(
+        @SerialName("thread_id") val threadId: String,
+        @SerialName("reason") val reason: String,
     ) : Known
 }
 

@@ -13,7 +13,9 @@ import java.io.ByteArrayOutputStream
  * - Escape on its own, and Escape plus one letter or symbol (Alt+key);
  * - arrows, Home, End, Insert, Delete, page keys and function keys, with modifiers 2 to 16, the keypad
  *   (`ESC O` and a final), and `CSI n;m u` keys;
- * - the bracketed paste markers, with the pasted text between them.
+ * - the bracketed paste markers, with the pasted text between them;
+ * - the mouse wheel in the SGR encoding (`CSI < 64 ; x ; y M` and `65`), which the app sends to scroll a
+ *   full-screen program that turned on mouse mode. Clicks and other mouse reports are not keys and still go.
  *
  * Everything else goes, including a string that an OSC, DCS, APC, PM or SOS opener starts, and any CSI
  * sequence with a final byte that is not a key. Escape followed by exactly one of those opener letters at the
@@ -230,7 +232,7 @@ class TerminalInputFilter {
         if (csi.text == PASTE_START) {
             out.write(PASTE_START_BYTES)
             inPaste = true
-        } else if (KEY_CSI.matches(csi.text)) {
+        } else if (KEY_CSI.matches(csi.text) || SGR_WHEEL.matches(csi.text)) {
             out.write(data, at, csi.length)
         }
         return csi.length
@@ -345,6 +347,9 @@ class TerminalInputFilter {
         const val PASTE_END = "201~"
         val PASTE_START_BYTES = "\u001b[200~".toByteArray()
         val PASTE_END_BYTES = "\u001b[201~".toByteArray()
+
+        /** Wheel up (64) or down (65) at a column and row from 1, pressed (`M`). A wheel has no release. */
+        val SGR_WHEEL = Regex("<6[45];[1-9][0-9]{0,3};[1-9][0-9]{0,3}M")
 
         /** The modifier of a key, 2 to 16: 1 plus the bits for Shift, Alt, Ctrl, Meta and the lock keys. */
         private const val MOD = "(?:[2-9]|1[0-6])"

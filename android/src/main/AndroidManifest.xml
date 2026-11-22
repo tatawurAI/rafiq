@@ -9,6 +9,10 @@
   <!-- Dictation in the composer, on-device only. Asked for the first time you tap the mic. -->
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+  <!-- The Terminal lock asks for a strong fingerprint or face before Terminal opens. Without this,
+       asking Android whether the phone can do that throws, and Settings closes the app. -->
+  <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
   <!-- Lets the app see the speech recognition service, which Android 11 and later hide. -->
   <queries>
     <intent>

@@ -134,6 +134,16 @@ What to know before you turn it on:
 
 A listed session shows in your session list with the agent that runs in it. Its row opens in Terminal. A session you did not list is not shown, and cannot be opened, even if its name starts with a listed name.
 
+## Chat for tmux sessions
+
+A listed tmux session that runs Claude Code also has a Chat. Replies, tool steps, progress and approvals come from Claude Code's own hooks in that project, so Chat works only after you set up the hooks for the project from the app. Your messages are typed into the pane, so they also show at your desk.
+
+- Tested with Claude Code 2.1.330. Claude Code's hooks and session record are not a stable interface, so a newer release can change them. If Chat looks wrong, the app says it may be incomplete. Open Terminal, which does not depend on any of this.
+- Chat behaves exactly like typing at your desk. A message that starts with `!` runs as a shell command on your server, and every slash command and skill runs. That is by design. Rafiq adds no limit, list or confirmation for them.
+- The bridge types only when it is safe: Claude is idle, no dialog is open at your desk, and the input box is empty. Otherwise it says why, for example "There is half-typed text in the terminal". A message sent while Claude is busy waits in the bridge and is typed when the turn ends. Control characters other than tab and newline are removed before typing.
+- An approval shows on your phone and at your desk at the same time, and the first answer wins. If nobody answers on the phone within 10 minutes, it goes back to the desk. At most 3 approvals per session, and 10 in all, wait for a phone. More are asked at the desk only. Revoking any paired device sends every waiting approval back to the desk.
+- Chat prompts and tool output are stored in the bridge's event log on your server, and cached in the app on your phone, like every other session's events.
+
 ## Chat for tmux sessions: the hooks
 
 Chat for a tmux session gets the agent's replies, steps and approvals from Claude Code's own hooks. You install them per project, from the app, and only after you have seen exactly what will be written. Rafiq never installs hooks for all projects, and never edits your user-level settings file (`~/.claude/settings.json`).

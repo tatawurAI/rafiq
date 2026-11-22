@@ -41,6 +41,13 @@ class TmuxSessionSource(
     @Volatile
     private var visible: Set<String> = emptySet()
 
+    /**
+     * Called after every scan with the panes of the allowed sessions and the process table it used, so the Claude
+     * reader can follow the agent panes without asking tmux again. Set once, before [start].
+     */
+    @Volatile
+    var onScan: (suspend (panes: List<PaneInfo>, processes: Map<Int, Pair<Int, String>>) -> Unit)? = null
+
     /** Whether clients may see the session: not a tmux session, or one this source lists right now. */
     fun isVisible(sessionId: String): Boolean = !isTmuxSessionId(sessionId) || sessionId in visible
 
@@ -71,7 +78,8 @@ class TmuxSessionSource(
             val allowed = existing.filter { settings.allows(it.name) }
             val names = allowed.map { it.name }.toSet()
             val panes = if (allowed.isEmpty()) emptyList() else gate.server.panes().filter { it.sessionName in names }
-            val detected = if (panes.isEmpty()) emptyMap() else agents.detect(panes, AgentDetector.processTable())
+            val processes = if (panes.isEmpty()) emptyMap() else AgentDetector.processTable()
+            val detected = if (panes.isEmpty()) emptyMap() else agents.detect(panes, processes)
             for (session in allowed) {
                 show(
                     session.name,
@@ -80,6 +88,7 @@ class TmuxSessionSource(
             }
             settleGone(existing.map { it.name }.toSet())
             visible = names.map { TMUX_SESSION_PREFIX + it }.toSet()
+            onScan?.invoke(panes, processes)
         }
 
     private suspend fun show(

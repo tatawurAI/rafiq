@@ -1,0 +1,1 @@
+An approval from a tmux session shows the whole command with its line count and the rule "allow for this session" adds, and goes back to the desk after 10 minutes, when the hook goes away, or when a paired device is revoked.

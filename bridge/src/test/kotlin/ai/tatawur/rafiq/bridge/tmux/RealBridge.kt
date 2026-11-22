@@ -94,13 +94,16 @@ class RealBridge(
         name: String,
         device: String = "phone",
         token: String? = TEST_TOKEN,
-    ): TestSocket = socket("/terminal?session=tmux-$name", device, token)
+        viaSubprotocol: Boolean = false,
+    ): TestSocket = socket("/terminal?session=tmux-$name", device, token, viaSubprotocol)
 
+    /** [viaSubprotocol] sends the token as a `Sec-WebSocket-Protocol` value, as the app does, not as a header. */
     fun socket(
         path: String,
         device: String = "phone",
         token: String? = TEST_TOKEN,
-    ): TestSocket = TestSocket(http, "ws://127.0.0.1:$port$path", token, device).also(sockets::add)
+        viaSubprotocol: Boolean = false,
+    ): TestSocket = TestSocket(http, "ws://127.0.0.1:$port$path", token, device, viaSubprotocol).also(sockets::add)
 
     fun get(path: String): HttpResponse<String> =
         http.send(
@@ -138,6 +141,7 @@ class TestSocket(
     url: String,
     token: String?,
     device: String,
+    viaSubprotocol: Boolean = false,
 ) : AutoCloseable {
     private val queue = LinkedBlockingQueue<Received>()
     private val socket: WebSocket
@@ -187,7 +191,11 @@ class TestSocket(
                 }
             }
         val builder = http.newWebSocketBuilder()
-        if (token != null) builder.header("Authorization", "Bearer $token")
+        if (token != null && viaSubprotocol) {
+            builder.subprotocols("rafiq.term.v1", token)
+        } else if (token != null) {
+            builder.header("Authorization", "Bearer $token")
+        }
         builder.header("X-Test-Device", device)
         socket = runCatching { builder.buildAsync(URI(url), listener).get(TIMEOUT_SECONDS, TimeUnit.SECONDS) }
             .getOrElse { failure ->
@@ -199,6 +207,9 @@ class TestSocket(
                 null
             } ?: NoSocket
     }
+
+    /** The subprotocol the server selected in the handshake, or empty. */
+    val subprotocol: String get() = socket.subprotocol
 
     fun sendResize(
         cols: Int,

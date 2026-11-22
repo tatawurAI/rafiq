@@ -278,6 +278,17 @@ class TerminalRouteTest {
         assertTrue(noViewSession(), "a refused socket started no tmux client")
     }
 
+    @Test
+    fun the_token_can_ride_as_a_subprotocol_and_the_server_selects_the_terminal_one() {
+        tmux.newSession("weather-app")
+        val socket = bridgeFor("weather-app").terminal("weather-app", viaSubprotocol = true)
+
+        socket.sendResize(60, 20)
+        socket.snapshot()
+
+        assertEquals("rafiq.term.v1", socket.subprotocol)
+    }
+
     private fun assertRefused(socket: TestSocket) {
         val closed = socket.until { it is Received.Closed } as Received.Closed
         assertEquals("no such session", closed.reason)

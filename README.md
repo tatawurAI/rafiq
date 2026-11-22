@@ -79,7 +79,7 @@ Rafiq is pre-alpha and nothing is released. Today the bridge runs Claude Code se
    cd rafiq
    ```
 
-2. Make a device token. The bridge refuses to start with agents configured and no token of at least 32 characters, because anything that reaches its port could otherwise run an agent.
+2. Make a first device token for trying the bridge. It is optional: it becomes a device called `legacy`, and your phones get tokens of their own when you pair them (see below).
 
    ```sh
    export RAFIQ_DEVICE_TOKEN=$(openssl rand -hex 32)
@@ -105,7 +105,7 @@ Rafiq is pre-alpha and nothing is released. Today the bridge runs Claude Code se
    curl http://127.0.0.1:8740/health
    ```
 
-   Every other route needs the token as `Authorization: Bearer <token>`:
+   Every other route needs a device token as `Authorization: Bearer <token>`. The `legacy` token from step 2 works until you revoke it:
 
    ```sh
    curl -H "Authorization: Bearer $RAFIQ_DEVICE_TOKEN" http://127.0.0.1:8740/sessions
@@ -127,13 +127,23 @@ The bridge reads environment variables. Export them in your shell, or use `Envir
 |---|---|---|
 | `RAFIQ_BIND_ADDRESS` | Address the bridge listens on | `127.0.0.1` |
 | `RAFIQ_PORT` | Port the bridge listens on | `8740` |
-| `RAFIQ_DATA_DIR` | Where the bridge keeps its data, including the event log. Unset keeps events in memory only. | unset |
+| `RAFIQ_DATA_DIR` | Where the bridge keeps its data, including the event log and the paired devices. Needed to pair phones. Unset keeps events in memory only. | unset |
 | `RAFIQ_AGENTS` | Agents you can start sessions with, as `id=command` pairs separated by commas, for example `claude-code=claude-agent-acp`. The command is split on whitespace. There is no shell and no quoting, so an argument cannot contain a space. | unset |
 | `RAFIQ_DEV_PAGE` | Set to `1` to serve a plain test page at `/dev` for trying sessions from a browser. The route does not exist otherwise. | unset |
-| `RAFIQ_DEVICE_TOKEN` | Token every request except `GET /health` must present as `Authorization: Bearer <token>`. At least 32 characters, required when `RAFIQ_AGENTS` is set. Make one with `openssl rand -hex 32`. Sensitive: keep it out of git. | unset |
+| `RAFIQ_DEVICE_TOKEN` | Optional. Creates the device `legacy`, accepted as `Authorization: Bearer <token>`, so a phone paired before per-device tokens keeps working. At least 32 characters when set. Make one with `openssl rand -hex 32`. Phones pair with a code and get their own token. Sensitive: keep it out of git. | unset |
 | `RAFIQ_ALLOWED_HOSTS` | Extra names the bridge accepts in the `Host` header, separated by commas, for example your Tailscale name. The bind address and `localhost` are always accepted. Any other host gets `421`, which blocks DNS rebinding. | unset |
 
-To use the app on your phone, keep the bridge on `127.0.0.1` and publish it over HTTPS with `tailscale serve`, as [docs/setup.md](docs/setup.md) describes. A request that carries an `Origin` header is refused unless it comes from the bridge itself, so web pages on other sites cannot use it. With `RAFIQ_DEV_PAGE=1`, open `/dev` and paste the token into the page. The page keeps it in memory only.
+To use the app on your phone, keep the bridge on `127.0.0.1` and publish it over HTTPS with `tailscale serve`, as [docs/setup.md](docs/setup.md) describes.
+
+Pair each phone with a code, not a pasted token. On your server, in the same environment as the bridge, run:
+
+```sh
+rafiq-bridge pair --name my-phone
+```
+
+It prints a code such as `ABCD-EFGH`. Enter your server address and the code in the app. The code works once and expires in about 10 minutes, and the phone gets a token of its own. `rafiq-bridge devices` lists your phones, and `rafiq-bridge revoke <id>` cuts one off at once. To retire the shared token, run `rafiq-bridge revoke legacy` once your phone is paired, then remove `RAFIQ_DEVICE_TOKEN` from the bridge's environment. A revoked `legacy` stays revoked if the variable lingers.
+
+A request that carries an `Origin` header is refused unless it comes from the bridge itself, so web pages on other sites cannot use it. With `RAFIQ_DEV_PAGE=1`, open `/dev` and paste the token into the page. The page keeps it in memory only.
 
 ## Repository layout
 

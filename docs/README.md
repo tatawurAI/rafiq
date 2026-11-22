@@ -4,6 +4,7 @@
 |---|---|
 | [setup.md](setup.md) | How to reach the bridge from your phone over HTTPS with `tailscale serve`, and pair the app. |
 | [architecture.md](architecture.md) | The design of Rafiq: layers, event model, bridge, app. States which parts are built today. |
+| [manual/](manual/) | Checks you run by hand on a real phone, where no automated test can reach. `terminal-split-frames.sh` checks that Terminal draws an emoji or a colour change that arrives split across two frames. |
 | [adr/](adr/) | One short record per architecture decision, with its reasons. Start at the [index](adr/README.md). |
 
 Other documents live at the repository root: [README](../README.md) for what Rafiq is and how to run it, [CONTRIBUTING](../CONTRIBUTING.md) for the build and pull request flow, [STYLE](../STYLE.md) for code conventions, and [SECURITY](../SECURITY.md) for reporting vulnerabilities.

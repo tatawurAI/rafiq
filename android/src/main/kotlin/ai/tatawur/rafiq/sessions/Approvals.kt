@@ -150,7 +150,7 @@ fun PinnedApproval(
                 modifier = Modifier.padding(spacing.smallMedium),
                 verticalArrangement = Arrangement.spacedBy(spacing.small),
             ) {
-                ApprovalDescription(approval.description, maxLines = Int.MAX_VALUE)
+                ApprovalRequestText(approval)
                 ApprovalOptions(approval.options, answering, onAnswer)
             }
         } else {
@@ -169,7 +169,7 @@ fun PinnedApproval(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(spacing.small),
             ) {
-                ApprovalDescription(approval.description, maxLines = 2, modifier = Modifier.weight(1f))
+                ApprovalRequestSummary(approval, maxLines = 2, modifier = Modifier.weight(1f))
                 Button(
                     onClick = onJump ?: { expanded = true },
                     enabled = !answering,
@@ -206,8 +206,8 @@ fun PinnedApprovalFull(
             verticalArrangement = Arrangement.spacedBy(spacing.small),
         ) {
             val jumpLabel = stringResource(R.string.approval_jump)
-            ApprovalDescription(
-                approval.description,
+            ApprovalRequestSummary(
+                approval,
                 maxLines = 3,
                 modifier =
                     if (onJump != null) {
@@ -221,23 +221,6 @@ fun PinnedApprovalFull(
             )
             ApprovalOptions(approval.options, answering, onAnswer, twoColumns = true)
         }
-    }
-}
-
-@Composable
-private fun ApprovalDescription(
-    text: String,
-    maxLines: Int,
-    modifier: Modifier = Modifier,
-) {
-    Box(modifier = modifier, contentAlignment = Alignment.CenterStart) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-            color = RafiqTheme.colors.text,
-            maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 

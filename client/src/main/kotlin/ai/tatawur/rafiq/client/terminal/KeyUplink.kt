@@ -200,13 +200,15 @@ class KeyUplink {
  * - `SS3` keys: arrows in application mode, Home, End, F1 to F4 and the keypad
  *   (`jklmnopqrstuvwxyMX`). `SS3` with any other final is dropped;
  * - `CSI 1 ; m P`, `Q` and `S` for F1, F2 and F4 with a modifier;
- * - the start of a bracketed paste, `CSI 200 ~`.
+ * - the start of a bracketed paste, `CSI 200 ~`;
+ * - the mouse wheel in SGR form, `CSI < 64 ; x ; y M` and `CSI < 65 ; x ; y M`, which the view sends to scroll
+ *   a full-screen program that turned mouse mode on.
  *
- * Dropped: anything with a private marker (`?`, `>`, `<`, `=`) or an intermediate byte, which covers
- * device attributes, mode reports and SGR mouse reports; X10 mouse reports; cursor position and
- * status reports; focus reports; every OSC, DCS, APC, PM and SOS string; C1 controls written as
- * UTF-8; and bytes that are not valid UTF-8. One real key is dropped with them: F3 with a modifier
- * is `CSI 1 ; m R`, the same shape as a cursor position report.
+ * Dropped: anything else with a private marker (`?`, `>`, `<`, `=`) or an intermediate byte, which covers
+ * device attributes, mode reports and every other SGR mouse report (clicks, drags, releases); X10 mouse
+ * reports; cursor position and status reports; focus reports; every OSC, DCS, APC, PM and SOS string;
+ * C1 controls written as UTF-8; and bytes that are not valid UTF-8. One real key is dropped with them:
+ * F3 with a modifier is `CSI 1 ; m R`, the same shape as a cursor position report.
  */
 internal object KeyEncodings {
     enum class Kind { KEY, PASTE_START, DROP, INCOMPLETE }
@@ -301,6 +303,10 @@ internal object KeyEncodings {
                 Token(finalAt + 1, csiKind(if (params.isEmpty()) emptyList() else params.split(';'), bytes[finalAt]))
             }
 
+            finalAt == paramsEnd && bytes[finalAt] == 'M'.code.toByte() && SGR_WHEEL.matches(params) -> {
+                Token(finalAt + 1, Kind.KEY)
+            }
+
             else -> {
                 Token(finalAt + 1, Kind.DROP)
             }
@@ -355,6 +361,9 @@ internal object KeyEncodings {
         }
         return end
     }
+
+    // SGR mouse wheel up (64) or down (65), at a column and row of 1 to 9999 with no leading zero.
+    private val SGR_WHEEL = Regex("<6[45];[1-9][0-9]{0,3};[1-9][0-9]{0,3}")
 
     private const val ESC: Byte = 0x1b
     private const val BEL: Byte = 0x07

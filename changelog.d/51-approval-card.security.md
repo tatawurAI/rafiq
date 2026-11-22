@@ -1,0 +1,1 @@
+An approval card shows the whole command with its line count, says when lines are hidden or were cut by your server, shows the rule that "allow for this session" adds, and an optional setting asks for your fingerprint or face before you answer an approval.

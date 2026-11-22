@@ -17,6 +17,8 @@ import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.ToolCallKind
 import ai.tatawur.rafiq.protocol.ToolCallStatus
+import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -106,6 +108,7 @@ class SampleSessionRepository(
     override suspend fun prompt(
         sessionId: String,
         text: String,
+        clientId: String?,
     ): CommandResult<Unit> {
         val main = states.value[sessionId]?.mainThread
         return when {
@@ -170,6 +173,26 @@ class SampleSessionRepository(
             }
         }
     }
+
+    // The sample has no session in tmux, so it has no hooks to set up and no pane history.
+    override suspend fun hookSetup(sessionId: String): CommandResult<HookSetupPreview> = CommandResult.NotFound
+
+    override suspend fun installHooks(
+        sessionId: String,
+        previewHash: String,
+        addGitExclude: Boolean,
+    ): CommandResult<Unit> = CommandResult.NotFound
+
+    override suspend fun removeHooks(
+        sessionId: String,
+        previewHash: String,
+    ): CommandResult<Unit> = CommandResult.NotFound
+
+    override suspend fun terminalHistory(
+        sessionId: String,
+        window: Int?,
+        lines: Int,
+    ): CommandResult<TerminalHistory> = CommandResult.NotFound
 
     private suspend fun resolve(
         card: ApprovalCard,

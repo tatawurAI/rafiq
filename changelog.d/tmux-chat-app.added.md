@@ -1,0 +1,1 @@
+Chat for a session in tmux shows the agent's replies, tool steps and a progress line, and a message you send shows as sent, queued or not delivered, with the reason in plain words when your server will not type it.

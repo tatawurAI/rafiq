@@ -50,4 +50,22 @@ class TerminalWireTest {
         val window = windowOf("""$base,"window":{"index":3,"name":"$hostile"}}""")
         assertEquals(MirroredWindow(3, ("[2Jx" + "y".repeat(100)).take(MirroredWindow.MAX_NAME)), window)
     }
+
+    @Test
+    fun the_window_list_and_notices_reach_the_view_as_plain_text() {
+        val decoder = TerminalStreamDecoder()
+
+        val windows =
+            decoder.onText(
+                """{"type":"windows","windows":[{"index":1,"name":"build"},""" +
+                    """{"index":2,"name":"lo\u001b[2Jgs"}],"shown":2}""",
+            )
+        val notice = decoder.onText("""{"type":"notice","code":"window_closed","message":"Window 2 closed.\u0007"}""")
+
+        assertEquals(
+            TerminalEvent.Windows(listOf(MirroredWindow(1, "build"), MirroredWindow(2, "lo[2Jgs")), 2),
+            windows,
+        )
+        assertEquals(TerminalEvent.Notice("window_closed", "Window 2 closed."), notice)
+    }
 }

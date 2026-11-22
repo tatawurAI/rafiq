@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.settings
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.terminal.BiometricCheck
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
+import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -44,7 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 
 /**
- * Settings, wired to [settings]. Changing the Terminal lock in either direction needs the same
+ * Settings, wired to [settings]. Changing either lock in either direction needs the same
  * biometric check it turns on, so someone holding your unlocked phone cannot switch it off. When
  * the phone has no strong biometric left, turning it off needs none: removing one already took
  * your screen lock.
@@ -60,29 +61,35 @@ fun SettingsRoute(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lockOn by settings.terminalLock.collectAsStateWithLifecycle(initialValue = false)
+    val approvalLockOn by settings.approvalLock.collectAsStateWithLifecycle(initialValue = false)
     val available = remember { BiometricCheck.available(context) }
     val title = stringResource(R.string.settings_confirm_title)
-    val subtitle = stringResource(R.string.settings_terminal_lock)
+    val terminalSubtitle = stringResource(R.string.settings_terminal_lock)
+    val approvalSubtitle = stringResource(R.string.settings_approval_lock)
     val cancel = stringResource(R.string.terminal_unlock_cancel)
+    // Either change needs the check it guards, unless no strong biometric is left to check with.
+    val change = { on: Boolean, subtitle: String, write: suspend (Boolean) -> Unit ->
+        if (!available && !on) {
+            scope.launch { write(false) }
+        } else if (available) {
+            BiometricCheck.ask(context, title, subtitle, cancel) { passed ->
+                if (passed) scope.launch { write(on) }
+            }
+        }
+    }
     SettingsScreen(
         terminalLock = lockOn,
         biometricAvailable = available,
         onBack = onBack,
-        onTerminalLockChange = { on ->
-            if (!available && !on) {
-                scope.launch { settings.setTerminalLock(false) }
-            } else if (available) {
-                BiometricCheck.ask(context, title, subtitle, cancel) { passed ->
-                    if (passed) scope.launch { settings.setTerminalLock(on) }
-                }
-            }
-        },
+        onTerminalLockChange = { on -> change(on, terminalSubtitle, settings::setTerminalLock) },
         onUnpair = unpair::ask,
+        approvalLock = approvalLockOn,
+        onApprovalLockChange = { on -> change(on, approvalSubtitle, settings::setApprovalLock) },
     )
     if (askingUnpair) UnpairConfirmation(onConfirm = unpair::confirm, onDismiss = unpair::cancel)
 }
 
-/** The settings list: for now, the biometric lock on Terminal. */
+/** The settings list: the biometric locks on Terminal and on answering approvals, and unpairing. */
 @Composable
 fun SettingsScreen(
     terminalLock: Boolean,
@@ -91,6 +98,8 @@ fun SettingsScreen(
     onTerminalLockChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     onUnpair: () -> Unit = {},
+    approvalLock: Boolean = false,
+    onApprovalLockChange: (Boolean) -> Unit = {},
 ) {
     val spacing = RafiqTheme.spacing
     val colors = RafiqTheme.colors
@@ -118,7 +127,20 @@ fun SettingsScreen(
                 color = colors.text,
             )
         }
-        TerminalLockRow(terminalLock, biometricAvailable, onTerminalLockChange)
+        LockRow(
+            R.string.settings_terminal_lock,
+            R.string.settings_terminal_lock_detail,
+            terminalLock,
+            biometricAvailable,
+            onTerminalLockChange,
+        )
+        LockRow(
+            R.string.settings_approval_lock,
+            R.string.settings_approval_lock_detail,
+            approvalLock,
+            biometricAvailable,
+            onApprovalLockChange,
+        )
         HorizontalDivider(color = colors.border, thickness = spacing.hairline)
         UnpairRow(onUnpair)
     }
@@ -166,40 +188,42 @@ private fun UnpairConfirmation(
     )
 }
 
-/** The Terminal lock switch, with what it does or why it cannot be turned on. */
+/** A biometric lock switch, with what it does or why it cannot be turned on. */
 @Composable
-private fun TerminalLockRow(
-    terminalLock: Boolean,
+private fun LockRow(
+    @StringRes title: Int,
+    @StringRes detail: Int,
+    on: Boolean,
     biometricAvailable: Boolean,
-    onTerminalLockChange: (Boolean) -> Unit,
+    onChange: (Boolean) -> Unit,
 ) {
     val spacing = RafiqTheme.spacing
     val colors = RafiqTheme.colors
-    val canChange = biometricAvailable || terminalLock
+    val canChange = biometricAvailable || on
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = spacing.minTouchTarget)
                 .toggleable(
-                    value = terminalLock,
+                    value = on,
                     enabled = canChange,
                     role = Role.Switch,
-                    onValueChange = onTerminalLockChange,
+                    onValueChange = onChange,
                 ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(spacing.medium),
     ) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
             Text(
-                stringResource(R.string.settings_terminal_lock),
+                stringResource(title),
                 style = MaterialTheme.typography.bodyLarge,
                 color = colors.text,
             )
             Text(
                 stringResource(
                     if (biometricAvailable) {
-                        R.string.settings_terminal_lock_detail
+                        detail
                     } else {
                         R.string.settings_terminal_lock_unavailable
                     },
@@ -209,7 +233,7 @@ private fun TerminalLockRow(
             )
         }
         Switch(
-            checked = terminalLock,
+            checked = on,
             onCheckedChange = null,
             enabled = canChange,
             colors =

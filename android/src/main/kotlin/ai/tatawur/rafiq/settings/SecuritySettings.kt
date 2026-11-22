@@ -13,7 +13,7 @@ import java.io.IOException
 
 /**
  * Settings that guard what the phone can do on your server. They fail closed: a settings file that
- * is damaged or cannot be read counts as the Terminal lock being on, until you change it.
+ * is damaged or cannot be read counts as both locks being on, until you change them.
  */
 class SecuritySettings(
     private val prefs: DataStore<Preferences>,
@@ -28,9 +28,20 @@ class SecuritySettings(
         prefs.edit { it[TERMINAL_LOCK] = on }
     }
 
+    /** True when answering an approval needs a strong biometric check first. Off until you turn it on. */
+    val approvalLock: Flow<Boolean> =
+        prefs.data
+            .catch { failure -> if (failure is IOException) emit(LOCKED) else throw failure }
+            .map { it[APPROVAL_LOCK] ?: false }
+
+    suspend fun setApprovalLock(on: Boolean) {
+        prefs.edit { it[APPROVAL_LOCK] = on }
+    }
+
     companion object {
         private val TERMINAL_LOCK = booleanPreferencesKey("terminal_biometric")
-        private val LOCKED = preferencesOf(TERMINAL_LOCK to true)
+        private val APPROVAL_LOCK = booleanPreferencesKey("approval_biometric")
+        private val LOCKED = preferencesOf(TERMINAL_LOCK to true, APPROVAL_LOCK to true)
 
         /**
          * For the settings file: a damaged one is replaced with the lock on, never with defaults,

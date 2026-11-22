@@ -134,11 +134,7 @@ fun ToolCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.needsYou,
                     )
-                    Text(
-                        text = approval.description,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        color = colors.text,
-                    )
+                    ApprovalRequestText(approval)
                     if (!answerBelow) ApprovalOptions(approval.options, answering, onAnswer)
                 }
             }

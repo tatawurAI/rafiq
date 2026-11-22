@@ -51,6 +51,28 @@ class BridgeApiTest {
             assertEquals(ConnectionState.Unauthorized, repository.connection.value)
         }
 
+    @Test
+    fun the_wave_two_routes_send_what_the_bridge_reads() =
+        runTest {
+            val requests = mutableListOf<HttpRequest>()
+            val api =
+                BridgeApi({ request -> HttpResponse(200, "{}").also { requests += request } }) {
+                    BridgeCredentials("https://bridge.example.ts.net", "test-token")
+                }
+
+            api.prompt("tmux-weather-app", "!ls", clientId = "c-1")
+            api.removeHooks("tmux-weather-app", "h1")
+            api.terminalHistory("tmux-weather-app", window = 2, lines = 5000)
+
+            assertEquals("""{"text":"!ls","client_id":"c-1"}""", requests[0].jsonBody)
+            assertEquals(HttpMethod.DELETE, requests[1].method)
+            assertEquals("""{"preview_hash":"h1","add_git_exclude":false}""", requests[1].jsonBody)
+            assertEquals(
+                "https://bridge.example.ts.net/terminal/history?session=tmux-weather-app&window=2&lines=5000",
+                requests[2].url,
+            )
+        }
+
     private fun answer(
         status: Int,
         body: String,

@@ -7,6 +7,7 @@ import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.api.SessionSummary
 import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
@@ -88,6 +89,26 @@ class ColdStartTest {
             // Backoff waits a random point in the upper half of its 30 second ceiling.
             val waitMs = checkNotNull(offline.retryAtMs) - testScheduler.currentTime
             assertTrue(waitMs >= 15_000, "waited $waitMs ms")
+        }
+
+    @Test
+    fun losing_the_network_takes_a_live_socket_offline_without_waiting_for_it_to_fail() =
+        runTest {
+            val conditions = FakeConditions()
+            val source =
+                EventSource { _, _ ->
+                    flow {
+                        emit(SocketFrame.Opened)
+                        awaitCancellation()
+                    }
+                }
+            val repository = repository(source = source, conditions = conditions)
+            backgroundScope.launch { repository.session("ses_weather_app").collect {} }
+            repository.connection.first { it == ConnectionState.Live }
+
+            conditions.network.value = false
+
+            repository.connection.first { it == ConnectionState.Offline(retryAtMs = null) }
         }
 
     private fun TestScope.repository(

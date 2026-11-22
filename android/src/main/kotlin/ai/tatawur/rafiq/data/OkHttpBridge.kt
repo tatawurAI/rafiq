@@ -31,7 +31,10 @@ import kotlin.coroutines.resumeWithException
 internal object BridgeClients {
     private const val CONNECT_TIMEOUT_S = 10L
     private const val CALL_TIMEOUT_S = 20L
-    private const val PING_INTERVAL_S = 15L
+
+    // OkHttp fails a socket when a ping's pong has not come back by the next ping, so a link that died
+    // silently is noticed within one to two intervals. The bridge (Ktor) answers pings on its own.
+    private const val PING_INTERVAL_S = 5L
 
     /** For REST calls. */
     fun rest(): OkHttpClient =

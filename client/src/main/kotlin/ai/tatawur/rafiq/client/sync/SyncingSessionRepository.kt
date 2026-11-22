@@ -13,6 +13,7 @@ import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
@@ -189,11 +191,22 @@ class SyncingSessionRepository(
         val state = current()
         val end =
             try {
-                source.open(eventsUrl(paired.baseUrl, state.sessionId, state.lastSeq), paired.token).collect { frame ->
-                    when (frame) {
-                        SocketFrame.Opened -> link.value = ConnectionState.Live
-                        is SocketFrame.Text -> if (applyFrame(frame.text, current(), commit)) progressed = true
+                coroutineScope {
+                    // A socket on a network the phone has lost can take a while to fail on its own. Stop
+                    // at once, so the screen says Offline and the retry waits for the network.
+                    val networkGone =
+                        launch {
+                            conditions.networkAvailable.first { !it }
+                            throw StreamBroken(StreamEnd.DROPPED)
+                        }
+                    val url = eventsUrl(paired.baseUrl, state.sessionId, state.lastSeq)
+                    source.open(url, paired.token).collect { frame ->
+                        when (frame) {
+                            SocketFrame.Opened -> link.value = ConnectionState.Live
+                            is SocketFrame.Text -> if (applyFrame(frame.text, current(), commit)) progressed = true
+                        }
                     }
+                    networkGone.cancel()
                 }
                 StreamEnd.DROPPED
             } catch (cancelled: CancellationException) {

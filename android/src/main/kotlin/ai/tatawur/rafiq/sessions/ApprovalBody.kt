@@ -93,7 +93,7 @@ fun ApprovalRequestSummary(
 ) {
     val text = ApprovalText.of(approval, expanded = false)
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(RafiqTheme.spacing.xSmall)) {
-        CommandLines(text.lines.take(maxLines), maxLinesEach = 1, command = approval.detail != null)
+        CommandLines(text.lines.take(maxLines), maxLinesEach = text.compactLinesEach, command = approval.detail != null)
         if (text.showsLineCount) LineCount(text.lineCount)
     }
 }

@@ -146,6 +146,41 @@ class TmuxSessionSourceTest {
     }
 
     @Test
+    fun the_agent_list_is_asked_once_for_a_while_and_a_hung_one_does_not_hold_the_poll() {
+        val bin = Files.createDirectory(dir.resolve("bin"))
+        Files.createSymbolicLink(bin.resolve("claude"), Path.of("/bin/sleep"))
+        tmux.newSession("weather-app", "${bin.resolve("claude")} 1000")
+        val panePid = tmux.tmux("display-message", "-p", "-t", "=weather-app:", "#{pane_pid}").trim().toInt()
+        val table = runBlocking { AgentDetector.processTable() }
+        assumeTrue(AgentDetector.claudeProcessesUnder(panePid, table).isNotEmpty(), "no process named claude here")
+        val panes = runBlocking { tmux.server.panes() }
+        val counter = dir.resolve("asked.txt")
+        val counting = bin.resolve("claude-counting")
+        Files.writeString(counting, "#!/bin/sh\necho x >> '$counter'\necho '[{\"pid\": $panePid, \"cwd\": \"/w\"}]'\n")
+        counting.toFile().setExecutable(true)
+        var now = 1_000_000L
+        val detector = AgentDetector(claudeCommand = counting.toString(), nowMs = { now })
+
+        runBlocking {
+            detector.detect(panes, table)
+            now += 3_000
+            detector.detect(panes, table)
+        }
+        assertEquals(1, Files.readAllLines(counter).size, "asked again within the cache time")
+        now += 30_000
+        runBlocking { detector.detect(panes, table) }
+        assertEquals(2, Files.readAllLines(counter).size, "never asked again after the cache time")
+
+        // A list command that hangs is given up on, and the process tree decides.
+        val hanging = bin.resolve("claude-hanging")
+        Files.writeString(hanging, "#!/bin/sh\nexec sleep 300\n")
+        hanging.toFile().setExecutable(true)
+        val hung = AgentDetector(claudeCommand = hanging.toString(), timeoutSeconds = 1)
+        val found = runBlocking { hung.detect(panes, table) }
+        assertEquals("claude-code", found.getValue("weather-app").agent)
+    }
+
+    @Test
     fun with_terminal_off_a_tmux_session_in_the_log_is_not_listed_even_when_tmux_has_it() {
         tmux.newSession("weather-app")
         val on = open("weather-app")

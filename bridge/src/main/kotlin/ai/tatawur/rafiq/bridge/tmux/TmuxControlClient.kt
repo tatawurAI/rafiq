@@ -198,16 +198,14 @@ class TmuxControlClient(
         }
     }
 
-    /** Detaches, then makes sure the child is gone. Closing stdin is enough for tmux. The rest is belt and braces. */
-    @Suppress("TooGenericExceptionCaught") // Closing must finish whatever state the pipe is in.
+    /**
+     * Ends the client. Closing stdin is enough for tmux: it detaches on end of input, which is also what
+     * happens when the bridge dies. The close runs on its own thread and takes no lock, because a write stuck
+     * on a full pipe holds the stream, and then the child is killed after [CLOSE_WAIT_SECONDS].
+     */
     override fun close() {
         if (!::process.isInitialized) return
-        try {
-            synchronized(writeLock) { process.outputStream.write("detach-client\n".toByteArray()) }
-        } catch (_: Exception) {
-            // Already gone.
-        }
-        runCatching { process.outputStream.close() }
+        Thread { runCatching { process.outputStream.close() } }.apply { isDaemon = true }.start()
         if (!process.waitFor(CLOSE_WAIT_SECONDS, TimeUnit.SECONDS)) process.destroyForcibly()
     }
 

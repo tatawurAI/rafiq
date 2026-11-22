@@ -119,3 +119,28 @@ internal class InputBudget(
         const val NANOS_PER_SECOND = 1_000_000_000L
     }
 }
+
+/** A token bucket: up to [burst] at once, then [perSecond] a second. For things a phone has no reason to spam. */
+internal class TokenBucket(
+    private val burst: Int,
+    private val perSecond: Int,
+    private val nowNanos: () -> Long = System::nanoTime,
+) {
+    private var tokens = burst.toDouble()
+    private var last = nowNanos()
+
+    /** True and spends a token when one is left. */
+    @Synchronized
+    fun tryTake(): Boolean {
+        val now = nowNanos()
+        tokens = minOf(burst.toDouble(), tokens + (now - last) * perSecond / NANOS_PER_SECOND)
+        last = now
+        if (tokens < 1.0) return false
+        tokens -= 1.0
+        return true
+    }
+
+    private companion object {
+        const val NANOS_PER_SECOND = 1_000_000_000.0
+    }
+}

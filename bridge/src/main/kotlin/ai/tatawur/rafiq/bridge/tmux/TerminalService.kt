@@ -4,6 +4,7 @@ import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.routing.Route
 import org.slf4j.LoggerFactory
+import java.util.UUID
 
 /** What the terminal view needs from the gate: its settings, the tmux server it may use and the socket limits. */
 class TerminalGate(
@@ -11,6 +12,9 @@ class TerminalGate(
     val server: TmuxServer = TmuxServer(settings.socket),
 ) {
     val slots = TerminalSlots(settings.limits)
+
+    /** The name every view of this bridge process starts with: `rafiq-view-<nonce>-`. */
+    val viewPrefix: String = TmuxServer.VIEW_PREFIX + UUID.randomUUID().toString().take(NONCE_LENGTH) + "-"
 }
 
 /**
@@ -63,3 +67,5 @@ class TerminalService(
         val log = LoggerFactory.getLogger(TerminalService::class.java)
     }
 }
+
+private const val NONCE_LENGTH = 6

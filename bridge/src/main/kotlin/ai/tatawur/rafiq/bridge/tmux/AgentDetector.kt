@@ -9,7 +9,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
-import java.util.concurrent.TimeUnit
 
 /** What the bridge shows for a tmux session: the agent running in it and the folder it works in. */
 data class DetectedAgent(
@@ -27,7 +26,17 @@ data class DetectedAgent(
 class AgentDetector(
     private val claudeCommand: String = "claude",
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val timeoutSeconds: Long = TIMEOUT_SECONDS,
+    private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
+    /** The last answer of `claude agents --json`, kept so a poll every few seconds does not start it every time. */
+    private class Cached(
+        val atMs: Long,
+        val live: Map<Int, String>?,
+    )
+
+    private var cached: Cached? = null
+
     /**
      * The agent of each session in [panes], by session name. A session with no agent is `terminal`.
      *
@@ -38,7 +47,8 @@ class AgentDetector(
         processes: Map<Int, Pair<Int, String>>,
     ): Map<String, DetectedAgent> {
         val claudePids = panes.associateWith { claudeProcessesUnder(it.panePid, processes) }
-        val live = if (claudePids.values.any { it.isNotEmpty() }) liveClaudeSessions() else null
+        val wanted = claudePids.values.flatten().toSet()
+        val live = if (wanted.isNotEmpty()) liveClaudeSessions(wanted) else null
         return panes.groupBy { it.sessionName }.mapValues { (_, group) ->
             val found =
                 group.firstNotNullOfOrNull { pane ->
@@ -52,46 +62,58 @@ class AgentDetector(
         }
     }
 
-    /** Live interactive Claude Code sessions as `claude agents --json` reports them, pid to folder. Null on failure. */
-    @Suppress("TooGenericExceptionCaught") // A missing or failing claude program means "ask the process tree".
-    private suspend fun liveClaudeSessions(): Map<Int, String>? =
+    /**
+     * Live interactive Claude Code sessions as `claude agents --json` reports them, pid to folder. Null when
+     * the command is missing, fails or hangs. The answer, a failure too, is kept for [CACHE_MS], and asked
+     * again sooner only when [wanted] holds a process the kept answer does not know and the answer is
+     * [RETRY_MS] old, so a Claude started a moment ago is found without asking on every poll.
+     */
+    private suspend fun liveClaudeSessions(wanted: Set<Int>): Map<Int, String>? {
+        val kept = cached
+        if (kept != null && stillFresh(kept, wanted)) return kept.live
+        val live = askClaude()
+        cached = Cached(nowMs(), live)
+        return live
+    }
+
+    private fun stillFresh(
+        kept: Cached,
+        wanted: Set<Int>,
+    ): Boolean {
+        val age = nowMs() - kept.atMs
+        val unknown = kept.live?.let { live -> wanted.any { it !in live } } ?: false
+        return age < CACHE_MS && !(unknown && age >= RETRY_MS)
+    }
+
+    private suspend fun askClaude(): Map<Int, String>? =
         withContext(io) {
-            try {
-                val process = ProcessBuilder(claudeCommand, "agents", "--json").start()
-                process.outputStream.close()
-                val text = process.inputStream.readBytes().toString(Charsets.UTF_8)
-                process.errorStream.readBytes()
-                if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) process.destroyForcibly()
-                (Json.parseToJsonElement(text) as JsonArray)
-                    .mapNotNull { entry ->
-                        val o = entry as? JsonObject ?: return@mapNotNull null
-                        val pid = o["pid"]?.jsonPrimitive?.int ?: return@mapNotNull null
-                        pid to ((o["cwd"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty())
-                    }.toMap()
-            } catch (_: Exception) {
-                null
-            }
+            val result = runCapturing(listOf(claudeCommand, "agents", "--json"), timeoutSeconds)
+            result?.takeIf { it.exit == 0 }?.let { parseAgents(it.out) }
+        }
+
+    @Suppress("TooGenericExceptionCaught") // Output that is not the expected JSON means "ask the process tree".
+    private fun parseAgents(text: String): Map<Int, String>? =
+        try {
+            (Json.parseToJsonElement(text) as JsonArray)
+                .mapNotNull { entry ->
+                    val o = entry as? JsonObject ?: return@mapNotNull null
+                    val pid = o["pid"]?.jsonPrimitive?.int ?: return@mapNotNull null
+                    pid to ((o["cwd"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty())
+                }.toMap()
+        } catch (_: Exception) {
+            null
         }
 
     companion object {
         /** Parent pid and command name of each process on this machine, for finding an agent under a pane. */
-        @Suppress("TooGenericExceptionCaught") // No process list means no agent is found, not a failed poll.
         suspend fun processTable(io: CoroutineDispatcher = Dispatchers.IO): Map<Int, Pair<Int, String>> =
             withContext(io) {
-                try {
-                    val process =
-                        ProcessBuilder(
-                            "ps",
-                            "-axo",
-                            "pid=,ppid=,comm=",
-                        ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
-                    process.outputStream.close()
-                    val text = process.inputStream.readBytes().toString(Charsets.UTF_8)
-                    process.waitFor()
-                    text.lines().mapNotNull(::parseProcess).toMap()
-                } catch (_: Exception) {
-                    emptyMap()
-                }
+                runCapturing(listOf("ps", "-axo", "pid=,ppid=,comm="), PS_TIMEOUT_SECONDS)
+                    ?.out
+                    .orEmpty()
+                    .lines()
+                    .mapNotNull(::parseProcess)
+                    .toMap()
             }
 
         private fun parseProcess(line: String): Pair<Int, Pair<Int, String>>? {
@@ -106,9 +128,12 @@ class AgentDetector(
         }
 
         private const val PROCESS_FIELDS = 3
+        private const val PS_TIMEOUT_SECONDS = 10L
         const val CLAUDE_CODE = "claude-code"
         const val TERMINAL = "terminal"
         private const val TIMEOUT_SECONDS = 10L
+        private const val CACHE_MS = 20_000L
+        private const val RETRY_MS = 5_000L
         private const val MAX_HOPS = 12
 
         /** The pids of processes named `claude` that descend from [rootPid]. */

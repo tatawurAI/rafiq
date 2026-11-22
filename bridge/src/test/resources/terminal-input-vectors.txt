@@ -1,0 +1,83 @@
+# Test vectors for the bridge's allow-list of key encodings (TerminalInputFilter).
+# One per line: <verdict> TAB <bytes> TAB <note>. Lines starting with # are comments.
+#
+# verdict: accept  the frame passes through unchanged
+#          reject  the frame is dropped entirely
+#          split   frames separated by " | " are sent one after another, and together pass unchanged
+# bytes:   \e is Escape, \r \n \t as usual, \xHH one byte, \\ a backslash, anything else is itself (UTF-8).
+#
+# The app's own filter should accept exactly what is accepted here.
+accept	ls -la	printable text
+accept	héllo مرحبا 👍	printable UTF-8
+accept	\r	Enter
+accept	\t	Tab
+accept	\x7f	Backspace
+accept	\x03	Ctrl+C
+accept	\x00	Ctrl+Space
+accept	\e	Escape on its own
+accept	\ex	Alt+x
+accept	\eP	Alt+Shift+P: an opener letter alone is Alt plus the letter
+accept	\eX	Alt+Shift+X
+accept	\e]	Alt+]
+accept	\e^	Alt+^
+accept	\e_	Alt+_
+accept	\e[	Alt+[ at the end of a frame
+accept	\eO	Alt+Shift+O at the end of a frame
+accept	\e[A	Up
+accept	\e[B	Down
+accept	\e[C	Right
+accept	\e[D	Left
+accept	\eOA	Up, application mode
+accept	\eOH	Home, application mode
+accept	\eOF	End, application mode
+accept	\eOP	F1
+accept	\eOS	F4
+accept	\e[H	Home
+accept	\e[F	End
+accept	\e[Z	Shift+Tab
+accept	\e[2~	Insert
+accept	\e[3~	Delete
+accept	\e[5~	Page up
+accept	\e[6~	Page down
+accept	\e[15~	F5
+accept	\e[24~	F12
+accept	\e[1;2A	Shift+Up
+accept	\e[1;5C	Ctrl+Right
+accept	\e[1;16D	modifier 16
+accept	\e[1;2P	Shift+F1
+accept	\e[3;5~	Ctrl+Delete
+accept	\e[97;5u	CSI u: Ctrl+a
+accept	\e[13;2u	CSI u: Shift+Enter
+accept	\e[27u	CSI u without a modifier
+accept	\eOj	keypad *
+accept	\eOk	keypad +
+accept	\eOM	keypad Enter
+accept	\eOX	keypad =
+accept	\eOy	keypad 9
+accept	\e[200~hello\r\nworld\e[201~	a bracketed paste
+reject	\e[?62;22c	device attributes reply
+reject	\e[>1;10;0c	secondary device attributes reply
+reject	\e[12;40R	cursor position report
+reject	\e[1;5R	cursor position report that looks like a modified F3
+reject	\e[0n	status report
+reject	\e[?2004;1$y	mode report
+reject	\e[I	focus in
+reject	\e[O	focus out
+reject	\e]11;rgb:0000/0000/0000\x07	colour reply, OSC ended by BEL
+reject	\e]52;c;aGk=\e\\	clipboard, OSC ended by ST
+reject	\eP>|libvterm(0.3)\e\\	version reply, DCS
+reject	\e_Gi=1;OK\e\\	APC
+reject	\e^abc\e\\	PM
+reject	\eXabc\e\\	SOS
+reject	\e[1;17A	modifier 17
+reject	\e[1;1A	modifier 1
+reject	\e[97;5v	not a key final
+reject	\e[M	mouse report opener
+reject	\e[<0;10;5M	SGR mouse report
+reject	\eOZ	not a keypad final
+reject	\x90\x9b\x9d	C1 controls
+reject	\xff	invalid UTF-8
+split	\e | [3~	an Escape and the rest of Delete in the next frame
+split	\e[ | 3~	Delete split after the bracket
+split	\e[1;5 | C	Ctrl+Right split before its final byte
+split	\xf0\x9f | \x91\x8d	an emoji split between frames

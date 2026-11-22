@@ -13,9 +13,10 @@ import java.nio.file.StandardOpenOption
 
 /** What the reader takes from one line of Claude Code's session record. Every other line type is skipped. */
 internal sealed interface RecordEntry {
-    /** A prompt you typed. */
+    /** A prompt you typed. [promptId] is the same id the prompt's `UserPromptSubmit` hook carries. */
     data class UserPrompt(
         val text: String,
+        val promptId: String? = null,
     ) : RecordEntry
 
     /** One text block of an assistant message. */
@@ -109,7 +110,7 @@ internal object SessionRecord {
         val content = o.obj("message")?.get("content")
         return when (o.str("type")) {
             "assistant" -> (content as? JsonArray).orEmpty().mapNotNull(::assistantBlock)
-            "user" -> userContent(content)
+            "user" -> userContent(content, o.str("promptId"))
             else -> emptyList()
         }
     }
@@ -134,13 +135,16 @@ internal object SessionRecord {
         }
     }
 
-    private fun userContent(content: kotlinx.serialization.json.JsonElement?): List<RecordEntry> =
+    private fun userContent(
+        content: kotlinx.serialization.json.JsonElement?,
+        promptId: String?,
+    ): List<RecordEntry> =
         when (content) {
             // Text in angle brackets is something the agent wrote into the prompt slot (a command's output, a
             // background task's notice), not a prompt you typed.
             is JsonPrimitive -> {
                 content.takeIf { it.isString && !it.content.startsWith("<") }?.let {
-                    listOf(RecordEntry.UserPrompt(it.content))
+                    listOf(RecordEntry.UserPrompt(it.content, promptId))
                 } ?: emptyList()
             }
 

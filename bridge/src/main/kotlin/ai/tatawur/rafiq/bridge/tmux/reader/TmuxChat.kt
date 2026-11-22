@@ -23,11 +23,11 @@ interface TmuxChat {
     /** True when [approvalId] is a pending approval of a tmux session. */
     fun ownsApproval(approvalId: String): Boolean
 
-    /** Your answer to an approval for which [ownsApproval] is true. */
+    /** Your answer to an approval for which [ownsApproval] is true. Returns the approval's session id. */
     suspend fun respondToApproval(
         approvalId: String,
         optionId: String,
-    )
+    ): String
 
     /** The agent's permission mode in the session, as last reported, or null when not known. */
     fun permissionMode(sessionId: String): String?

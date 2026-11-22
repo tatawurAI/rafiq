@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap
  * @param hooksInstalled whether a project has the Rafiq hooks, so a prompt to a project without them is refused.
  * @param projectsDir where Claude Code keeps session records, for panes found by the scan.
  */
-@Suppress("LongParameterList") // Every collaborator is a seam the tests replace.
+@Suppress("LongParameterList", "TooManyFunctions") // Seams for tests; one function per HookSink/TmuxChat member.
 class ClaudeReader(
     private val log: ReaderLog,
     private val io: PaneIo,
@@ -84,6 +84,12 @@ class ClaudeReader(
         approvalId: String,
         optionId: String,
     ) = approvals.answer(approvalId, optionId)
+
+    /**
+     * A device was paired. Approvals already waiting register it too, so revoking it releases them. The device
+     * service calls this after a pairing succeeds.
+     */
+    fun devicePaired(deviceId: String) = approvals.devicePaired(deviceId)
 
     override fun permissionMode(sessionId: String): String? =
         sessions[sessionId.removePrefix(TMUX_SESSION_PREFIX)]?.permissionMode

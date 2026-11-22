@@ -50,17 +50,25 @@ class SendGuardTest {
             reader.prompt(SESSION, "and then add tests", "c-1")
             assertEquals(listOf(DeliveryState.QUEUED to null), deliveries())
             assertTrue(io.pasted.isEmpty(), "nothing is typed while a turn runs")
+            assertTrue(log.userMessages().isEmpty(), "the app shows its own echo until the prompt lands")
 
             statuses.status = AgentStatus.IDLE
             reader.onEvent(hook(event("Stop", "last_assistant_message" to "Done.")))
             settle(500)
             assertEquals(listOf("and then add tests"), io.pasted)
-            reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "and then add tests")))
+            reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "and then add tests", "prompt_id" to "p-7")))
             settle()
 
             assertEquals(listOf(DeliveryState.QUEUED to null, DeliveryState.DELIVERED to null), deliveries())
-            val prompts = log.all<EventPayload.Message>().filter { it.role == MessageRole.USER }
-            assertEquals(1, prompts.size, "the prompt is logged once, not again when Claude reports it")
+            val sid = "00000000-0000-4000-8000-000000000001"
+            assertEquals(listOf("user:$sid:p-7" to "and then add tests"), log.userMessages())
+            val message = log.events.indexOfFirst { it is EventPayload.Message && it.role == MessageRole.USER }
+            val delivered =
+                log.events.indexOfFirst {
+                    (it as? EventPayload.PromptDelivery)?.state ==
+                        DeliveryState.DELIVERED
+                }
+            assertTrue(message < delivered, "your message is in the log before it is marked delivered")
         }
 
     @Test
@@ -135,6 +143,26 @@ class SendGuardTest {
 
             assertEquals(listOf("!ls"), io.pasted)
             assertEquals(listOf(DeliveryState.DELIVERED to null), deliveries())
+            assertEquals(
+                listOf("user:c-1" to "!ls"),
+                log.userMessages(),
+                "no hook reports a shell line, so the bridge does",
+            )
+        }
+
+    @Test
+    fun a_prompt_marked_not_delivered_that_lands_late_is_delivered_then_and_shown_once() =
+        runTest {
+            val reader = attached()
+            reader.prompt(SESSION, "hello", "c-1")
+            settle()
+            assertEquals(listOf(DeliveryState.NOT_DELIVERED to SendRefusal.NOT_CONFIRMED), deliveries())
+
+            reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "hello", "prompt_id" to "p-1")))
+            settle()
+
+            assertEquals(DeliveryState.DELIVERED to null, deliveries().last())
+            assertEquals(1, log.userMessages().size)
         }
 
     @Test

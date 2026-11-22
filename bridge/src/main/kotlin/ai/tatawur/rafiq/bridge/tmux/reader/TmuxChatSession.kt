@@ -25,7 +25,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
@@ -137,11 +139,22 @@ internal class TmuxChatSession(
         data object DrainDone : Input
     }
 
+    /** A prompt the bridge typed and is waiting to see land. */
     private class ExpectedPrompt(
         val paneId: String,
         val text: String,
-        val confirmed: CompletableDeferred<Unit> = CompletableDeferred(),
-    )
+        val clientId: String,
+    ) {
+        val confirmed = CompletableDeferred<Unit>()
+
+        /** Set by whoever writes the prompt's message, so it is written once. */
+        val logged = AtomicBoolean(false)
+
+        /** True once it was marked not delivered, so a late landing can still deliver it. */
+        @Volatile var failed = false
+
+        @Volatile var finishedAtMs = 0L
+    }
 
     private class QueuedPrompt(
         val text: String,
@@ -153,6 +166,12 @@ internal class TmuxChatSession(
     private val sendLock = Mutex()
     private val expected = AtomicReference<ExpectedPrompt?>(null)
     private val queue = ConcurrentLinkedQueue<QueuedPrompt>()
+
+    /**
+     * Prompts whose wait just ended, newest last: one marked not delivered may still land, and one confirmed by
+     * the box clearing may still send its hook. Either way its message is written once.
+     */
+    private val recent = ConcurrentLinkedDeque<ExpectedPrompt>()
     private var polling = false
     private var tickScheduled = false
     private var draining = false
@@ -256,8 +275,8 @@ internal class TmuxChatSession(
             }
 
             Readiness.Ready -> {
-                val expectation = ExpectedPrompt(target.paneId, text)
-                typeIt(target, expectation) { userMessage(text, clientId) }.also { refused ->
+                val expectation = ExpectedPrompt(target.paneId, text, clientId)
+                typeIt(target, expectation) {}.also { refused ->
                     if (refused == null) scope.launch { confirm(expectation, clientId) }
                 }
             }
@@ -302,7 +321,7 @@ internal class TmuxChatSession(
         updateMainTarget()
         when (name) {
             ClaudeHook.USER_PROMPT_SUBMIT -> {
-                onPrompt(pane, event.str("prompt").orEmpty(), envelope.receivedAtMs)
+                onPrompt(pane, event.str("prompt").orEmpty(), event.str("prompt_id"), envelope.receivedAtMs)
             }
 
             ClaudeHook.MESSAGE_DISPLAY -> {
@@ -350,25 +369,58 @@ internal class TmuxChatSession(
         pane.progress(approvals.hasPendingFor(pane.paneId), nowMs())
     }
 
+    /**
+     * A prompt reached the agent, from your phone or your desk. Either way it becomes a message with your text
+     * and a stable id (see [PaneConversation.promptMessageId]). A phone prompt that was waiting to land is
+     * delivered now, and one already marked not delivered is delivered late.
+     */
     private suspend fun onPrompt(
         pane: PaneConversation,
         rawPrompt: String,
+        promptId: String?,
         atMs: Long,
     ) {
         // A reply check still waiting from the last turn runs now, before the next turn begins.
         pane.stopCheck?.let { checkStop(pane, it.generation) }
         val prompt = unwrapPaste(rawPrompt)
-        val waiting = expected.get()
-        val fromPhone = waiting != null && waiting.paneId == pane.paneId && sameText(waiting.text, prompt)
-        if (waiting != null && fromPhone) {
+        val waiting = expected.get()?.takeIf { it.paneId == pane.paneId && sameText(it.text, prompt) }
+        val earlier = if (waiting == null) recentPrompt(pane.paneId, prompt) else null
+        val phone = waiting ?: earlier
+        pane.startTurn(atMs)
+        val shown = prompt.isNotBlank() && !prompt.startsWith(TASK_NOTICE)
+        if (shown && phone?.logged?.compareAndSet(false, true) != false) {
+            val fallback = phone?.let { "user:${it.clientId}" } ?: ("user:" + UUID.randomUUID())
+            pane.userMessage(prompt, pane.promptMessageId(promptId) ?: fallback)
+        }
+        landed(waiting, earlier)
+        approvals.withdrawForPane(pane.paneId)
+        pane.state(AgentState.WORKING, WORKING_DETAIL)
+    }
+
+    /** A phone prompt reached the agent: the one waiting now is confirmed, one already given up on is delivered. */
+    private suspend fun landed(
+        waiting: ExpectedPrompt?,
+        earlier: ExpectedPrompt?,
+    ) {
+        if (waiting != null) {
             expected.compareAndSet(waiting, null)
             waiting.confirmed.complete(Unit)
         }
-        pane.startTurn(atMs)
-        // The bridge logged a prompt typed on a phone already. One typed at the desk is logged here.
-        if (!fromPhone && prompt.isNotBlank() && !prompt.startsWith(TASK_NOTICE)) pane.userMessage(prompt)
-        approvals.withdrawForPane(pane.paneId)
-        pane.state(AgentState.WORKING, WORKING_DETAIL)
+        if (earlier != null && earlier.failed && recent.remove(earlier)) {
+            delivery(earlier.clientId, DeliveryState.DELIVERED)
+        }
+    }
+
+    /** A phone prompt whose wait ended in the last minute with this text, in this pane. */
+    private fun recentPrompt(
+        paneId: String,
+        prompt: String,
+    ): ExpectedPrompt? {
+        val now = nowMs()
+        return recent.firstOrNull {
+            it.paneId == paneId && now - it.finishedAtMs < RECENT_MS &&
+                sameText(it.text, prompt)
+        }
     }
 
     private suspend fun onDisplay(
@@ -712,7 +764,6 @@ internal class TmuxChatSession(
                 "Claude is busy and $MAX_QUEUED of your messages are already waiting. Wait for its reply.",
             )
         }
-        userMessage(text, clientId)
         queue.add(QueuedPrompt(text, clientId))
         delivery(clientId, DeliveryState.QUEUED)
         inbox.trySend(Input.Tick)
@@ -763,7 +814,7 @@ internal class TmuxChatSession(
 
             else -> {
                 queue.poll()
-                val expectation = ExpectedPrompt(checkNotNull(target).paneId, next.text)
+                val expectation = ExpectedPrompt(checkNotNull(target).paneId, next.text, next.clientId)
                 val refusal = typeIt(target, expectation) {}
                 if (refusal != null) {
                     delivery(next.clientId, DeliveryState.NOT_DELIVERED, refusal)
@@ -810,7 +861,13 @@ internal class TmuxChatSession(
                 }
             } != null
         expected.compareAndSet(expectation, null)
+        expectation.failed = !landed
+        expectation.finishedAtMs = nowMs()
+        recent.addLast(expectation)
+        while (recent.size > MAX_RECENT) recent.pollFirst()
         if (landed) {
+            // A shell line or a local command starts no turn, so no hook writes its message.
+            if (expectation.logged.compareAndSet(false, true)) userMessage(expectation.text, clientId)
             delivery(clientId, DeliveryState.DELIVERED)
         } else {
             delivery(clientId, DeliveryState.NOT_DELIVERED, Refusal.NOT_CONFIRMED)
@@ -852,6 +909,8 @@ internal class TmuxChatSession(
     companion object {
         const val MAIN_THREAD = "main"
         const val MAX_QUEUED = 3
+        private const val MAX_RECENT = 5
+        private const val RECENT_MS = 60_000L
 
         /** The [EventPayload.ChatIncomplete] reason when the reply shown does not match the agent's own. */
         const val REPLY_MISMATCH = "reply_mismatch"

@@ -31,6 +31,9 @@ internal class PendingPhoneApproval(
 ) {
     /** Registrations with the connection registry, closed when the approval settles. */
     val revocations = CopyOnWriteArrayList<AutoCloseable>()
+
+    /** The devices registered for, so a device is registered once. */
+    val devices: MutableSet<String> = ConcurrentHashMap.newKeySet()
 }
 
 /**
@@ -47,6 +50,7 @@ internal class PendingPhoneApproval(
  * @param devices the ids of the devices that are paired now, for the revocation rule.
  * @param onSettled runs after an approval settled, so the session can update its status.
  */
+@Suppress("TooManyFunctions") // Each way an approval can settle is its own entry point.
 internal class PhoneApprovals(
     private val log: ReaderLog,
     private val registry: ConnectionRegistry?,
@@ -102,12 +106,22 @@ internal class PhoneApprovals(
     /** Starts holding [approval], after its request is in the log. */
     suspend fun hold(approval: PendingPhoneApproval) {
         pending[approval.id] = approval
-        if (registry == null) return
-        for (device in devices()) {
-            approval.revocations +=
-                registry.register(device, REGISTRY_KIND) { settle(approval.id, ApprovalOutcome.ASK_AT_DESK) }
-        }
-        // A revoke that raced the registrations may have settled it already. Nothing is left to close then.
+        for (device in devices()) register(approval, device)
+    }
+
+    /** A device paired after some approvals were raised must release them too when it is revoked. */
+    fun devicePaired(deviceId: String) {
+        pending.values.forEach { register(it, deviceId) }
+    }
+
+    private fun register(
+        approval: PendingPhoneApproval,
+        device: String,
+    ) {
+        if (registry == null || !approval.devices.add(device)) return
+        approval.revocations +=
+            registry.register(device, REGISTRY_KIND) { settle(approval.id, ApprovalOutcome.ASK_AT_DESK) }
+        // A revoke that raced the registration may have settled it already. Nothing is left to close then.
         if (!pending.containsKey(approval.id)) approval.revocations.forEach(AutoCloseable::close)
     }
 
@@ -117,11 +131,12 @@ internal class PhoneApprovals(
      * @throws SessionException.NotFound when no approval has this id.
      * @throws SessionException.Invalid when [optionId] is not one of its options.
      * @throws SessionException.Conflict when it settled while the answer was on its way.
+     * @return the session the approval belongs to.
      */
     suspend fun answer(
         approvalId: String,
         optionId: String,
-    ) {
+    ): String {
         val approval = pending[approvalId]
         // The settle runs only once the answer is known to be valid, and it is what can still lose a race.
         val refusal =
@@ -143,6 +158,7 @@ internal class PhoneApprovals(
                 }
             }
         if (refusal != null) throw refusal
+        return checkNotNull(approval).sessionId
     }
 
     /**

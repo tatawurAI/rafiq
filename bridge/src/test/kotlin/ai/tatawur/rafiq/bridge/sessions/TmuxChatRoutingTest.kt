@@ -43,8 +43,9 @@ class TmuxChatRoutingTest {
         override suspend fun respondToApproval(
             approvalId: String,
             optionId: String,
-        ) {
+        ): String {
             answers += approvalId to optionId
+            return ID
         }
 
         override fun permissionMode(sessionId: String) = "plan"
@@ -89,9 +90,10 @@ class TmuxChatRoutingTest {
     fun an_approval_the_chat_holds_is_answered_by_the_chat() {
         tmuxSession()
 
-        runBlocking<Unit> { sessions.respondToApproval("tap_1", "allow") }
+        val sessionId = runBlocking { sessions.respondToApproval("tap_1", "allow") }
 
         assertEquals(listOf("tap_1" to "allow"), chat.answers)
+        assertEquals(ID, sessionId, "the audit line needs the approval's session")
     }
 
     @Test

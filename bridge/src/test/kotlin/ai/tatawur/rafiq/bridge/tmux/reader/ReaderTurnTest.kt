@@ -176,6 +176,28 @@ class ReaderTurnTest {
         }
 
     @Test
+    fun a_prompt_shown_live_keeps_its_id_when_a_restart_backfills_it_from_the_record() =
+        runTest {
+            val record = dir.resolve("record.jsonl").also { Files.createFile(it) }
+            val offsets = dir.resolve("offsets.json")
+            val path = "transcript_path" to record.toString()
+            val first = reader(log, offsets = ReaderOffsets(offsets))
+            first.onEvent(hook(event("SessionStart", "source" to "startup", path)))
+            first.onEvent(hook(event("UserPromptSubmit", "prompt" to "what changed?", "prompt_id" to "p-1", path)))
+            settle()
+            first.close()
+            // The record caught up after the bridge stopped, so the saved offset is before the prompt.
+            record.append(userPrompt("what changed?", promptId = "p-1") + assistantText("Nothing yet."))
+
+            val second = reader(log, offsets = ReaderOffsets(offsets))
+            second.onEvent(hook(event("Notification", "message" to "Claude is waiting for your input", path)))
+            settle()
+
+            val ids = log.userMessages().map { it.first }.toSet()
+            assertEquals(setOf("user:00000000-0000-4000-8000-000000000001:p-1"), ids)
+        }
+
+    @Test
     fun clear_starts_a_new_record_without_showing_what_it_already_holds() =
         runTest {
             val old = dir.resolve("old.jsonl").also { it.append(assistantText("From before the clear.")) }

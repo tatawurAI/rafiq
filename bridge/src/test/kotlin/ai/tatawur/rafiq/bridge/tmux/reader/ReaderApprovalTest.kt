@@ -59,7 +59,7 @@ class ReaderApprovalTest {
             assertEquals("toolu_1", card.toolCallId, "the approval sits on the step's own card")
             assertTrue(log.events.indexOfFirst { it is EventPayload.ToolCall } < log.events.indexOf(card))
 
-            reader.respondToApproval(card.id, "allow_session")
+            assertEquals(SESSION, reader.respondToApproval(card.id, "allow_session"))
             settle()
 
             assertEquals(HookReply(HookDecision.ALLOW_SESSION, rule = "Bash(npm test)"), reply.getCompleted())
@@ -127,6 +127,22 @@ class ReaderApprovalTest {
             assertNull(reply.getCompleted())
             assertEquals(ApprovalOutcome.ASK_AT_DESK, resolved().single().outcome)
             assertEquals(0, registry.openCount("phone-1"), "a settled approval leaves the registry")
+        }
+
+    @Test
+    fun revoking_a_device_paired_after_the_approval_was_raised_also_releases_it() =
+        runTest {
+            val registry = InMemoryConnectionRegistry(backgroundScope)
+            val reader = reader(log, registry = registry, devices = { listOf("phone-1") })
+            val reply = ask(reader)
+
+            reader.devicePaired("phone-2")
+            registry.closeAll("phone-2", "revoked")
+            settle(10)
+
+            assertNull(reply.getCompleted())
+            assertEquals(ApprovalOutcome.ASK_AT_DESK, resolved().single().outcome)
+            assertEquals(0, registry.openCount("phone-1"), "the other device's registration is closed too")
         }
 
     @Test

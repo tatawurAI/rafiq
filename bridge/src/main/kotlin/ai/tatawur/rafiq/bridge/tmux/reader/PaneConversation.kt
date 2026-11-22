@@ -56,6 +56,7 @@ internal class PaneConversation(
     private val held = LinkedHashSet<String>()
     private val shownTexts = ArrayDeque<String>()
     private val shownTools = ArrayDeque<String>()
+    private val shownPrompts = ArrayDeque<String>()
     private var lastProgress: EventPayload.TurnProgress? = null
     private var lastState: Pair<AgentState, String?>? = null
 
@@ -80,12 +81,21 @@ internal class PaneConversation(
         lastWriteAtMs = null
     }
 
+    /** Your prompt as a message. An id already written is not written again, so a backfill never doubles it. */
     suspend fun userMessage(
         text: String,
         id: String = "user:" + UUID.randomUUID(),
     ) {
+        if (id in shownPrompts) return
+        remember(shownPrompts, id)
         out(EventPayload.Message(id, threadId, MessageRole.USER, listOf(ContentBlock.Text(text))))
     }
+
+    /**
+     * The stable id of a prompt's message: `user:<agent session id>:<prompt id>`. The hook and the record carry
+     * the same prompt id, so the live message and a backfilled one are the same message.
+     */
+    fun promptMessageId(promptId: String?): String? = promptId?.let { "user:${claudeSessionId.orEmpty()}:$it" }
 
     /** One `MessageDisplay` batch. The message ends with the batch marked final, whose delta may be empty. */
     suspend fun onDisplay(
@@ -251,10 +261,26 @@ internal class PaneConversation(
         val uses = entries.filterIsInstance<RecordEntry.ToolUse>().associateBy(RecordEntry.ToolUse::id)
         for (entry in entries) {
             when (entry) {
-                is RecordEntry.UserPrompt -> if (!inTurn) userMessage(entry.text)
-                is RecordEntry.AssistantText -> fillReply(entry.text)
-                is RecordEntry.ToolUse -> Unit
-                is RecordEntry.ToolResult -> backfillStep(entry, uses[entry.toolUseId])
+                is RecordEntry.UserPrompt -> {
+                    val id = promptMessageId(entry.promptId)
+                    if (id != null) {
+                        userMessage(entry.text, id)
+                    } else if (!inTurn) {
+                        userMessage(entry.text)
+                    }
+                }
+
+                is RecordEntry.AssistantText -> {
+                    fillReply(entry.text)
+                }
+
+                is RecordEntry.ToolUse -> {
+                    Unit
+                }
+
+                is RecordEntry.ToolResult -> {
+                    backfillStep(entry, uses[entry.toolUseId])
+                }
             }
         }
     }

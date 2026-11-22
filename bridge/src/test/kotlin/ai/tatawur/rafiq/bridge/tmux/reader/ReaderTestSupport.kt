@@ -167,9 +167,11 @@ fun TestScope.reader(
 fun recordLine(
     type: String,
     content: kotlinx.serialization.json.JsonElement,
+    promptId: String? = null,
 ): String =
     buildJsonObject {
         put("type", type)
+        promptId?.let { put("promptId", it) }
         put(
             "uuid",
             java.util.UUID
@@ -198,7 +200,16 @@ fun assistantText(text: String) =
         ),
     )
 
-fun userPrompt(text: String) = recordLine("user", kotlinx.serialization.json.JsonPrimitive(text))
+fun userPrompt(
+    text: String,
+    promptId: String? = null,
+) = recordLine("user", kotlinx.serialization.json.JsonPrimitive(text), promptId)
+
+/** The prompts shown as your messages, as (id, text). */
+fun FakeReaderLog.userMessages(): List<Pair<String, String>> =
+    all<EventPayload.Message>()
+        .filter { it.role == ai.tatawur.rafiq.protocol.MessageRole.USER }
+        .map { it.id to (it.content.single() as ai.tatawur.rafiq.protocol.ContentBlock.Text).text }
 
 /** The agent's messages in the log, as text. */
 fun FakeReaderLog.agentTexts(): List<String> =

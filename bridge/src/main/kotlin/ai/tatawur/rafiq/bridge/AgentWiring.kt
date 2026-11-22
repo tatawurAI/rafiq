@@ -54,8 +54,10 @@ internal fun claudeReaderFor(
             devices = devices,
             offsets = ReaderOffsets(dataDir?.resolve("reader")?.resolve("record-offsets.json")),
             hooksInstalled = hooksInstalled,
+            present = terminal.source::present,
         )
     terminal.source.onScan = reader::onScan
+    terminal.source.permissionModeOf = reader::permissionMode
     return reader
 }
 

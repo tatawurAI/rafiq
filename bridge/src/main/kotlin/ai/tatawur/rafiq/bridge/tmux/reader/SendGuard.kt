@@ -99,8 +99,9 @@ private val ESCAPE = Regex("\u001b\\[[0-9;?]*[ -/]*[@-~]")
 private fun stripEscapes(line: String): String = ESCAPE.replace(line, "")
 
 /**
- * True when [line] shows a character that is not dim. Dim starts at SGR 2 and ends at SGR 0, 22 or an empty SGR.
- * Each line starts not dim, as tmux writes the escapes again at the start of every captured line.
+ * True when [line] shows a character that is not dim. Each line starts not dim, as tmux writes the escapes again
+ * at the start of every captured line. See [dimAfter] for how an SGR changes it. An escape in a form the reader does
+ * not parse, such as colour with colons, counts as text, so the box counts as not empty.
  */
 private fun hasUndimmedText(line: String): Boolean {
     var dim = false
@@ -112,27 +113,72 @@ private fun hasUndimmedText(line: String): Boolean {
             index = escape.range.last + 1
         } else {
             val char = line[index]
-            if (!dim && !char.isWhitespace() && char != '\u00a0') return true
+            // An escape the reader cannot parse might end dim, so the box counts as holding text.
+            val unparsed = char == '\u001b'
+            val shown = !dim && !char.isWhitespace() && char != '\u00a0'
+            if (unparsed || shown) return true
             index++
         }
     }
     return false
 }
 
+/**
+ * Whether text is dim after the SGR [sgr], given it was [dim] before. Read so that unclear always means not dim:
+ * - 2 turns dim on, and 0, 22 or an empty parameter turn it off;
+ * - after 38, 48 or 58 the colour's own numbers are skipped (`5;n` or `2;r;g;b`), so a 2 among them is not dim;
+ * - a colour set without a 2 in the same SGR ends dim, since text typed after Claude's grey text is coloured;
+ * - a parameter the reader cannot read ends dim.
+ */
+@Suppress("CyclomaticComplexMethod") // One branch per kind of SGR parameter, read in order.
 private fun dimAfter(
     sgr: String,
     dim: Boolean,
 ): Boolean {
     val params = sgr.removePrefix("\u001b[").removeSuffix("m").split(';')
     var now = dim
-    for (param in params) {
-        when (param) {
-            "", "0", "22" -> now = false
-            "2" -> now = true
+    var dimHere = false
+    var colour = false
+    var index = 0
+    while (index < params.size) {
+        val value = params[index].toIntOrNull()
+        when {
+            params[index].isEmpty() || value == 0 || value == NORMAL_INTENSITY -> {
+                now = false
+            }
+
+            value == DIM -> {
+                now = true
+                dimHere = true
+            }
+
+            value in EXTENDED_COLOUR -> {
+                colour = true
+                when (params.getOrNull(index + 1)) {
+                    "5" -> index += 2
+                    "2" -> index += TRUECOLOUR_PARAMS
+                    else -> now = false
+                }
+            }
+
+            value == null -> {
+                now = false
+            }
+
+            value in BASIC_COLOURS -> {
+                colour = true
+            }
         }
+        index++
     }
-    return now
+    return now && (dimHere || !colour)
 }
+
+private const val DIM = 2
+private const val NORMAL_INTENSITY = 22
+private const val TRUECOLOUR_PARAMS = 4
+private val EXTENDED_COLOUR = setOf(38, 48, 58)
+private val BASIC_COLOURS = (30..37) + (39..47) + 49 + (90..97) + (100..107)
 
 private const val PROMPT_MARK = "❯"
 private const val SHELL_MARK = "!"

@@ -8,6 +8,7 @@ import ai.tatawur.rafiq.bridge.sessions.SessionException
 import ai.tatawur.rafiq.bridge.sessions.TMUX_SESSION_PREFIX
 import ai.tatawur.rafiq.bridge.tmux.AgentDetector
 import ai.tatawur.rafiq.bridge.tmux.PaneInfo
+import ai.tatawur.rafiq.protocol.Session
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +46,7 @@ class ClaudeReader(
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val timing: ReaderTiming = ReaderTiming(),
+    private val present: (Session) -> Session = { it },
 ) : HookSink,
     TmuxChat {
     private val sessions = ConcurrentHashMap<String, TmuxChatSession>()
@@ -76,6 +78,7 @@ class ClaudeReader(
             timing,
             projectsDir,
             registry,
+            present,
         )
 
     override suspend fun onEvent(envelope: HookEnvelope) {

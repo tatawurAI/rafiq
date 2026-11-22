@@ -48,6 +48,13 @@ class TmuxSessionSource(
     @Volatile
     var onScan: (suspend (panes: List<PaneInfo>, processes: Map<Int, Pair<Int, String>>) -> Unit)? = null
 
+    /**
+     * The agent's permission mode per session, from the Claude reader. Like `terminalAllowed`, it is not stored
+     * in the log, so every session this source shows or announces carries it. Set once, before [start].
+     */
+    @Volatile
+    var permissionModeOf: (sessionId: String) -> String? = { null }
+
     /** The `terminalAllowed` this process last announced per session, so a change is announced once. */
     private val announced = mutableMapOf<String, Boolean>()
 
@@ -60,10 +67,24 @@ class TmuxSessionSource(
      */
     fun present(session: Session): Session =
         if (isTmuxSessionId(session.id)) {
-            session.copy(terminalAllowed = gate.canOpen(session.id.removePrefix(TMUX_SESSION_PREFIX)))
+            withExtras(session, gate.canOpen(session.id.removePrefix(TMUX_SESSION_PREFIX)))
         } else {
             session
         }
+
+    /**
+     * [session] with the fields the log does not store: `terminal`, [terminalAllowed] and the permission mode.
+     * Every `SessionUpdated` for a tmux session is built through here, so none of them resets one of these.
+     */
+    private fun withExtras(
+        session: Session,
+        terminalAllowed: Boolean,
+    ): Session =
+        session.copy(
+            terminal = true,
+            terminalAllowed = terminalAllowed,
+            permissionMode = permissionModeOf(session.id) ?: session.permissionMode,
+        )
 
     /** Polls until [scope] ends. */
     fun start(scope: CoroutineScope) {
@@ -141,12 +162,7 @@ class TmuxSessionSource(
                 if (stored.session.agent != found.agent) log.updateAgent(id, found.agent)
                 if (stored.session.projectPath != project) log.updateProject(id, project)
                 val updated =
-                    stored.session.copy(
-                        agent = found.agent,
-                        projectPath = project,
-                        terminal = true,
-                        terminalAllowed = terminalAllowed,
-                    )
+                    withExtras(stored.session.copy(agent = found.agent, projectPath = project), terminalAllowed)
                 log.append(id, EventPayload.SessionUpdated(updated))
             }
         }

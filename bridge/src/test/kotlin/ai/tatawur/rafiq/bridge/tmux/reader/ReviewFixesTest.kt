@@ -64,6 +64,55 @@ class ReviewFixesTest {
         Files.writeString(this, text, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
     }
 
+    // D1. Colour is never read as dim, and anything unclear counts as typed text.
+    @Test
+    fun colour_never_makes_typed_text_look_like_claudes_dim_suggestion() {
+        fun box(afterMark: String) = "${"─".repeat(40)}\n❯\u00a0$afterMark\n${"─".repeat(40)}\n"
+        val e = "\u001b["
+
+        for (draft in listOf(
+            "${e}38;2;10;20;30mtyped",
+            "${e}38;5;2mtyped",
+            "${e}2m${e}38;2;255;100;0mtyped",
+            "${e}38;2;255;255;255mdraft",
+            "${e}38;5;231mtyped",
+            "${e}2m${e}38:2:1:2:3mtyped",
+            "[Pasted text #1 +40 lines]",
+        )) {
+            assertEquals(InputBox.DRAFT, readInputBox(box(draft)), draft)
+        }
+        for (dim in listOf("${e}1;2msuggestion", "${e}0;2msuggestion", "${e}2;38;2;1;2;3msuggestion")) {
+            assertEquals(InputBox.EMPTY, readInputBox(box(dim)), dim)
+        }
+    }
+
+    // M1. Enter on a box that holds only Claude's suggestion would send the suggestion.
+    @Test
+    fun a_paste_that_never_reached_the_box_gets_no_enter_on_the_suggestion() =
+        runTest {
+            val suggestion = FakePaneIo.box("\u001b[2mrm -rf build\u001b[0m")
+            io.screen = suggestion
+            val reader = attached()
+            io.onPaste = { io.screen = suggestion }
+
+            assertEquals(SendRefusal.STATE_UNKNOWN, reader.refusal())
+            assertTrue(io.enters.isEmpty(), "Enter would have sent Claude's suggestion")
+        }
+
+    // D2. A permission mode update keeps terminalAllowed.
+    @Test
+    fun a_permission_mode_update_keeps_the_session_out_of_terminal() =
+        runTest {
+            val reader = reader(log, io, statuses, projectsDir = dir, present = { it.copy(terminalAllowed = false) })
+
+            reader.onEvent(hook(event("UserPromptSubmit", "prompt" to "plan it", "permission_mode" to "plan")))
+            settle()
+
+            val latest = log.all<EventPayload.SessionUpdated>().last().session
+            assertEquals("plan", latest.permissionMode)
+            assertFalse(latest.terminalAllowed)
+        }
+
     // 1. A project the installer cannot read counts as one without hooks.
     @Test
     fun a_project_the_installer_refuses_is_hooks_not_installed() =

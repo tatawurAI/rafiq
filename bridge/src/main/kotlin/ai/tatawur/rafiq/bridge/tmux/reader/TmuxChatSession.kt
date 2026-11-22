@@ -11,6 +11,7 @@ import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.DeliveryState
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
+import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.api.SendRefusal
 import kotlinx.coroutines.CompletableDeferred
@@ -74,6 +75,8 @@ internal class ReaderContext(
     val recordRoot: Path?,
     /** Where a queued prompt registers with its device, so revoking the device drops it. */
     val registry: ConnectionRegistry?,
+    /** Adds the session fields the log does not store, such as `terminalAllowed`, to a `SessionUpdated`. */
+    val present: (Session) -> Session = { it },
 )
 
 /** A Claude pane the tmux scan found, with what `claude agents --json` said about its process. */
@@ -103,6 +106,7 @@ internal class TmuxChatSession(
     context: ReaderContext,
 ) {
     private val log = context.log
+    private val present = context.present
     private val guard = context.guard
     private val statuses = context.statuses
     private val approvals = context.approvals
@@ -795,7 +799,8 @@ internal class TmuxChatSession(
         if (pane.threadId == MAIN_THREAD && permissionMode != mode) {
             permissionMode = mode
             log.session(sessionId)?.let { session ->
-                log.append(sessionId, EventPayload.SessionUpdated(session.copy(permissionMode = mode, terminal = true)))
+                val updated = present(session.copy(permissionMode = mode, terminal = true))
+                log.append(sessionId, EventPayload.SessionUpdated(updated))
             }
         }
     }

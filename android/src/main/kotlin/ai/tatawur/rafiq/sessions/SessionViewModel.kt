@@ -47,6 +47,14 @@ data class SessionUiState(
     val canSend: Boolean
         get() = canPrompt && draft.isNotBlank()
 
+    /** Whether the main thread has any message yet. A session without one has not run a turn. */
+    val mainHasMessages: Boolean
+        get() =
+            screen.mainThread
+                ?.let { screen.timelines[it.id] }
+                .orEmpty()
+                .any { it is TimelineItem.Message }
+
     /** The main thread can be stopped, for the "Stop" quick reply. */
     val canStopMain: Boolean
         get() = screen.mainThread?.status == AgentState.WORKING

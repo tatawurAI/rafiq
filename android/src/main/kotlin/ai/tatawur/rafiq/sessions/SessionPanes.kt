@@ -16,7 +16,7 @@ import ai.tatawur.rafiq.protocol.ToolCallStatus
 import ai.tatawur.rafiq.ui.components.ConnectionBanner
 import ai.tatawur.rafiq.ui.components.FeedbackBar
 import ai.tatawur.rafiq.ui.components.StatusDot
-import ai.tatawur.rafiq.ui.components.statusLabel
+import ai.tatawur.rafiq.ui.components.sessionStatusLabel
 import ai.tatawur.rafiq.ui.fold.FoldSplit
 import ai.tatawur.rafiq.ui.fold.Hinge
 import ai.tatawur.rafiq.ui.fold.LocalHinge
@@ -221,7 +221,7 @@ internal fun SessionHeader(
                             stringResource(
                                 R.string.session_subtitle,
                                 session.agent,
-                                stringResource(statusLabel(session.status)),
+                                stringResource(sessionStatusLabel(session.status, state.mainHasMessages)),
                             ),
                         style = MaterialTheme.typography.bodySmall,
                         color = RafiqTheme.colors.textMuted,

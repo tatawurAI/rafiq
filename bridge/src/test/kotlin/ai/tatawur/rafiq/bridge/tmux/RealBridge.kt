@@ -4,6 +4,7 @@ import ai.tatawur.rafiq.bridge.BridgeFixture
 import ai.tatawur.rafiq.bridge.FakeAdapter
 import ai.tatawur.rafiq.bridge.TEST_TOKEN
 import ai.tatawur.rafiq.bridge.bridgeModule
+import ai.tatawur.rafiq.bridge.server.InMemoryConnectionRegistry
 import ai.tatawur.rafiq.bridge.testSecurity
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
 import ai.tatawur.rafiq.protocol.api.TerminalResize
@@ -59,6 +60,7 @@ class RealBridge(
     private val sockets = mutableListOf<TestSocket>()
     val port: Int
     val tmuxSource: TmuxSessionSource?
+    val connections = InMemoryConnectionRegistry()
 
     init {
         lateinit var created: TmuxSessionSource
@@ -74,6 +76,7 @@ class RealBridge(
                     fixture.sessions,
                     testSecurity(),
                     terminal = service,
+                    connections = connections,
                     deviceOf = deviceOf,
                 )
             }.also { it.start(wait = false) }

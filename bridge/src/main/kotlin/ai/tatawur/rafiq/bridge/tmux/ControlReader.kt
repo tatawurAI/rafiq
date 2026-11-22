@@ -113,11 +113,11 @@ internal class ControlReader(
             }
 
             text.startsWith("%window-close ") -> {
-                if (fieldOf(text) == target.windowId) sink(TermItem.Ended("The tmux window was closed."))
+                if (fieldOf(text) == target.windowId) sink(TermItem.MaybeGone)
             }
 
             text.startsWith("%sessions-changed") -> {
-                sink(TermItem.SessionsChanged)
+                sink(TermItem.MaybeGone)
             }
         }
     }

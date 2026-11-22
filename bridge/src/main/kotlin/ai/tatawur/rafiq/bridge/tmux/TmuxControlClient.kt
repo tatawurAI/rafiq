@@ -34,8 +34,11 @@ sealed interface TermItem {
     /** tmux paused the pane because this client fell behind. Output while paused is lost, so a snapshot follows. */
     data object Paused : TermItem
 
-    /** Sessions were created or destroyed, so the session being viewed may be gone. */
-    data object SessionsChanged : TermItem
+    /**
+     * A session or window changed or went. The pane may be gone, or may only have left another session of the
+     * group: closing the view session of another phone sends this window notice to every client.
+     */
+    data object MaybeGone : TermItem
 
     /** The consumer is too far behind. Output is dropped until the next [Screen]. */
     data object Overflowed : TermItem
@@ -153,8 +156,10 @@ class TmuxControlClient(
         return n[0].toInt() to n[1].toInt()
     }
 
-    /** True when the session being mirrored still exists. Waits for tmux. */
-    fun sessionExists(): Boolean = command("list-sessions -F '#{session_id}'").any { it.trim() == sessionId }
+    /** True when the pane being mirrored is still in the session. Waits for tmux. */
+    fun paneExists(): Boolean =
+        runCatching { command("list-panes -s -t '$sessionId' -F '#{pane_id}'").any { it.trim() == paneId } }
+            .getOrDefault(false)
 
     /** Output produced while a pane was paused is lost, so the caller sends a snapshot after this. */
     fun resume() {

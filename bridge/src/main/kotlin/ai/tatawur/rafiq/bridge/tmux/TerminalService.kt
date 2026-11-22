@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.bridge.tmux
 
+import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.routing.Route
 import org.slf4j.LoggerFactory
@@ -22,9 +23,10 @@ class TerminalService(
 ) {
     fun routes(
         route: Route,
+        connections: ConnectionRegistry,
         deviceOf: (ApplicationCall) -> String,
     ) {
-        route.terminalRoute(gate, deviceOf)
+        route.terminalRoute(gate, connections, deviceOf)
     }
 
     /**

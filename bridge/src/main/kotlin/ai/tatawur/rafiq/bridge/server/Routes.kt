@@ -146,6 +146,8 @@ internal fun Route.eventsRoute(
     log: EventLog,
     streamer: EventStreamer,
     isVisible: (sessionId: String) -> Boolean = { true },
+    connections: ConnectionRegistry = InMemoryConnectionRegistry(),
+    deviceOf: (ApplicationCall) -> String = { "unknown" },
 ) {
     webSocket("/events") {
         val sessionId = call.request.queryParameters["session"]
@@ -162,6 +164,11 @@ internal fun Route.eventsRoute(
             return@webSocket
         }
         var closeReason = CloseReason(CloseReason.Codes.NORMAL, "")
+        // Revoking the device ends this socket at once. The stream below stops when the socket closes.
+        val registration =
+            connections.register(deviceOf(call), "events") { reason ->
+                close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, reason))
+            }
         val stream =
             launch {
                 try {
@@ -180,6 +187,7 @@ internal fun Route.eventsRoute(
             }
         stream.join()
         watcher.cancel()
+        registration.close()
         close(closeReason)
     }
 }

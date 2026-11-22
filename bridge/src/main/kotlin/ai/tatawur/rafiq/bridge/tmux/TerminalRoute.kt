@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.bridge.tmux
 
+import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import ai.tatawur.rafiq.bridge.sessions.TMUX_SESSION_PREFIX
 import ai.tatawur.rafiq.protocol.api.TerminalEnded
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
@@ -52,10 +53,12 @@ private val ENTER_ALTERNATE_SCREEN = "\u001b[?1049h\u001b[2J\u001b[H".toByteArra
  *
  * Nothing here runs unless the gate allows the session, and the order is: gate, device limit, then tmux.
  *
+ * @param connections where the socket registers, so revoking its device closes it.
  * @param deviceOf names the device a call belongs to, for the per-device limit and the audit line.
  */
 fun Route.terminalRoute(
     gate: TerminalGate,
+    connections: ConnectionRegistry,
     deviceOf: (ApplicationCall) -> String,
 ) {
     webSocket("/terminal") {
@@ -74,9 +77,13 @@ fun Route.terminalRoute(
             close(CloseReason(CloseReason.Codes.TRY_AGAIN_LATER, "too many terminals open"))
             return@webSocket
         }
+        val connection = TerminalConnection(gate, this, name, device, call.request.origin.remoteHost)
+        // Revoking the device ends the view at once and detaches it, like any other close.
+        val registration = connections.register(device, "terminal") { reason -> connection.end(reason) }
         try {
-            TerminalConnection(gate, this, name, device, call.request.origin.remoteHost).run()
+            connection.run()
         } finally {
+            registration.close()
             slot.close()
         }
     }
@@ -225,8 +232,8 @@ private class TerminalConnection(
                 }
             }
 
-            TermItem.SessionsChanged -> {
-                stillThere(runCatching { client.sessionExists() }.getOrDefault(false), "session")
+            TermItem.MaybeGone -> {
+                stillThere(client.paneExists(), "pane")
             }
 
             TermItem.ScreenFailed -> {
@@ -325,7 +332,8 @@ private class TerminalConnection(
         }
     }
 
-    private suspend fun end(reason: String) {
+    /** Tells the phone why, then closes the socket. Closing ends the view and detaches it. */
+    suspend fun end(reason: String) {
         runCatching { send(TerminalEnded(reason)) }
         socket.close(CloseReason(CloseReason.Codes.NORMAL, reason.take(CLOSE_REASON_MAX)))
     }

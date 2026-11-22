@@ -165,6 +165,7 @@ Terminal shows the real screen of a tmux session on your server in the app, and 
 - A grant covers every window and pane of the session. The app mirrors the active pane of the session's current window at the moment you open Terminal.
 - The bridge refuses to start bound to a non-loopback address, unless `RAFIQ_TERMINAL_ALLOW_NON_LOOPBACK=1`. Publish it with `tailscale serve`, never `tailscale funnel`.
 - At most 2 terminal sockets per device and 4 in all. Columns are clamped to 20 to 500 and rows to 5 to 200 on every resize, the first one included. A frame of keys may be at most 16 KiB, and a socket may send at most 64 KiB of keys per second. A socket that sends nothing for 10 minutes is closed and detached.
+- Every `/events` and `/terminal` socket is registered under the device that opened it, so revoking a device closes its sockets at once. A closed terminal detaches its view like any other close.
 - The bridge logs one line when a terminal socket opens and one when it closes, with the device, session, address, duration, bytes each way and resize count. It never logs keystrokes.
 
 **tmux.** Terminal needs tmux 3.2 or newer, for `pause-after`. It also needs `window-size latest`, which is tmux's default: the window follows whichever client acted last.

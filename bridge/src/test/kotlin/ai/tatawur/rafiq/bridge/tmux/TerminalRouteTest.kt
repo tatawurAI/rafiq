@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.bridge.tmux
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
 import ai.tatawur.rafiq.protocol.api.terminalJson
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
@@ -212,6 +213,28 @@ class TerminalRouteTest {
             runCatching { again.sendResize(60, 20) }
             again.until { it is Received.Text || it is Received.Closed } is Received.Text
         }
+    }
+
+    @Test
+    fun revoking_a_device_closes_its_terminal_at_once_and_detaches_but_not_another_devices() {
+        tmux.newSession("weather-app")
+        val bridge = bridgeFor("weather-app")
+        val revoked = bridge.terminal("weather-app", "phone-1")
+        revoked.sendResize(60, 20)
+        revoked.snapshot()
+        val other = bridge.terminal("weather-app", "phone-2")
+        other.sendResize(60, 20)
+        other.snapshot()
+
+        val closed = runBlocking { bridge.connections.closeAll("phone-1", "device_revoked") }
+
+        assertEquals(1, closed)
+        assertEquals("device_revoked", (revoked.until { it is Received.Closed } as Received.Closed).reason)
+        eventually({ "only the other device's view session is left: ${tmux.sessionNames()}" }) {
+            tmux.sessionNames().count { it.startsWith(TmuxServer.VIEW_PREFIX) } == 1
+        }
+        other.sendKeys("x".toByteArray())
+        assertEquals(1, bridge.connections.openCount("phone-2"))
     }
 
     @Test

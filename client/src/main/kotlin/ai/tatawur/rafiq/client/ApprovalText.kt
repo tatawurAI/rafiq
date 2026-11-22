@@ -12,6 +12,12 @@ package ai.tatawur.rafiq.client
  * @property canExpand true when tapping shows more than [lines].
  * @property cut true when your server cut the request. The card shows a marker after the last line it has.
  * @property sessionRule the rule that "allow for this session" adds, or null when the agent gave none.
+ * @property needsFullView true when a compact card cannot show the whole request honestly: it has more than
+ *   one line, lines hidden until you tap, a cut, or a line longer than a compact card fits without an
+ *   ellipsis. Compact cards then offer "See full command" instead of the answer buttons.
+ *
+ * Invisible controls in the request, such as a right-to-left override, show as `<U+XXXX>` (see
+ * [visibleControls]), so the text cannot display as something other than what runs.
  */
 data class ApprovalText(
     val lines: List<String>,
@@ -20,6 +26,7 @@ data class ApprovalText(
     val canExpand: Boolean,
     val cut: Boolean,
     val sessionRule: String?,
+    val needsFullView: Boolean,
 ) {
     /** True when the card says how many lines the request has. */
     val showsLineCount: Boolean
@@ -32,6 +39,12 @@ data class ApprovalText(
         /** Characters shown before you tap, so one very long line does not fill the screen. */
         const val COLLAPSED_CHARS = 400
 
+        /** The longest command line a compact card shows in full, in code characters on a narrow phone. */
+        const val COMPACT_COMMAND_CHARS = 40
+
+        /** The longest plain description a compact card shows in full: about three lines of body text. */
+        const val COMPACT_PROSE_CHARS = 120
+
         /** The text of [card], collapsed to [COLLAPSED_LINES] and [COLLAPSED_CHARS] unless [expanded]. */
         fun of(
             card: ApprovalCard,
@@ -39,11 +52,12 @@ data class ApprovalText(
         ): ApprovalText {
             val detail = card.detail
             val text = detail?.text ?: card.description
-            val all = text.removeSuffix("\n").lines()
+            val all = text.removeSuffix("\n").lines().map { visibleControls(it) }
             val lineCount = maxOf(detail?.lineCount ?: all.size, all.size)
             val shown = if (expanded) all else collapse(all)
-            val shownChars = shown.sumOf { it.length }
-            val moreHere = shown.size < all.size || shownChars < all.sumOf { it.length }
+            val moreHere = hidesSome(shown, all)
+            val fits = if (detail != null) COMPACT_COMMAND_CHARS else COMPACT_PROSE_CHARS
+            val collapsedHidesSome = hidesSome(collapse(all), all)
             return ApprovalText(
                 lines = shown,
                 lineCount = lineCount,
@@ -51,8 +65,15 @@ data class ApprovalText(
                 canExpand = moreHere,
                 cut = detail?.truncated == true,
                 sessionRule = detail?.sessionRule,
+                needsFullView =
+                    collapsedHidesSome || lineCount > 1 || detail?.truncated == true || all.any { it.length > fits },
             )
         }
+
+        private fun hidesSome(
+            shown: List<String>,
+            all: List<String>,
+        ): Boolean = shown.size < all.size || shown.sumOf { it.length } < all.sumOf { it.length }
 
         private fun collapse(all: List<String>): List<String> {
             val shown = mutableListOf<String>()

@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.client.terminal
 
 import ai.tatawur.rafiq.client.CommandResult
+import ai.tatawur.rafiq.client.visibleControls
 import ai.tatawur.rafiq.client.withoutValue
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.CoroutineScope
@@ -178,7 +179,8 @@ class Scrollback(
 
 /**
  * The history text as plain lines to show. The text comes from the pane, so it is untrusted: every escape
- * sequence and control character except Tab is removed, and so are the empty lines tmux pads the end with.
+ * sequence and carriage return is removed, any other invisible control shows as `<U+XXXX>`, and the empty
+ * lines tmux pads the end with go.
  */
 fun historyLines(text: String): List<String> {
     val out = StringBuilder(text.length)
@@ -188,11 +190,12 @@ fun historyLines(text: String): List<String> {
         if (c == ESC) {
             i = skipEscape(text, i)
         } else {
-            if (c == '\n' || c == '\t' || !c.isISOControl()) out.append(c)
+            // A carriage return only moves the cursor. Any other control shows as an escape below.
+            if (c != '\r') out.append(c)
             i++
         }
     }
-    return out.lines().dropLastWhile { it.isBlank() }
+    return out.lines().map { visibleControls(it) }.dropLastWhile { it.isBlank() }
 }
 
 /** The index after the escape sequence at [at]. An unfinished one runs to the end. */

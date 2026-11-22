@@ -182,7 +182,7 @@ class KeyUplink {
  * - cursor and editing keys: `CSI A`..`D`, `H`, `F`, `Z`, `CSI n ~` for Insert, Delete, Home, End,
  *   Page Up and Down and F5 to F12, each with an optional modifier 2 to 16, and `CSI n ; m u`;
  * - `SS3` keys: arrows in application mode, Home, End, F1 to F4 and the keypad
- *   (`jklmnopqrstuvwxyMX`);
+ *   (`jklmnopqrstuvwxyMX`). `SS3` with any other final is dropped;
  * - `CSI 1 ; m P`, `Q` and `S` for F1, F2 and F4 with a modifier;
  * - the start of a bracketed paste, `CSI 200 ~`.
  *
@@ -242,7 +242,7 @@ internal object KeyEncodings {
             }
 
             'O' -> {
-                Token(if (bytes[at + 2].toInt().toChar() in SS3_KEYS) at + SS3_LENGTH else at + 2, Kind.KEY)
+                Token(at + SS3_LENGTH, if (bytes[at + 2].toInt().toChar() in SS3_KEYS) Kind.KEY else Kind.DROP)
             }
 
             ']', 'P', '_', '^', 'X' -> {

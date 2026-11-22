@@ -103,4 +103,11 @@ class ScrollbackTest {
 
             assertIs<ScrollbackState.Failed>(scrollback.state.value)
         }
+
+    @Test
+    fun invisible_controls_in_the_history_show_as_escapes() {
+        val lines = historyLines("rm\u202Efr.txt\r\na\u200Bb\u0007\n")
+
+        assertEquals(listOf("rm<U+202E>fr.txt", "a<U+200B>b<U+0007>"), lines)
+    }
 }

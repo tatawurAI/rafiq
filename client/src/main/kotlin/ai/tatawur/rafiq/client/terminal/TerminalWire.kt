@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.client.terminal
 
+import ai.tatawur.rafiq.client.visibleControls
 import ai.tatawur.rafiq.protocol.api.TerminalEnded
 import ai.tatawur.rafiq.protocol.api.TerminalListWindows
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
@@ -38,8 +39,9 @@ data class MirroredWindow(
 
         /** [window] with its name made safe to show. */
         fun of(window: TerminalWindow): MirroredWindow {
-            val clean = window.name.filterNot { it.isISOControl() }.trim()
-            return MirroredWindow(window.index, clean.take(MAX_NAME))
+            // Cut first, so an escape is never cut in half.
+            val clean = visibleControls(window.name.trim().take(MAX_NAME), keep = emptySet())
+            return MirroredWindow(window.index, clean)
         }
     }
 }
@@ -133,11 +135,7 @@ class TerminalStreamDecoder {
             }
 
             is TerminalNotice -> {
-                val clean =
-                    message.message
-                        .filterNot { it.isISOControl() }
-                        .trim()
-                        .take(MAX_NOTICE)
+                val clean = visibleControls(message.message.trim().take(MAX_NOTICE), keep = emptySet())
                 TerminalEvent.Notice(message.code, clean)
             }
 

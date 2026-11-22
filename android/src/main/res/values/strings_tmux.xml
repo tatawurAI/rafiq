@@ -57,6 +57,7 @@
   <string name="approval_lines">%1$d lines</string>
   <string name="approval_lines_tap">%1$d lines, tap to see all</string>
   <string name="approval_more_tap">Tap to see all</string>
+  <string name="approval_see_full">See full command</string>
   <string name="approval_show_less">Show less</string>
   <string name="approval_cut">Cut here. Your server sent only the start of this command.</string>
   <string name="approval_session_rule">Allow for this session adds: %1$s</string>

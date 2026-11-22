@@ -125,7 +125,7 @@ class TmuxSessionSourceTest {
     }
 
     @Test
-    fun a_tmux_session_does_not_take_a_chat_prompt_and_starts_no_agent() {
+    fun a_tmux_session_without_a_reader_refuses_a_chat_prompt_and_starts_no_agent() {
         tmux.newSession("weather-app")
         // An agent named like the session's own, so an unguarded prompt would start it through the adapter.
         val adapter = FakeAdapter("terminal")
@@ -141,7 +141,7 @@ class TmuxSessionSourceTest {
         val answer = bridge.post("/sessions/tmux-weather-app/prompt")
 
         assertEquals(409, answer.statusCode())
-        assertTrue("terminal_only" in answer.body(), answer.body())
+        assertTrue("chat_unavailable" in answer.body(), answer.body())
         assertTrue(adapter.started.isEmpty(), "an agent was started for a tmux session")
     }
 

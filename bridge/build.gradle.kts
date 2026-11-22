@@ -45,6 +45,8 @@ dependencies {
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.ktor.client.websockets)
     testImplementation(libs.kotlin.test)
+    // Virtual time for the reader's waits: the approval deadline, the ordering window and the reply check.
+    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)

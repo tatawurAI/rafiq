@@ -5,6 +5,7 @@ import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.agent.AgentUnavailableException
 import ai.tatawur.rafiq.bridge.agent.TurnInProgressException
 import ai.tatawur.rafiq.bridge.store.EventLog
+import ai.tatawur.rafiq.bridge.tmux.reader.TmuxChat
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
 import ai.tatawur.rafiq.protocol.ApprovalOutcome
@@ -51,8 +52,12 @@ import kotlin.time.Duration.Companion.seconds
  * the session is not live but stays in the log, and the next prompt resumes it through
  * [AgentAdapter.resume].
  *
+ * A tmux session has no adapter of the bridge's. Its Chat is [tmuxChat], which reads what the agent does from
+ * its hooks and types your prompts into its pane through the send guard.
+ *
  * @param scope owns the work that collects each live session's updates. Cancel it to stop them.
  * @param ioDispatcher runs the file system checks on project folders.
+ * @param tmuxChat Chat for tmux sessions, or null when the bridge has no tmux reader.
  */
 @Suppress("TooManyFunctions") // One operation per route plus the helpers they share; splitting would scatter one flow.
 class SessionManager(
@@ -62,6 +67,7 @@ class SessionManager(
     private val clock: Clock = Clock.systemUTC(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val visibility: (sessionId: String) -> Boolean = { !isTmuxSessionId(it) },
+    private val tmuxChat: TmuxChat? = null,
 ) {
     private val adaptersById = adapters.associateBy(AgentAdapter::agentId)
     private val live = ConcurrentHashMap<String, LiveSession>()
@@ -139,10 +145,18 @@ class SessionManager(
     fun isVisible(sessionId: String): Boolean = visibility(sessionId)
 
     /** Every visible session, most recently updated first. */
-    suspend fun sessions(): List<Session> = log.sessions().filter { visibility(it.id) }
+    suspend fun sessions(): List<Session> = log.sessions().filter { visibility(it.id) }.map(::withPermissionMode)
 
     /** Every visible session with what the list shows, most recently updated first. See [EventLog.summaries]. */
-    suspend fun summaries(): List<SessionSummary> = log.summaries().filter { visibility(it.session.id) }
+    suspend fun summaries(): List<SessionSummary> =
+        log.summaries().filter { visibility(it.session.id) }.map { it.copy(session = withPermissionMode(it.session)) }
+
+    /** A tmux session's permission mode lives with its reader, not in the stored row. */
+    private fun withPermissionMode(session: Session): Session =
+        tmuxChat
+            ?.takeIf { isTmuxSessionId(session.id) }
+            ?.permissionMode(session.id)
+            ?.let { session.copy(permissionMode = it) } ?: session
 
     /** @throws SessionException.NotFound when there is no such session. */
     suspend fun threads(sessionId: String): List<AgentThread> {
@@ -156,16 +170,25 @@ class SessionManager(
      * a prompt can be refused for is checked first, under a per-session lock. The adapter must not
      * echo it. A session that is not live is resumed first.
      *
+     * A prompt to a tmux session goes to [tmuxChat] instead. It returns once the text is typed into the pane or
+     * held until the agent is idle, and [clientId] tags the delivery events that follow.
+     *
      * @throws SessionException.NotFound when the session or thread does not exist.
      * @throws SessionException.Invalid when the thread is not the main thread.
-     * @throws SessionException.Conflict when the thread is still in a turn, or the agent cannot resume.
+     * @throws SessionException.Conflict when the thread is still in a turn, or the agent cannot resume. For a tmux
+     *   session, when the send guard refuses, with a [ai.tatawur.rafiq.protocol.api.SendRefusal] code.
      */
     suspend fun prompt(
         sessionId: String,
         threadId: String?,
         text: String,
+        clientId: String? = null,
     ) {
         if (text.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
+        if (isTmuxSessionId(sessionId)) {
+            promptTmux(sessionId, threadId, text, clientId)
+            return
+        }
         // One prompt at a time per session, from the checks to the adapter call, so two racing prompts
         // cannot both pass the checks and both be logged.
         promptLocks.computeIfAbsent(sessionId) { Mutex() }.withLock {
@@ -201,6 +224,18 @@ class SessionManager(
         }
     }
 
+    /** A prompt for a tmux session: the same target checks, then its Chat. */
+    private suspend fun promptTmux(
+        sessionId: String,
+        threadId: String?,
+        text: String,
+        clientId: String?,
+    ) {
+        resolvePromptTarget(sessionId, threadId)
+        val chat = tmuxChat ?: throw SessionException.Conflict(CHAT_UNAVAILABLE, CHAT_UNAVAILABLE_MESSAGE)
+        chat.prompt(sessionId, text, clientId)
+    }
+
     /**
      * Stops the current turn on [threadId].
      *
@@ -213,6 +248,9 @@ class SessionManager(
         threadId: String,
     ) {
         resolveThread(sessionId, threadId)
+        if (isTmuxSessionId(sessionId)) {
+            throw SessionException.Conflict("not_supported", "To stop a turn in a tmux session, press Esc in Terminal.")
+        }
         val agentSession = runningSession(sessionId)
         adapterCall({ SessionException.NotFound("thread_not_found", "The agent does not know that thread.", it) }) {
             agentSession.cancel(threadId)
@@ -232,6 +270,11 @@ class SessionManager(
         approvalId: String,
         optionId: String,
     ) {
+        val chat = tmuxChat
+        if (chat != null && chat.ownsApproval(approvalId)) {
+            chat.respondToApproval(approvalId, optionId)
+            return
+        }
         val pending = pendingApproval(approvalId)
         if (optionId !in pending.optionIds) {
             throw SessionException.Invalid("invalid_option", "That is not one of the approval's options.")
@@ -554,12 +597,6 @@ class SessionManager(
 
     private suspend fun liveSession(sessionId: String): LiveSession {
         live[sessionId]?.let { return it }
-        if (isTmuxSessionId(sessionId)) {
-            throw SessionException.Conflict(
-                "terminal_only",
-                "A tmux session opens in Terminal. Chat is not available for it.",
-            )
-        }
         val stored = requireSession(sessionId)
         val lock = resumeLocks.computeIfAbsent(sessionId) { Mutex() }
         try {
@@ -683,6 +720,8 @@ class SessionManager(
     private companion object {
         val SHUTDOWN_BUDGET = 10.seconds
         const val MAX_RESOLVED_APPROVALS = 1000
+        const val CHAT_UNAVAILABLE = "chat_unavailable"
+        const val CHAT_UNAVAILABLE_MESSAGE = "Chat is not available for tmux sessions on this bridge. Use Terminal."
         val WORKING_ONLY = setOf(AgentState.WORKING)
         val RUNNING_STATES = setOf(AgentState.WORKING, AgentState.WAITING_ON_YOU)
         val logger = LoggerFactory.getLogger(SessionManager::class.java)

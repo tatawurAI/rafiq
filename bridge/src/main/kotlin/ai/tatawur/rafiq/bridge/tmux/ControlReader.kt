@@ -5,6 +5,10 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * One command sent to tmux, waiting for its reply. Replies come back in the order commands were sent.
@@ -45,12 +49,17 @@ internal class ControlTarget {
 /**
  * Reads what a tmux control-mode client prints: replies to commands, and notifications such as pane output.
  * Runs on its own thread until tmux closes the stream, and never waits for [sink].
+ *
+ * A counted reply (a screen capture) that is still open after [countedReplyTimeout] means the count was wrong:
+ * its terminator was taken as text and the stream can no longer be read in step. The view is then ended, and
+ * every waiting command fails at once, instead of the view freezing.
  */
 internal class ControlReader(
     input: InputStream,
     private val replies: ConcurrentLinkedQueue<PendingReply>,
     private val target: ControlTarget,
     private val sink: (TermItem) -> Unit,
+    private val countedReplyTimeout: Duration = 3.seconds,
 ) {
     private val input = BufferedInputStream(input)
     private var block: MutableList<String>? = null
@@ -63,16 +72,39 @@ internal class ControlReader(
     /** The open block had more lines than its count said, so its reply is a failure. */
     private var overran = false
 
+    /** Numbers counted blocks, so a watchdog can tell whether the block it watches is still the open one. */
+    private var countedBlocks = 0L
+
+    /** The number of the counted block that is open, or 0. Read by the watchdog thread. */
+    @Volatile
+    private var openCounted = 0L
+
+    /** Set once a counted block overstayed its time. The reader stops at its next line. */
+    @Volatile
+    private var outOfStep = false
+
     fun run() {
         var running = true
-        while (running) {
+        while (running && !outOfStep) {
             val line = readLine(input)
-            running = line != null && handle(line)
+            running = line != null && !outOfStep && handle(line)
         }
+        if (!outOfStep) stop("tmux closed the connection.")
+    }
+
+    /** Fails every waiting command and ends the view. */
+    private fun stop(reason: String) {
         val gone = IllegalStateException("tmux control client exited")
         target.ended = true
         replies.forEach { it.future?.completeExceptionally(gone) }
-        sink(TermItem.Ended("tmux closed the connection."))
+        sink(TermItem.Ended(reason))
+    }
+
+    /** Runs on the watchdog thread when counted block [number] did not close in time. */
+    private fun overstayed(number: Long) {
+        if (openCounted != number || outOfStep) return
+        outOfStep = true
+        stop("The tmux screen could not be read.")
     }
 
     /** Handles one line. Returns false when tmux said it is exiting. */
@@ -88,6 +120,7 @@ internal class ControlReader(
 
             // Only the line that repeats this block's time and command number ends it.
             open != null && (text.startsWith("%end $terminator") || text.startsWith("%error $terminator")) -> {
+                openCounted = 0
                 if (ours) finish(open, ok = text.startsWith("%end ") && !overran)
                 block = null
             }
@@ -123,6 +156,11 @@ internal class ControlReader(
         overran = false
         textLines = if (ours) replies.peek()?.lineCount?.invoke() ?: UNCOUNTED else UNCOUNTED
         if (ours) target.lastBegin = text
+        if (textLines != UNCOUNTED) {
+            val number = ++countedBlocks
+            openCounted = number
+            watchdog.schedule({ overstayed(number) }, countedReplyTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+        }
     }
 
     private fun notification(
@@ -193,6 +231,12 @@ internal class ControlReader(
     }
 
     companion object {
+        /** One thread for every reader's watchdog. It only checks two fields and never blocks. */
+        private val watchdog =
+            Executors.newSingleThreadScheduledExecutor { task ->
+                Thread(task, "tmux-reply-watchdog").apply { isDaemon = true }
+            }
+
         private const val UNCOUNTED = -1
         private const val FLAGS_FIELD = 3
         private const val OUTPUT_FIELDS = 2

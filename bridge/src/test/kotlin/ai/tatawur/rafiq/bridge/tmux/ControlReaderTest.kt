@@ -5,8 +5,11 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayInputStream
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -14,6 +17,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 
 /** What a pane prints cannot be read as tmux's own protocol. */
 @Timeout(120)
@@ -113,6 +117,28 @@ class ControlReaderTest {
         ControlReader(ByteArrayInputStream(stream.toByteArray()), replies, ControlTarget(), ended::add).run()
 
         assertEquals(listOf(false to listOf("row one", "row two", "row three"), true to listOf("next")), results)
+    }
+
+    @Test
+    fun a_counted_reply_that_never_closes_ends_the_view_and_fails_waiting_commands_in_time() {
+        val replies = ConcurrentLinkedQueue<PendingReply>()
+        val capture = CompletableFuture<List<String>>()
+        val next = CompletableFuture<List<String>>()
+        replies.add(PendingReply(capture, null, lineCount = { 3 }))
+        replies.add(PendingReply(next, null))
+        val items = LinkedBlockingQueue<TermItem>()
+        val stream = PipedOutputStream()
+        val reader = ControlReader(PipedInputStream(stream), replies, ControlTarget(), items::add, 300.milliseconds)
+        Thread(reader::run).apply { isDaemon = true }.start()
+
+        // One line short of the count, so the real terminator is taken as text, and then nothing more comes.
+        stream.write("%begin 100 7 1\nrow one\nrow two\n%end 100 7 1\n".toByteArray())
+        stream.flush()
+
+        val item = items.poll(WAIT_SECONDS, TimeUnit.SECONDS)
+        assertIs<TermItem.Ended>(item, "the stuck reply did not end the view")
+        assertTrue(capture.isCompletedExceptionally && next.isCompletedExceptionally, "a command is still waiting")
+        stream.close()
     }
 
     private fun beginFields(begin: String): Pair<Long, Long> {

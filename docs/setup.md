@@ -101,6 +101,29 @@ rafiq-bridge revoke <id>
 
 If you set `RAFIQ_DEVICE_TOKEN` before this version, that token still works. The bridge lists it as the device `legacy`. Once your phone is paired with its own token, run `rafiq-bridge revoke legacy`, then remove `RAFIQ_DEVICE_TOKEN` from your service environment. The bridge no longer needs it. A revoked `legacy` stays revoked even if the variable is still set, so a leftover value is harmless.
 
+### Check your Tailscale login too (optional)
+
+`tailscale serve` tells the bridge which Tailscale login made each request, in the `Tailscale-User-Login` header. It removes that header if a client sent it, so the value comes from Tailscale. Set your login, and the bridge refuses any request from another login, even one with a valid device token:
+
+```sh
+export RAFIQ_TAILSCALE_LOGIN=alex@example.com
+```
+
+Use the login exactly as Tailscale shows it. You find it on the Users page of the Tailscale admin console, or with `tailscale whois 100.64.0.2` on your server, using your phone's Tailscale address.
+
+What it does:
+
+- Every request and both sockets, `/events` and `/terminal`, need the header to name your login, on top of the device token. Only `GET /health` is left open. A missing or different login gets `403 identity_mismatch`.
+- A stolen device token is then useless from someone else's Tailscale login, for example on a shared tailnet.
+- The bridge trusts the header only on a connection from `127.0.0.1`, where `tailscale serve` connects from. It will not start with `RAFIQ_TAILSCALE_LOGIN` set and `RAFIQ_BIND_ADDRESS` on another address, and says so.
+- A refusal is logged with the login that was refused, and nothing else from the request.
+
+What it does not do:
+
+- It does not help against anything that runs on your server. A local process can connect from `127.0.0.1` and send any header it likes.
+- Tailscale adds no identity header for a tagged device, so a phone that is tagged is refused. Leave the setting unset if your phone is tagged.
+- `tailscale funnel` requests carry no identity header, so they are refused. Never use funnel for the bridge anyway.
+
 ## Terminal
 
 Terminal shows a tmux session on your server in the app, and sends your keys to it. It is a remote shell. It is off until you turn it on, and it reaches only the sessions you name.
@@ -143,6 +166,8 @@ A listed session shows in your session list with the agent that runs in it. Its 
 | `429`, `too_many_attempts` | 100 wrong codes in five minutes. Run `rafiq-bridge pair` again for a fresh code. That also clears the lockout. |
 | The app says your server removed the phone | The phone was revoked. Run `rafiq-bridge pair` again. |
 | The app says the code is wrong | Codes work once and expire after 10 minutes. Run `rafiq-bridge pair` for a new one. |
+| `403`, `identity_mismatch` | `RAFIQ_TAILSCALE_LOGIN` is set and the request came from another Tailscale login, a tagged device, or not through `tailscale serve`. Check the login is the one Tailscale shows for your phone. |
+| The bridge will not start and names `RAFIQ_TAILSCALE_LOGIN` | The value is not one login, or `RAFIQ_BIND_ADDRESS` is not a loopback address. |
 | `403`, `forbidden_origin` | A browser page on another site called the bridge. The app sends no `Origin`, so this is not the app. |
 | `502` from `tailscale serve` | The bridge is not running, or not on `127.0.0.1:8740`. |
 | No answer at all | Tailscale is off on your phone, the phone is on another tailnet, or your tailnet's access rules block it from your server. |

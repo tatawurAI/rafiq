@@ -11,6 +11,7 @@ import ai.tatawur.rafiq.protocol.DeliveryState
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.ThreadKind
+import ai.tatawur.rafiq.protocol.api.SendRefusal
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -760,7 +761,7 @@ internal class TmuxChatSession(
     ) {
         if (queue.size >= MAX_QUEUED) {
             throw SessionException.Conflict(
-                QUEUE_FULL,
+                SendRefusal.QUEUE_FULL,
                 "Three messages are already waiting. Try again when the agent is free.",
             )
         }
@@ -910,8 +911,6 @@ internal class TmuxChatSession(
         const val MAIN_THREAD = "main"
         const val MAX_QUEUED = 3
 
-        /** The refusal when [MAX_QUEUED] prompts already wait. Becomes `SendRefusal.QUEUE_FULL` in the contract. */
-        const val QUEUE_FULL = "queue_full"
         private const val MAX_RECENT = 5
         private const val RECENT_MS = 60_000L
 

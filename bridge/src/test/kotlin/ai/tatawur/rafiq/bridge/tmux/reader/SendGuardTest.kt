@@ -78,7 +78,7 @@ class SendGuardTest {
             statuses.status = AgentStatus.BUSY
             repeat(TmuxChatSession.MAX_QUEUED) { reader.prompt(SESSION, "message $it", "c-$it") }
 
-            assertEquals("queue_full", reader.refusal("one too many"))
+            assertEquals(SendRefusal.QUEUE_FULL, reader.refusal("one too many"))
             assertEquals(TmuxChatSession.MAX_QUEUED, deliveries().count { it.first == DeliveryState.QUEUED })
         }
 

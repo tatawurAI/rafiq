@@ -82,16 +82,18 @@ fun SessionListRoute(
     modifier: Modifier = Modifier,
     onPairAgain: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    approvals: ApprovalGate? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val approve = rememberGatedApprove(approvals, viewModel::approve)
     val actions =
-        remember(viewModel, onOpen, onNewSession, onPairAgain, onOpenSettings) {
+        remember(viewModel, onOpen, onNewSession, onPairAgain, onOpenSettings, approve) {
             SessionListActions(
                 onOpen = onOpen,
                 onOpenSettings = onOpenSettings,
                 onNewSession = onNewSession,
                 onFilter = viewModel::selectFilter,
-                onApprove = viewModel::approve,
+                onApprove = approve,
                 onDismissFeedback = viewModel::dismissFeedback,
                 onPairAgain = onPairAgain,
             )

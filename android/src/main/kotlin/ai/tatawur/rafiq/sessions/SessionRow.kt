@@ -134,6 +134,15 @@ private fun RowHeading(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        // Listed, but your server will not open it in Terminal, so the session view has no toggle.
+        if (session.terminal && !session.terminalAllowed) {
+            Text(
+                text = stringResource(R.string.row_terminal_unavailable),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textMuted,
+                maxLines = 1,
+            )
+        }
         AgentTag(session.agent)
     }
     Text(
@@ -156,13 +165,7 @@ private fun RowApproval(
 ) {
     val spacing = RafiqTheme.spacing
     val choices = InlineChoices.of(approval)
-    Text(
-        text = approval.description,
-        style = MaterialTheme.typography.bodyMedium,
-        color = RafiqTheme.colors.text,
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
-    )
+    ApprovalRequestSummary(approval, maxLines = 3)
     // The status gets its own line so "Waiting on you" is never squeezed by the buttons.
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
         StatusBadge(AgentState.WAITING_ON_YOU)

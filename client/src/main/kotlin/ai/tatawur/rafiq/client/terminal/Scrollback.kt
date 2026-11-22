@@ -15,9 +15,6 @@ sealed interface ScrollbackState {
     /** The live screen, with nothing over it. */
     data object Live : ScrollbackState
 
-    /** A swipe asked for history and the answer has not come yet. */
-    data object Loading : ScrollbackState
-
     /** The pane's history, oldest line first, over the live screen. */
     data class Showing(
         val lines: List<String>,

@@ -10,6 +10,7 @@ import ai.tatawur.rafiq.client.SessionScreenState
 import ai.tatawur.rafiq.client.ThreadTab
 import ai.tatawur.rafiq.client.TimelineItem
 import ai.tatawur.rafiq.protocol.AgentState
+import ai.tatawur.rafiq.protocol.ApprovalDetail
 import ai.tatawur.rafiq.protocol.ApprovalOption
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
 import ai.tatawur.rafiq.protocol.ContentBlock
@@ -227,6 +228,12 @@ private fun apiState(now: Long): SessionScreenState {
                     ),
                 ),
             expiresAtMs = null,
+            detail =
+                ApprovalDetail(
+                    text = "npm test -- routes\nnpm run lint -- src/middleware",
+                    lineCount = 2,
+                    sessionRule = "Bash(npm test:*)",
+                ),
         )
     return SessionScreenState(
         sessionId = ids.API,

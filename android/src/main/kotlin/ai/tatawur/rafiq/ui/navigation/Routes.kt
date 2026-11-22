@@ -11,9 +11,12 @@ internal object Routes {
     const val SETTINGS = "settings"
     const val SESSION_ID = "sessionId"
     const val SESSION = "session/{$SESSION_ID}"
+    const val HOOKS = "session/{$SESSION_ID}/hooks"
 
     // Session ids are opaque and may hold any character, so they are encoded into the route.
     fun session(id: String) = "session/${Uri.encode(id)}"
+
+    fun hooks(id: String) = "session/${Uri.encode(id)}/hooks"
 }
 
 /**

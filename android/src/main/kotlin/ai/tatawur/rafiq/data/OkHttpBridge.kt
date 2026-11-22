@@ -146,6 +146,7 @@ class OkHttpTransport(
         return when (method) {
             HttpMethod.GET -> builder.get()
             HttpMethod.POST -> builder.post(jsonBody.orEmpty().toRequestBody(JSON))
+            HttpMethod.DELETE -> builder.delete(jsonBody.orEmpty().toRequestBody(JSON))
         }.build()
     }
 

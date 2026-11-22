@@ -164,35 +164,61 @@ private fun noticeSentence(kind: NoticeKind): Int =
         NoticeKind.PREVIEW -> R.string.notice_preview
         NoticeKind.FILE_CHANGED -> R.string.notice_file_changed
         NoticeKind.UNKNOWN_EVENT -> R.string.notice_unknown_event
+        NoticeKind.ASK_AT_DESK -> R.string.notice_ask_at_desk
+        NoticeKind.CHAT_INCOMPLETE -> R.string.notice_chat_incomplete
     }
 
 /**
- * A sign-in request, preview, file change or unknown event, as one plain line. The notice carries
- * only the event's own words, such as a path or a provider, and the line puts them in a sentence
- * for its kind. A notice with a URL, such as a sign-in page, opens it in the browser when tapped.
+ * A sign-in request, preview, file change, unknown event, approval sent back to the desk or a turn
+ * Chat may be missing, as one plain line. The notice carries only the event's own words, such as a
+ * path or a provider, and the line puts them in a sentence for its kind. A notice with a URL, such
+ * as a sign-in page, opens it in the browser when tapped, and "Chat may be missing part of this
+ * turn" opens Terminal through [onOpenTerminal] when the screen has it.
  */
 @Composable
 fun NoticeLine(
     notice: TimelineItem.Notice,
     modifier: Modifier = Modifier,
+    onOpenTerminal: (() -> Unit)? = null,
 ) {
     val color =
         when (notice.kind) {
-            NoticeKind.AUTH_REQUIRED -> RafiqTheme.colors.needsYou
+            NoticeKind.AUTH_REQUIRED, NoticeKind.ASK_AT_DESK, NoticeKind.CHAT_INCOMPLETE -> RafiqTheme.colors.needsYou
             NoticeKind.PREVIEW, NoticeKind.FILE_CHANGED, NoticeKind.UNKNOWN_EVENT -> RafiqTheme.colors.textMuted
         }
     val uriHandler = LocalUriHandler.current
     val url = notice.url
+    // "Chat may be incomplete" opens Terminal, the ground truth, when this screen has it.
+    val onTap: (() -> Unit)? =
+        when {
+            url != null -> {
+                { uriHandler.openUri(url) }
+            }
+
+            notice.kind == NoticeKind.CHAT_INCOMPLETE -> {
+                onOpenTerminal
+            }
+
+            else -> {
+                null
+            }
+        }
     val tappable =
-        if (url != null) {
+        if (onTap != null) {
             Modifier
                 .heightIn(min = RafiqTheme.spacing.minTouchTarget)
-                .clickable(role = Role.Button) { uriHandler.openUri(url) }
+                .clickable(role = Role.Button, onClick = onTap)
         } else {
             Modifier
         }
+    val sentence =
+        if (notice.kind == NoticeKind.CHAT_INCOMPLETE && onOpenTerminal == null) {
+            R.string.notice_chat_incomplete_no_terminal
+        } else {
+            noticeSentence(notice.kind)
+        }
     Text(
-        text = stringResource(noticeSentence(notice.kind), notice.text),
+        text = stringResource(sentence, notice.text),
         modifier = modifier.fillMaxWidth().then(tappable).padding(vertical = RafiqTheme.spacing.xSmall),
         style = MaterialTheme.typography.labelMedium,
         color = color,

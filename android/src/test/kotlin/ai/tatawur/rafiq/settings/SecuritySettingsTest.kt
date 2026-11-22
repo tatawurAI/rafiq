@@ -13,7 +13,7 @@ import java.io.File
 import java.io.IOException
 import kotlin.test.assertTrue
 
-/** The Terminal lock fails closed. */
+/** The Terminal and approval locks fail closed. */
 class SecuritySettingsTest {
     @TempDir
     lateinit var dir: File
@@ -30,6 +30,7 @@ class SecuritySettingsTest {
                 )
 
             assertTrue(SecuritySettings(store).terminalLock.first())
+            assertTrue(SecuritySettings(store).approvalLock.first())
         }
 
     @Test
@@ -44,5 +45,6 @@ class SecuritySettingsTest {
                 }
 
             assertTrue(SecuritySettings(unreadable).terminalLock.first())
+            assertTrue(SecuritySettings(unreadable).approvalLock.first())
         }
 }

@@ -1,10 +1,13 @@
 package ai.tatawur.rafiq.terminal
 
 import ai.tatawur.rafiq.R
+import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.terminal.MirroredWindow
+import ai.tatawur.rafiq.client.terminal.ScrollbackState
 import ai.tatawur.rafiq.client.terminal.TerminalPort
 import ai.tatawur.rafiq.client.terminal.TerminalStatus
 import ai.tatawur.rafiq.client.terminal.viewportCells
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import ai.tatawur.rafiq.ui.fold.FoldSplit
 import ai.tatawur.rafiq.ui.fold.Hinge
 import ai.tatawur.rafiq.ui.fold.previewHalfFoldHinge
@@ -21,6 +24,8 @@ import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,7 +41,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -49,9 +58,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -59,6 +74,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -70,6 +86,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.VTermKey
+import kotlin.math.abs
 import kotlin.math.ceil
 
 private val TERMINAL_FONT = 12.sp
@@ -83,21 +100,29 @@ private val MIN_FORCED_FONT = 4.sp
  * view client so the desk gets its size back. Screenshots and the recents thumbnail are blocked
  * while it shows.
  *
- * @param header the session header with the Chat and Terminal toggle, given the mirrored window.
+ * A swipe in the pane reads the pane's history into an overlay, or scrolls a full-screen program,
+ * and the window label opens a picker of the session's windows. Neither touches the desk.
+ *
+ * @param history reads the history of the pane in a tmux window, for the overlay.
+ * @param header the session header with the Chat and Terminal toggle, given the mirrored window and
+ *   what tapping its label does.
  */
 @Composable
 fun TerminalRoute(
     port: TerminalPort,
     sessionId: String,
     hinge: Hinge?,
-    header: @Composable (MirroredWindow?) -> Unit,
+    history: suspend (window: Int?) -> CommandResult<TerminalHistory>,
+    header: @Composable (MirroredWindow?, onPickWindow: () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
     val colors = RafiqTheme.colors
+    val scope = rememberCoroutineScope()
+    val latestHistory by rememberUpdatedState(history)
     val controller =
         remember(sessionId) {
-            TerminalController(port, sessionId, colors.text, colors.hinge) {
+            TerminalController(port, sessionId, colors.text, colors.hinge, scope, { latestHistory(it) }) {
                 view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             }
         }
@@ -115,7 +140,7 @@ fun TerminalRoute(
 
     TerminalLayout(
         hinge = hinge,
-        header = { header(window) },
+        header = { header(window, controller::openWindowPicker) },
         status = status,
         onRetry = { attempt++ },
         pane = { modifier ->
@@ -132,9 +157,20 @@ fun TerminalRoute(
                 onToggleKeyboard = { keyboard = !keyboard },
             )
         },
-        notice = { PasteNotice(controller) },
+        notice = {
+            PasteNotice(controller)
+            ServerNotice(controller)
+        },
     )
     PendingLink(controller)
+    WindowPickerDialog(controller)
+}
+
+/** A notice from your server, such as the window you watched closing, until you dismiss it. */
+@Composable
+private fun ServerNotice(controller: TerminalController) {
+    val notice by controller.notice.collectAsStateWithLifecycle()
+    notice?.let { NoticeStrip(it, controller::dismissNotice) }
 }
 
 /** Says a paste was refused for its length, until you dismiss it. */
@@ -240,9 +276,12 @@ private fun TerminalPane(
         LaunchedEffect(desired) { controller.onViewport(desired) }
         // The emulator's forced size is rows, then columns.
         val forced = pane?.takeIf { it != desired }?.let { it.rows to it.cols }
+        val stepPx = cell.second * ROWS_PER_SCROLL_STEP
+        val scrollback = controller.scrollback
         Terminal(
             terminalEmulator = controller.emulator,
-            modifier = Modifier.fillMaxSize(),
+            modifier =
+                Modifier.fillMaxSize().scrollSwipes(stepPx, scrollback::gestureStarted, scrollback::step),
             typeface = typeface,
             initialFontSize = TERMINAL_FONT,
             minFontSize = MIN_FORCED_FONT,
@@ -258,5 +297,6 @@ private fun TerminalPane(
             onHyperlinkClick = controller::onLinkTapped,
             onPasteRequest = onPaste,
         )
+        HistoryOverlay(controller)
     }
 }

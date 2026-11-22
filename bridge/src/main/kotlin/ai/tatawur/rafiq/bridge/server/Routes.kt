@@ -145,6 +145,7 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
 internal fun Route.eventsRoute(
     log: EventLog,
     streamer: EventStreamer,
+    isVisible: (sessionId: String) -> Boolean = { true },
 ) {
     webSocket("/events") {
         val sessionId = call.request.queryParameters["session"]
@@ -153,7 +154,7 @@ internal fun Route.eventsRoute(
             when {
                 sessionId.isNullOrBlank() -> "session is required"
                 call.request.queryParameters["after"] != null && after == null -> "after must be a non-negative integer"
-                log.session(sessionId) == null -> "no such session"
+                log.session(sessionId) == null || !isVisible(sessionId) -> "no such session"
                 else -> null
             }
         if (rejection != null || sessionId == null) {

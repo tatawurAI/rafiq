@@ -2,7 +2,12 @@ package ai.tatawur.rafiq.bridge
 
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
+import ai.tatawur.rafiq.bridge.sessions.isTmuxSessionId
 import ai.tatawur.rafiq.bridge.store.EventLog
+import ai.tatawur.rafiq.bridge.tmux.AgentDetector
+import ai.tatawur.rafiq.bridge.tmux.TerminalGate
+import ai.tatawur.rafiq.bridge.tmux.TerminalService
+import ai.tatawur.rafiq.bridge.tmux.TmuxSessionSource
 import io.ktor.server.application.log
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
@@ -31,12 +36,29 @@ fun main() {
     val security = BridgeSecurity(config.deviceToken, config.bindAddress, config.allowedHosts)
     val eventLog = EventLog.open(config.dataDir, Dispatchers.IO.limitedParallelism(1))
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    val sessions = SessionManager(eventLog, config.agents.map(::adapterFor), scope)
-    runBlocking { sessions.recoverAfterRestart() }
+    // With Terminal off none of this exists, so no tmux command runs and no tmux session is listed.
+    val terminal =
+        config.terminal.takeIf { it.enabled }?.let { settings ->
+            val gate = TerminalGate(settings)
+            TerminalService(gate, TmuxSessionSource(gate, eventLog, AgentDetector()))
+        }
+    val sessions =
+        SessionManager(
+            eventLog,
+            config.agents.map(::adapterFor),
+            scope,
+            visibility =
+                terminal?.source?.let { source -> { id: String -> source.isVisible(id) } } ?: { !isTmuxSessionId(it) },
+        )
+    runBlocking {
+        sessions.recoverAfterRestart()
+        terminal?.prepare()
+    }
+    terminal?.source?.start(scope)
     try {
         embeddedServer(CIO, host = config.bindAddress, port = config.port) {
             log.info("Rafiq bridge {} starting with {}", version, config)
-            bridgeModule(version, eventLog, sessions, security, config.devPage)
+            bridgeModule(version, eventLog, sessions, security, config.devPage, terminal)
         }.start(wait = true)
     } finally {
         scope.cancel()

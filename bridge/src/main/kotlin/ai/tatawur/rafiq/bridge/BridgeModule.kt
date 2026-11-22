@@ -9,10 +9,12 @@ import ai.tatawur.rafiq.bridge.server.installSecurity
 import ai.tatawur.rafiq.bridge.server.sessionRoutes
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.store.EventLog
+import ai.tatawur.rafiq.bridge.tmux.TerminalService
 import ai.tatawur.rafiq.protocol.api.Health
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationStopping
 import io.ktor.server.application.install
 import io.ktor.server.plugins.bodylimit.RequestBodyLimit
@@ -30,6 +32,9 @@ import kotlinx.coroutines.runBlocking
  * @param version the bridge version, reported by `GET /health`.
  * @param security the host, origin and device token checks every request passes first.
  * @param devPage whether to serve the development page at `/dev`. When false the route does not exist.
+ * @param terminal the Terminal view and the tmux session source, or null when Terminal is off. With null,
+ *   `WS /terminal` does not exist and no tmux session is listed.
+ * @param deviceOf names the device a call came from, for the per-device terminal limit.
  */
 fun Application.bridgeModule(
     version: String,
@@ -37,6 +42,8 @@ fun Application.bridgeModule(
     sessions: SessionManager,
     security: BridgeSecurity,
     devPage: Boolean = false,
+    terminal: TerminalService? = null,
+    deviceOf: (ApplicationCall) -> String = { SHARED_DEVICE },
 ) {
     install(ContentNegotiation) {
         json(protocolJson)
@@ -55,7 +62,8 @@ fun Application.bridgeModule(
     monitor.subscribe(ApplicationStopping) { runBlocking { sessions.shutdown() } }
     routing {
         sessionRoutes(sessions)
-        eventsRoute(log, EventStreamer(log))
+        eventsRoute(log, EventStreamer(log), sessions::isVisible)
+        terminal?.routes(this, deviceOf)
         if (devPage) devRoutes(sessions)
         // Open to any caller on purpose, though the host and origin checks still apply: it reveals only
         // liveness and version, and it is what you check first when the phone cannot connect.
@@ -64,6 +72,9 @@ fun Application.bridgeModule(
         }
     }
 }
+
+/** The device name used until the bridge knows devices apart. */
+private const val SHARED_DEVICE = "shared"
 
 private const val MAX_FRAME_BYTES = 64L * 1024
 private const val MAX_BODY_BYTES = 1024L * 1024

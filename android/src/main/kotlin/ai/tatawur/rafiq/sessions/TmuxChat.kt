@@ -190,6 +190,10 @@ fun refusalText(
             SendRefusal.NOT_CONFIRMED -> R.string.refusal_not_confirmed
             else -> null
         }
+    // The queue's size is your server's choice, so its own words come first.
+    if (code == SendRefusal.QUEUE_FULL) {
+        return message?.takeIf { it.isNotBlank() } ?: stringResource(R.string.refusal_queue_full)
+    }
     return known?.let { stringResource(it) } ?: message.orEmpty()
 }
 

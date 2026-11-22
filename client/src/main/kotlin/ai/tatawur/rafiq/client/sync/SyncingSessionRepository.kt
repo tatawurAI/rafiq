@@ -2,7 +2,6 @@ package ai.tatawur.rafiq.client.sync
 
 import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.ConnectionState
-import ai.tatawur.rafiq.client.IDENTITY_MISMATCH
 import ai.tatawur.rafiq.client.Reduction
 import ai.tatawur.rafiq.client.SessionListItem
 import ai.tatawur.rafiq.client.SessionReducer
@@ -11,6 +10,7 @@ import ai.tatawur.rafiq.client.SessionScreenState
 import ai.tatawur.rafiq.client.toListItems
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.Session
+import ai.tatawur.rafiq.protocol.api.AuthErrorCodes
 import ai.tatawur.rafiq.protocol.api.HookSetupPreview
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import ai.tatawur.rafiq.protocol.protocolJson
@@ -251,7 +251,11 @@ class SyncingSessionRepository(
             } catch (broken: StreamBroken) {
                 broken.end
             } catch (rejected: HandshakeRejectedException) {
-                if (rejected.code == IDENTITY_MISMATCH) StreamEnd.IDENTITY else handshakeEnd(rejected.status)
+                if (rejected.code == AuthErrorCodes.IDENTITY_MISMATCH) {
+                    StreamEnd.IDENTITY
+                } else {
+                    handshakeEnd(rejected.status)
+                }
             } catch (_: Exception) {
                 StreamEnd.DROPPED
             }
@@ -337,7 +341,9 @@ class SyncingSessionRepository(
         also {
             if (credentials.value == null) return@also
             if (it == CommandResult.Unauthorized) link.value = ConnectionState.Unauthorized
-            if (it is CommandResult.Failed && it.code == IDENTITY_MISMATCH) link.value = ConnectionState.IdentityRefused
+            if (it is CommandResult.Failed && it.code == AuthErrorCodes.IDENTITY_MISMATCH) {
+                link.value = ConnectionState.IdentityRefused
+            }
         }
 
     private enum class StreamEnd { DROPPED, GAP, REFUSED, REJECTED, IDENTITY }

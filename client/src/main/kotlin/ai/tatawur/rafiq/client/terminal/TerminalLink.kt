@@ -1,7 +1,7 @@
 package ai.tatawur.rafiq.client.terminal
 
-import ai.tatawur.rafiq.client.IDENTITY_MISMATCH
 import ai.tatawur.rafiq.client.sync.HandshakeRejectedException
+import ai.tatawur.rafiq.protocol.api.AuthErrorCodes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -169,7 +169,7 @@ class TerminalLink(
                 currentStatus.value = TerminalStatus.Detached
                 throw cancelled
             } catch (failure: IOException) {
-                val identity = (failure as? HandshakeRejectedException)?.code == IDENTITY_MISMATCH
+                val identity = (failure as? HandshakeRejectedException)?.code == AuthErrorCodes.IDENTITY_MISMATCH
                 currentStatus.value = TerminalStatus.Failed(if (identity) IDENTITY_REFUSED else failure.message)
             }
         }

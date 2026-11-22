@@ -13,6 +13,7 @@ import ai.tatawur.rafiq.client.promptEchoes
 import ai.tatawur.rafiq.client.terminal.Scrollback
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.EventPayload
+import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.api.SendRefusal
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import androidx.lifecycle.ViewModel
@@ -149,7 +150,7 @@ class SessionViewModel(
                 feedback = local.feedback,
                 connection = connection,
                 scrollToKey = local.scrollToKey,
-                echoes = promptEchoes(local.sent, screen.deliveries),
+                echoes = promptEchoes(local.sent, screen.deliveries, screen.userMessageKeys()),
                 refusal = local.refusal,
                 offerHooks = local.hooksMissing && !local.hooksDismissed,
             )
@@ -299,11 +300,25 @@ class SessionViewModel(
 
     /** The sent prompts the agent does not have yet. Delivered ones are dropped so the list stays short. */
     private fun Local.stillPending(): List<SentPrompt> {
-        val waiting = promptEchoes(sent, state.value.screen.deliveries).mapTo(mutableSetOf()) { it.clientId }
+        val screen = state.value.screen
+        val waiting =
+            promptEchoes(
+                sent,
+                screen.deliveries,
+                screen.userMessageKeys(),
+            ).mapTo(mutableSetOf()) { it.clientId }
         return sent.filter { it.clientId in waiting }
     }
 
     private companion object {
+        /** Your messages on the main thread, where your server writes the prompts you send. */
+        fun SessionScreenState.userMessageKeys(): Set<String> =
+            mainThread
+                ?.let { timelines[it.id] }
+                .orEmpty()
+                .filter { it is TimelineItem.Message && it.role == MessageRole.USER }
+                .mapTo(mutableSetOf()) { it.key }
+
         // Keeps the session's socket open across a configuration change such as unfolding.
         const val STOP_TIMEOUT_MS = 5_000L
 
@@ -315,6 +330,7 @@ class SessionViewModel(
                 SendRefusal.STATE_UNKNOWN,
                 SendRefusal.HOOKS_NOT_INSTALLED,
                 SendRefusal.NOT_CONFIRMED,
+                SendRefusal.QUEUE_FULL,
             )
 
         /** The send guard's refusal, when that is why the prompt was not taken. */

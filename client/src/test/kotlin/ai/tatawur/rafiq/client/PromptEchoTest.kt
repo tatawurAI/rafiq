@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.client
 
 import ai.tatawur.rafiq.protocol.DeliveryState
+import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.api.SendRefusal
 import kotlin.test.Test
@@ -50,5 +51,27 @@ class PromptEchoTest {
             ),
             echo,
         )
+    }
+
+    @Test
+    fun a_prompt_not_confirmed_that_lands_late_clears_its_echo() {
+        // The reducer keeps the latest state per client id, so DELIVERED replaces NOT_DELIVERED.
+        val events =
+            listOf(
+                delivery("c-1", DeliveryState.NOT_DELIVERED, SendRefusal.NOT_CONFIRMED),
+                delivery("c-1", DeliveryState.DELIVERED),
+            ).mapIndexed { index, payload -> Event("s-1", index + 1L, 0, payload) }
+
+        val state = SessionReducer.fold("s-1", events)
+
+        assertEquals(listOf("c-2"), promptEchoes(sent, state.deliveries).map { it.clientId })
+    }
+
+    @Test
+    fun a_bang_line_written_as_its_own_message_replaces_the_echo_before_delivered_arrives() {
+        // Your server writes `user:<client id>` for a `!` line, one event before DELIVERED.
+        val echoes = promptEchoes(sent, emptyMap(), messageKeys = setOf("user:c-1"))
+
+        assertEquals(listOf("c-2"), echoes.map { it.clientId })
     }
 }

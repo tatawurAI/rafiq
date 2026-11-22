@@ -1,10 +1,8 @@
 package ai.tatawur.rafiq.client.terminal
 
-import kotlinx.coroutines.flow.take
-import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -27,14 +25,8 @@ class InboundFramesTest {
             assertTrue(queue.offer(binary(600)))
             assertFalse(queue.offer(binary(600)))
 
-            assertEquals(
-                1,
-                queue
-                    .frames()
-                    .take(1)
-                    .toList()
-                    .size,
-            )
+            // The view applies the first frame, which frees its bytes.
+            queue.frames().first()
 
             assertTrue(queue.offer(binary(600)))
         }

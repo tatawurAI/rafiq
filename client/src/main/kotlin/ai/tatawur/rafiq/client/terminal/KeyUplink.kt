@@ -270,7 +270,12 @@ internal object KeyEncodings {
 
             // An X10 mouse report is CSI M and three raw bytes, which would otherwise pass as text.
             plain && params.isEmpty() && bytes[finalAt] == 'M'.code.toByte() -> {
-                Token(minOf(finalAt + 1 + X10_MOUSE_BYTES, bytes.size), Kind.DROP)
+                if (finalAt + 1 + X10_MOUSE_BYTES > bytes.size) {
+                    // Its three bytes are still to come: hold it, so they are not sent as text.
+                    Token(bytes.size, Kind.INCOMPLETE)
+                } else {
+                    Token(finalAt + 1 + X10_MOUSE_BYTES, Kind.DROP)
+                }
             }
 
             plain -> {

@@ -277,6 +277,22 @@ class HookSetupTest {
         assertFalse(HookSetup.isTrustedProgram(program), "not executable")
     }
 
+    @Test
+    fun the_hook_program_may_belong_to_you_or_root_and_only_its_owner_may_write_it() {
+        fun safe(
+            owner: String,
+            mode: String,
+            isLink: Boolean = false,
+        ) = HookSetup.isSafeEntry(owner, "deploy", PosixFilePermissions.fromString(mode), isLink)
+
+        assertTrue(safe("deploy", "rwxr-xr-x"))
+        assertTrue(safe("root", "rwxr-xr-x"), "a package install owned by root")
+        assertFalse(safe("someone-else", "rwxr-xr-x"), "another user owns it")
+        assertFalse(safe("root", "rwxrwxr-x"), "group can write")
+        assertFalse(safe("root", "rwxr-xrwx"), "others can write")
+        assertFalse(safe("deploy", "rwxr-xr-x", isLink = true), "a link")
+    }
+
     private companion object {
         const val OVERLAP_WAIT_MS = 2000L
         const val POLL_MS = 10L

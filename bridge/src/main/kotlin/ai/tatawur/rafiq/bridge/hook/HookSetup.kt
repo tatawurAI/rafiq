@@ -270,21 +270,37 @@ class HookSetup(
         }
 
         /**
-         * True when [program] is an executable regular file that only you can change: it and its folder belong to
-         * the bridge's user, and neither is writable by the group or others. Claude Code runs this file on every
-         * hook event, so anyone who could change it could run code as you.
+         * True when [program] is an executable regular file that only you or root can change: it and its folder
+         * belong to the bridge's user or to root (a package install under `/opt`, for example), neither is writable
+         * by the group or others, and neither is a link. Claude Code runs this file on every hook event, so anyone
+         * who could change it could run code as you.
          */
         internal fun isTrustedProgram(program: Path): Boolean {
             val runnable = Files.isRegularFile(program, LinkOption.NOFOLLOW_LINKS) && Files.isExecutable(program)
             val posix = "posix" in program.fileSystem.supportedFileAttributeViews()
-            return runnable && (!posix || listOf(program, program.parent).all(::onlyMine))
+            return runnable && (!posix || listOf(program, program.parent).all(::safeToRun))
         }
 
-        private fun onlyMine(path: Path): Boolean {
-            val modes = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS)
-            return Files.getOwner(path, LinkOption.NOFOLLOW_LINKS).name == System.getProperty("user.name") &&
+        private fun safeToRun(path: Path): Boolean =
+            isSafeEntry(
+                owner = Files.getOwner(path, LinkOption.NOFOLLOW_LINKS).name,
+                bridgeUser = System.getProperty("user.name"),
+                modes = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS),
+                isLink = Files.isSymbolicLink(path),
+            )
+
+        /** The rule for the hook program and its folder, apart from the file system so every case can be tested. */
+        internal fun isSafeEntry(
+            owner: String,
+            bridgeUser: String,
+            modes: Set<PosixFilePermission>,
+            isLink: Boolean,
+        ): Boolean =
+            !isLink &&
+                (owner == bridgeUser || owner == ROOT) &&
                 PosixFilePermission.GROUP_WRITE !in modes &&
                 PosixFilePermission.OTHERS_WRITE !in modes
-        }
+
+        private const val ROOT = "root"
     }
 }

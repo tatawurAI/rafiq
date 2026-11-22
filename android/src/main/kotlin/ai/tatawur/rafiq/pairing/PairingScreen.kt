@@ -4,6 +4,7 @@ import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.PairingRepository
 import ai.tatawur.rafiq.client.PairingResult
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
+import android.view.View
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,6 +22,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,7 +30,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentDataType
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDataType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -56,6 +62,7 @@ fun PairingScreen(
     var failure by remember { mutableStateOf<PairingResult?>(null) }
     var notSaved by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    KeepOutOfAutofill()
     PairingForm(
         url = url,
         token = token,
@@ -85,6 +92,20 @@ fun PairingScreen(
         },
         modifier = modifier,
     )
+}
+
+/**
+ * Keeps autofill services away from this screen while it is shown, so none of them offers to save the
+ * device token as a password. Typing and pasting are not affected. The rest of the app is left as it was.
+ */
+@Composable
+private fun KeepOutOfAutofill() {
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val before = view.importantForAutofill
+        view.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        onDispose { view.importantForAutofill = before }
+    }
 }
 
 /**
@@ -202,7 +223,8 @@ private fun TokenField(
                 Text(stringResource(if (tokenVisible) R.string.pairing_token_hide else R.string.pairing_token_show))
             }
         },
-        modifier = Modifier.fillMaxWidth(),
+        // Not a value for autofill to fill or save, even if the screen's exclusion is lost.
+        modifier = Modifier.fillMaxWidth().semantics { contentDataType = ContentDataType.None },
     )
 }
 

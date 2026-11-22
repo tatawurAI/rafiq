@@ -145,6 +145,7 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
  * A client that falls too far behind is closed with `TRY_AGAIN_LATER`. It reconnects with the last
  * `seq` it saw and replays what it missed.
  */
+@Suppress("CyclomaticComplexMethod") // One handler: checks, registration, stream, watcher and cleanup.
 internal fun Route.eventsRoute(
     log: EventLog,
     streamer: EventStreamer,

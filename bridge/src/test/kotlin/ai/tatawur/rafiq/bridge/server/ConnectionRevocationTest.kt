@@ -79,10 +79,12 @@ class ConnectionRevocationTest {
         revoke.join(JOIN_MS)
 
         assertEquals(false, revoke.isAlive, "the revoke waited for a phone that was not reading")
+        // And the handler itself is gone, not left blocked on the phone until the connection times out.
+        eventually("the handler ended", seconds = 10) { bridge.handlersEnded.get() == 1 }
     }
 }
 
-private const val BIG_EVENTS = 3000
-private const val BIG_TEXT = 8000
+private const val BIG_EVENTS = 6000
+private const val BIG_TEXT = 16000
 private const val SETTLE_MS = 1500L
 private const val JOIN_MS = 15_000L

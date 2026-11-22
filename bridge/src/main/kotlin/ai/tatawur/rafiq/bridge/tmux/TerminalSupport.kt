@@ -89,6 +89,7 @@ class TerminalSlots(
     private var total = 0
 
     /** A slot for [deviceId], or why not. A refusal for a full house costs the device nothing. */
+    @Suppress("ReturnCount") // Each refusal leaves at once.
     @Synchronized
     fun acquire(deviceId: String): SlotResult {
         val held = perDevice[deviceId] ?: 0

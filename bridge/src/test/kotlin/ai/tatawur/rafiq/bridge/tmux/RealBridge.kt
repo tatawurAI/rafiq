@@ -4,6 +4,7 @@ import ai.tatawur.rafiq.bridge.BridgeFixture
 import ai.tatawur.rafiq.bridge.FakeAdapter
 import ai.tatawur.rafiq.bridge.TEST_TOKEN
 import ai.tatawur.rafiq.bridge.bridgeModule
+import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import ai.tatawur.rafiq.bridge.server.InMemoryConnectionRegistry
 import ai.tatawur.rafiq.bridge.testSecurity
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
@@ -62,6 +63,25 @@ class RealBridge(
     val tmuxSource: TmuxSessionSource?
     val connections = InMemoryConnectionRegistry()
 
+    /** How many registered sockets have left the registry because their handler ended. */
+    val handlersEnded =
+        java.util.concurrent.atomic
+            .AtomicInteger()
+    private val recording =
+        object : ConnectionRegistry {
+            override fun register(
+                deviceId: String,
+                kind: String,
+                close: suspend (reason: String) -> Unit,
+            ): AutoCloseable {
+                val handle = connections.register(deviceId, kind, close)
+                return AutoCloseable {
+                    handlersEnded.incrementAndGet()
+                    handle.close()
+                }
+            }
+        }
+
     init {
         lateinit var created: TmuxSessionSource
         fixture =
@@ -76,7 +96,7 @@ class RealBridge(
                     fixture.sessions,
                     testSecurity(),
                     terminal = service,
-                    connections = connections,
+                    connections = recording,
                     deviceOf = deviceOf,
                 )
             }.also { it.start(wait = false) }

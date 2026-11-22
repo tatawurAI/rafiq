@@ -10,6 +10,8 @@ import ai.tatawur.rafiq.client.SessionScreenState
 import ai.tatawur.rafiq.client.toListItems
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.Session
+import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -114,7 +116,28 @@ class SyncingSessionRepository(
     override suspend fun prompt(
         sessionId: String,
         text: String,
-    ): CommandResult<Unit> = api.prompt(sessionId, text).noting()
+        clientId: String?,
+    ): CommandResult<Unit> = api.prompt(sessionId, text, clientId).noting()
+
+    override suspend fun hookSetup(sessionId: String): CommandResult<HookSetupPreview> =
+        api.hookSetup(sessionId).noting()
+
+    override suspend fun installHooks(
+        sessionId: String,
+        previewHash: String,
+        addGitExclude: Boolean,
+    ): CommandResult<Unit> = api.installHooks(sessionId, previewHash, addGitExclude).noting()
+
+    override suspend fun removeHooks(
+        sessionId: String,
+        previewHash: String,
+    ): CommandResult<Unit> = api.removeHooks(sessionId, previewHash).noting()
+
+    override suspend fun terminalHistory(
+        sessionId: String,
+        window: Int?,
+        lines: Int,
+    ): CommandResult<TerminalHistory> = api.terminalHistory(sessionId, window, lines).noting()
 
     override suspend fun cancel(
         sessionId: String,

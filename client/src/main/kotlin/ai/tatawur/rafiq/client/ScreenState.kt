@@ -1,9 +1,11 @@
 package ai.tatawur.rafiq.client
 
 import ai.tatawur.rafiq.protocol.AgentState
+import ai.tatawur.rafiq.protocol.ApprovalDetail
 import ai.tatawur.rafiq.protocol.ApprovalOption
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
 import ai.tatawur.rafiq.protocol.ContentBlock
+import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
@@ -31,6 +33,8 @@ data class SessionListItem(
  *
  * @property threadId the thread of the tool call it belongs to, or null when that call is not known.
  * @property options in display order: allow once, allow always, deny, then unknown kinds.
+ * @property detail the full text being approved and the rule "allow for this session" adds, or null when
+ *   the agent gave neither. The card then shows [description]. See [ApprovalText].
  */
 data class ApprovalCard(
     val id: String,
@@ -40,6 +44,7 @@ data class ApprovalCard(
     val description: String,
     val options: List<ApprovalOption>,
     val expiresAtMs: Long?,
+    val detail: ApprovalDetail? = null,
 ) {
     companion object {
         private val kindOrder =
@@ -74,6 +79,9 @@ data class ThreadTab(
  *   (sign-ins, previews, file changes, unknown kinds) go on the main thread.
  * @property openApprovals every approval still waiting on you, oldest first. The view pins the newest.
  * @property lastSeq the newest event `seq` applied. The socket resumes after it.
+ * @property progress what each thread's running turn is doing, keyed by thread id. A thread with no turn
+ *   running has no entry.
+ * @property deliveries the latest delivery state of each prompt you sent, keyed by its client id.
  */
 data class SessionScreenState(
     val sessionId: String,
@@ -82,14 +90,25 @@ data class SessionScreenState(
     val timelines: Map<String, List<TimelineItem>> = emptyMap(),
     val openApprovals: List<ApprovalCard> = emptyList(),
     val lastSeq: Long = 0,
+    val progress: Map<String, EventPayload.TurnProgress> = emptyMap(),
+    val deliveries: Map<String, EventPayload.PromptDelivery> = emptyMap(),
 ) {
     /** The main thread, once its `thread_updated` event has arrived. Prompts go to it. */
     val mainThread: ThreadTab?
         get() = threads.firstOrNull { it.kind == ThreadKind.MAIN }
 
-    /** False while the main thread is working: the bridge answers a prompt then with 409. */
+    /**
+     * Whether the composer may send. A session in tmux always may: the bridge's send guard decides, holds a
+     * prompt while the agent is busy and refuses with a reason when it is not safe to type. Any other session
+     * may not while its main thread works, because the bridge answers a prompt then with 409.
+     */
     val canPrompt: Boolean
-        get() = mainThread?.let { it.status != AgentState.WORKING } ?: false
+        get() =
+            if (session?.terminal == true) {
+                true
+            } else {
+                mainThread?.let { it.status != AgentState.WORKING } ?: false
+            }
 }
 
 /**
@@ -143,4 +162,10 @@ enum class NoticeKind {
     PREVIEW,
     FILE_CHANGED,
     UNKNOWN_EVENT,
+
+    /** Nobody answered an approval from a phone in time, so it went back to the desk. Text: the request. */
+    ASK_AT_DESK,
+
+    /** Chat may be missing part of a turn. Terminal shows all of it. Text: the bridge's reason code. */
+    CHAT_INCOMPLETE,
 }

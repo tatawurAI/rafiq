@@ -41,7 +41,7 @@ interface EventStore {
 }
 
 /** The HTTP verbs the bridge's routes use. */
-enum class HttpMethod { GET, POST }
+enum class HttpMethod { GET, POST, DELETE }
 
 /**
  * One call to the bridge.

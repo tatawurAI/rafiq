@@ -3,12 +3,14 @@
 package ai.tatawur.rafiq.client
 
 import ai.tatawur.rafiq.protocol.AgentThread
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.FileChangeKind
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.ThreadKind
+import ai.tatawur.rafiq.protocol.TurnPhase
 
 /** What happened when one event met a [SessionScreenState]. */
 sealed interface Reduction {
@@ -76,10 +78,31 @@ private fun SessionScreenState.apply(event: Event): SessionScreenState =
         is EventPayload.MessageDelta -> appendDelta(payload, event.seq)
         is EventPayload.ToolCall -> upsertTool(payload, event.seq)
         is EventPayload.ApprovalRequest -> openApproval(payload)
-        is EventPayload.ApprovalResolved -> resolveApproval(payload.id)
+        is EventPayload.ApprovalResolved -> resolveApproval(payload, event.seq)
         is EventPayload.StatusChanged -> changeStatus(payload)
+        is EventPayload.TurnProgress -> trackProgress(payload)
+        is EventPayload.PromptDelivery -> copy(deliveries = deliveries + (payload.clientId to payload))
+        is EventPayload.ChatIncomplete -> putChatIncomplete(payload, event.seq)
         else -> putNotice(noticeFor(payload, event.seq))
     }
+
+/** A turn that ends, or one whose phase this build does not know, leaves no progress line. */
+private fun SessionScreenState.trackProgress(payload: EventPayload.TurnProgress): SessionScreenState =
+    if (payload.phase == TurnPhase.IDLE) {
+        copy(progress = progress - payload.threadId)
+    } else {
+        copy(progress = progress + (payload.threadId to payload))
+    }
+
+/** One note per turn that may be incomplete, on the thread it is about. */
+private fun SessionScreenState.putChatIncomplete(
+    payload: EventPayload.ChatIncomplete,
+    seq: Long,
+): SessionScreenState =
+    putNotice(
+        TimelineItem.Notice("incomplete:$seq", seq, NoticeKind.CHAT_INCOMPLETE, payload.reason, null),
+        threadId = payload.threadId,
+    )
 
 /**
  * The notice line for an event that is not part of a conversation. [TimelineItem.Notice.text] carries
@@ -243,9 +266,22 @@ private fun SessionScreenState.openApproval(payload: EventPayload.ApprovalReques
         .withApprovals(approvals)
 }
 
-private fun SessionScreenState.resolveApproval(approvalId: String): SessionScreenState =
-    mapTools { tool -> if (tool.approval?.id == approvalId) tool.copy(approval = null) else tool }
-        .withApprovals(openApprovals.filterNot { it.id == approvalId })
+/**
+ * Removes an answered approval. One that went back to the desk ([ApprovalOutcome.ASK_AT_DESK]) leaves a
+ * note in its place, so the card does not just vanish while you were reading it.
+ */
+private fun SessionScreenState.resolveApproval(
+    payload: EventPayload.ApprovalResolved,
+    seq: Long,
+): SessionScreenState {
+    val card = openApprovals.firstOrNull { it.id == payload.id }
+    val resolved =
+        mapTools { tool -> if (tool.approval?.id == payload.id) tool.copy(approval = null) else tool }
+            .withApprovals(openApprovals.filterNot { it.id == payload.id })
+    if (payload.outcome != ApprovalOutcome.ASK_AT_DESK || card == null) return resolved
+    val notice = TimelineItem.Notice("desk:${payload.id}", seq, NoticeKind.ASK_AT_DESK, card.description, null)
+    return resolved.putNotice(notice, threadId = card.threadId)
+}
 
 private fun SessionScreenState.changeStatus(payload: EventPayload.StatusChanged): SessionScreenState {
     val threadId = payload.threadId ?: return copy(session = session?.copy(status = payload.state))
@@ -263,8 +299,11 @@ private fun SessionScreenState.mirrorMain(threadId: String): SessionScreenState 
     return copy(session = session?.copy(status = main.status))
 }
 
-private fun SessionScreenState.putNotice(notice: TimelineItem.Notice): SessionScreenState =
-    updateTimeline(mainThread?.id ?: NO_THREAD) { items ->
+private fun SessionScreenState.putNotice(
+    notice: TimelineItem.Notice,
+    threadId: String? = null,
+): SessionScreenState =
+    updateTimeline(threadId?.takeIf { id -> threads.any { it.id == id } } ?: mainThread?.id ?: NO_THREAD) { items ->
         val index = items.indexOfKey<TimelineItem.Notice>(notice.key)
         val current = items.getOrNull(index) as? TimelineItem.Notice
         // A notice sent again, such as a sign-in with a new code, keeps its place.

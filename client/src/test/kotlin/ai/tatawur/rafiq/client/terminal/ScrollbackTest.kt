@@ -1,0 +1,85 @@
+package ai.tatawur.rafiq.client.terminal
+
+import ai.tatawur.rafiq.client.CommandResult
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+
+/** Scrollback never touches the desk: history is read, and a full-screen program is scrolled with keys (#41). */
+class ScrollbackTest {
+    private val shell =
+        TerminalHistory("\u001b[32m$ ls\u001b[0m\r\nREADME.md\n\u001b]8;;https://example.ts.net\u0007link\n\n", 3, 80)
+    private val fullScreen = TerminalHistory("", 0, 80, alternateScreen = true)
+
+    private fun TestScope.scrollback(
+        history: TerminalHistory,
+        sent: MutableList<String>,
+    ): Scrollback {
+        // The bytes go through the same allow-list as typed keys, so the bridge accepts them.
+        val keys = KeyUplink()
+        return Scrollback(backgroundScope, { CommandResult.Ok(history) }) { bytes ->
+            keys.frames(bytes).forEach { sent += String(it) }
+        }
+    }
+
+    @Test
+    fun a_swipe_toward_older_lines_shows_the_history_as_plain_text_and_new_output_returns_to_live() =
+        runTest {
+            val sent = mutableListOf<String>()
+            val scrollback = scrollback(shell, sent)
+
+            scrollback.gestureStarted()
+            scrollback.step(older = true)
+            testScheduler.runCurrent()
+
+            assertEquals(ScrollbackState.Showing(listOf("$ ls", "README.md", "link")), scrollback.state.value)
+            assertEquals(emptyList(), sent)
+
+            scrollback.backToLive()
+            assertEquals(ScrollbackState.Live, scrollback.state.value)
+        }
+
+    @Test
+    fun on_the_alternate_screen_a_swipe_sends_page_up_and_opens_no_overlay() =
+        runTest {
+            val sent = mutableListOf<String>()
+            val scrollback = scrollback(fullScreen, sent)
+
+            scrollback.gestureStarted()
+            repeat(Scrollback.STEPS_PER_PAGE + 1) { scrollback.step(older = true) }
+            testScheduler.runCurrent()
+
+            assertEquals(listOf("\u001b[5~", "\u001b[5~"), sent)
+            assertEquals(ScrollbackState.Live, scrollback.state.value)
+        }
+
+    @Test
+    fun with_mouse_mode_on_a_swipe_turns_the_wheel_and_the_wheel_passes_the_key_allow_list() =
+        runTest {
+            val sent = mutableListOf<String>()
+            val scrollback = scrollback(fullScreen, sent)
+            scrollback.onSnapshot(mouse = true)
+
+            scrollback.gestureStarted()
+            scrollback.step(older = true)
+            testScheduler.runCurrent()
+            scrollback.step(older = false)
+
+            assertEquals(listOf("\u001b[<64;1;1M", "\u001b[<65;1;1M"), sent)
+        }
+
+    @Test
+    fun history_that_cannot_be_read_says_so_and_keeps_the_live_screen() =
+        runTest {
+            val scrollback = Scrollback(backgroundScope, { CommandResult.Offline }) { }
+
+            scrollback.gestureStarted()
+            scrollback.step(older = true)
+            testScheduler.runCurrent()
+
+            assertIs<ScrollbackState.Failed>(scrollback.state.value)
+        }
+}

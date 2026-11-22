@@ -135,6 +135,19 @@ class TerminalLink(
         if (holding) heldOpener?.trySend(Unit)
     }
 
+    /** Asks the bridge for the session's windows. A [TerminalEvent.Windows] answers. Nothing while detached. */
+    fun listWindows() {
+        uplink?.sendText(listWindowsMessage())
+    }
+
+    /**
+     * Asks the bridge to show window [index] on the phone. Only the phone's own view changes, never the desk's.
+     * A fresh snapshot answers, or a [TerminalEvent.Notice] when there is no such window.
+     */
+    fun selectWindow(index: Int) {
+        uplink?.sendText(selectWindowMessage(index))
+    }
+
     /**
      * Holds the socket while collected and emits what the emulator must apply. Cancelling the
      * collector closes the socket.
@@ -251,7 +264,7 @@ class TerminalLink(
         when (event) {
             is TerminalEvent.Snapshot -> {
                 pane.reset()
-                TerminalEvent.Snapshot(event.size, pane.filter(event.vt), event.window)
+                TerminalEvent.Snapshot(event.size, pane.filter(event.vt), event.window, event.mouse)
             }
 
             is TerminalEvent.Output -> {

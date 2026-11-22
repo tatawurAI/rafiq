@@ -1,5 +1,10 @@
 package ai.tatawur.rafiq.bridge
 
+import ai.tatawur.rafiq.bridge.hook.HookChannel
+import ai.tatawur.rafiq.bridge.hook.HookSettings
+import ai.tatawur.rafiq.bridge.hook.HookSetup
+import ai.tatawur.rafiq.bridge.hook.HookSink
+import ai.tatawur.rafiq.bridge.hook.NoopHookSink
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.DeviceAdminServer
 import ai.tatawur.rafiq.bridge.server.DeviceService
@@ -12,6 +17,7 @@ import ai.tatawur.rafiq.bridge.tmux.AgentDetector
 import ai.tatawur.rafiq.bridge.tmux.TerminalGate
 import ai.tatawur.rafiq.bridge.tmux.TerminalService
 import ai.tatawur.rafiq.bridge.tmux.TmuxSessionSource
+import ai.tatawur.rafiq.bridge.tmux.inheritedRafiqVariables
 import io.ktor.server.application.log
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
@@ -21,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
+import java.nio.file.Path
 import java.util.Properties
 import kotlin.system.exitProcess
 
@@ -65,16 +72,51 @@ fun main(args: Array<String>) {
         terminal?.prepare()
     }
     terminal?.source?.start(scope)
+    terminal?.let { warnAboutInheritedSecrets(it) }
+    // Hooks feed tmux Chat, so the channel exists only with tmux on, and only with a data folder to hold it.
+    val hookChannel = terminal?.let { config.dataDir?.let { dir -> HookChannel(dir, hookSink, scope).start() } }
+    val hooks = hookChannel?.let { hookSetup(config.dataDir, deviceStore) }
     try {
         embeddedServer(CIO, host = config.bindAddress, port = config.port) {
             log.info("Rafiq bridge {} starting with {}", version, config)
-            bridgeModule(version, eventLog, sessions, security, config.devPage, terminal, connections, devices)
+            bridgeModule(version, eventLog, sessions, security, config.devPage, terminal, connections, devices, hooks)
         }.start(wait = true)
     } finally {
+        hookChannel?.close()
         adminServer?.close()
         deviceStore.close()
         scope.cancel()
         eventLog.close()
+    }
+}
+
+/** Where hook calls go. Until a reader is wired in, permission requests go back to the desk. */
+private val hookSink: HookSink = NoopHookSink
+
+/** The hook installer, or null with a warning when the hook program is not where an installed bridge has it. */
+private fun hookSetup(
+    dataDir: Path?,
+    consents: DeviceStore,
+): HookSetup? {
+    val program = HookSetup.locateProgram()
+    if (program == null || dataDir == null) {
+        LoggerFactory
+            .getLogger("ai.tatawur.rafiq.bridge")
+            .warn("hooks/rafiq-hook.py was not found next to the bridge, so hooks cannot be installed from the app.")
+        return null
+    }
+    return HookSetup(HookSettings(program.toString(), dataDir.toAbsolutePath().toString()), consents)
+}
+
+/** The device token must not reach the panes. Names only: a value is never printed. */
+private fun warnAboutInheritedSecrets(terminal: TerminalService) {
+    val names = inheritedRafiqVariables(terminal.gate.server)
+    if (names.isNotEmpty()) {
+        LoggerFactory.getLogger("ai.tatawur.rafiq.bridge").warn(
+            "The tmux server's global environment has {}, so every new pane inherits it. Remove it with " +
+                "tmux set-environment -g -u <name>, and do not export it in the shell that starts tmux.",
+            names.joinToString(", "),
+        )
     }
 }
 

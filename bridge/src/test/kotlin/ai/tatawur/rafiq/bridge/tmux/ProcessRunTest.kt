@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.bridge.tmux
 
 import org.junit.jupiter.api.Timeout
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -47,5 +48,42 @@ class ProcessRunTest {
             builder.environment().keys.intersect(setOf("TMUX", "RAFIQ_DEVICE_TOKEN", "RAFIQ_PORT", "PATH_KEEP")),
         )
         assertFalse(builder.environment().keys.any { it.startsWith("RAFIQ_") })
+    }
+
+    @Test
+    fun a_pane_on_a_tmux_server_the_bridge_starts_has_no_rafiq_variable() {
+        TestTmux().use { tmux ->
+            val out = Files.createTempFile("rafiq-pane-env", ".txt")
+            try {
+                // The bridge's own environment holds the device token. Its tmux processes must not pass it on.
+                val builder =
+                    ProcessBuilder(
+                        tmux.server.commandLine("new-session", "-d", "-s", "env-check", "env > '$out'; sleep 60"),
+                    )
+                builder.environment()["RAFIQ_DEVICE_TOKEN"] = "placeholder-device-token"
+                cleanEnvironment(builder)
+                assertEquals(0, builder.start().waitFor())
+                runCapturing(tmux.server.commandLine("new-window", "-t", "=env-check", "env >> '$out'; sleep 60"), 10)
+
+                eventually("both panes wrote their environment") {
+                    Files.readAllLines(out).count { it.startsWith("PATH=") } == 2
+                }
+                assertEquals(emptyList(), Files.readAllLines(out).filter { it.startsWith("RAFIQ_") })
+                assertEquals(emptyList(), inheritedRafiqVariables(tmux.server))
+            } finally {
+                Files.deleteIfExists(out)
+            }
+        }
+    }
+
+    @Test
+    fun a_rafiq_variable_already_in_the_tmux_server_is_found_by_name() {
+        TestTmux().use { tmux ->
+            tmux.newSession("env-check")
+            tmux.tmux("set-environment", "-g", "RAFIQ_DEVICE_TOKEN", "placeholder-device-token")
+            tmux.tmux("set-environment", "-g", "-r", "RAFIQ_PORT")
+
+            assertEquals(listOf("RAFIQ_DEVICE_TOKEN"), inheritedRafiqVariables(tmux.server))
+        }
     }
 }

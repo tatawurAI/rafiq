@@ -62,6 +62,21 @@ tasks.processResources {
 
 tasks.test {
     useJUnitPlatform()
+    // The hook program is tested by running it, so a change to it must rerun the tests.
+    inputs.dir("hooks")
+}
+
+// The hook program ships next to the start script, at `hooks/rafiq-hook.py` in the installed bridge. Claude Code
+// runs it directly, so it must stay executable.
+distributions {
+    main {
+        contents {
+            from("hooks") {
+                into("hooks")
+                filePermissions { unix("rwxr-xr-x") }
+            }
+        }
+    }
 }
 
 // Rewrites the event streams the app's tests replay, from the ACP fixtures, through the real adapter

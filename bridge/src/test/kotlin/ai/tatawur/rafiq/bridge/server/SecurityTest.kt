@@ -7,6 +7,7 @@ import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -60,6 +61,25 @@ class SecurityTest {
             rejected(runBlocking { noToken.inspect("/sessions", "100.64.0.1", null, "Bearer ", null) }),
         )
     }
+
+    @Test
+    fun the_main_listener_has_no_hook_route_and_no_exemption_for_one() =
+        testApplication {
+            val fixture = BridgeFixture(dir.resolve("data")).also(opened::add)
+            application {
+                bridgeModule("test", fixture.log, fixture.sessions, BridgeSecurity(TEST_TOKEN, "127.0.0.1"))
+            }
+            // Hooks talk to the bridge over its Unix socket only. Without a token these paths are refused like
+            // any other, and with one they do not exist.
+            for (path in listOf("/hooks", "/hooks/claude", "/hook", "/hooks/claude-code/permission")) {
+                assertEquals(HttpStatusCode.Unauthorized, client.post(path).status, path)
+                assertEquals(
+                    HttpStatusCode.NotFound,
+                    client.post(path) { header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN") }.status,
+                    path,
+                )
+            }
+        }
 
     @Test
     fun only_the_bind_address_localhost_and_listed_names_are_accepted_as_host() {

@@ -26,7 +26,10 @@ sealed interface TermItem {
         val text: ByteArray,
     ) : TermItem
 
-    /** A snapshot could not be taken, because the pane is gone. */
+    /**
+     * A snapshot could not be taken: the pane is gone, or the reply did not have one line for each row, so it
+     * cannot be trusted as a screen.
+     */
     data object ScreenFailed : TermItem
 
     /** The target window's layout changed, so the pane size may have changed. */
@@ -93,7 +96,7 @@ class TmuxControlClient(
         rows: Int,
     ) {
         process = server.start("-C", "new-session", "-t", sessionId, "-s", viewName)
-        val reader = ControlReader(process, replies, target, sink)
+        val reader = ControlReader(process.inputStream, replies, target, sink)
         Thread(reader::run, "tmux-control-reader-$viewName").apply { isDaemon = true }.start()
         try {
             // Set after attach: set before it, the session is destroyed at once.
@@ -137,19 +140,40 @@ class TmuxControlClient(
      * modes are read in the same command line as the capture, so no output can fall between them.
      */
     fun requestSnapshot() {
-        var meta = emptyList<String>()
+        // Both callbacks run on the reader thread, the second after the first.
+        var rows: Int? = null
+        var meta = ""
         val read = "display-message -p -t $paneId '$META_FORMAT'"
         val capture = "capture-pane -e -p -t $paneId"
         synchronized(writeLock) {
-            replies.add(PendingReply(null) { ok, lines -> if (ok) meta = lines })
             replies.add(
-                PendingReply(null) { ok, lines ->
-                    sink(if (ok) screen(meta.firstOrNull().orEmpty(), lines) else TermItem.ScreenFailed)
-                },
+                PendingReply(null, { ok, lines ->
+                    meta = lines.firstOrNull().orEmpty()
+                    rows =
+                        if (ok) {
+                            meta
+                                .trim()
+                                .split(' ')
+                                .getOrNull(1)
+                                ?.toIntOrNull()
+                        } else {
+                            null
+                        }
+                }),
+            )
+            // The capture is the one reply a pane writes, so it is read by count: one line for each row.
+            replies.add(
+                PendingReply(null, { ok, lines ->
+                    val whole = ok && rows != null && lines.size == rows
+                    sink(if (whole) screen(meta, lines) else TermItem.ScreenFailed)
+                }, lineCount = { rows }),
             )
             write("$read ; $capture")
         }
     }
+
+    /** The `%begin` line of the last reply to one of this client's commands. */
+    internal val lastReplyBegin: String get() = target.lastBegin
 
     /** The size of the mirrored pane in columns and rows. Waits for tmux. */
     fun paneSize(): Pair<Int, Int> {

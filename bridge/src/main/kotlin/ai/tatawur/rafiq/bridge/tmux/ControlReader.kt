@@ -6,10 +6,18 @@ import java.io.InputStream
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentLinkedQueue
 
-/** One command sent to tmux, waiting for its reply. Replies come back in the order commands were sent. */
+/**
+ * One command sent to tmux, waiting for its reply. Replies come back in the order commands were sent.
+ *
+ * @property lineCount for a reply whose lines a pane controls, such as a screen capture: how many lines the
+ * reply has, asked when its block begins. The reader then takes exactly that many lines as text, so a line
+ * the pane printed can never be read as the end of the block or as a notification. Null for a reply that
+ * cannot carry pane text, or when the count is not known.
+ */
 internal class PendingReply(
     val future: CompletableFuture<List<String>>?,
     val onReply: ((ok: Boolean, lines: List<String>) -> Unit)?,
+    val lineCount: (() -> Int?)? = null,
 ) {
     companion object {
         /** For a command whose reply nobody reads. Holds no state, so one instance serves them all. */
@@ -24,6 +32,10 @@ internal class ControlTarget {
 
     @Volatile
     var paneId: String = ""
+
+    /** The `%begin` line of the last reply to a command of ours, for tests that need its time and number. */
+    @Volatile
+    var lastBegin: String = ""
 }
 
 /**
@@ -31,15 +43,21 @@ internal class ControlTarget {
  * Runs on its own thread until tmux closes the stream, and never waits for [sink].
  */
 internal class ControlReader(
-    process: Process,
+    input: InputStream,
     private val replies: ConcurrentLinkedQueue<PendingReply>,
     private val target: ControlTarget,
     private val sink: (TermItem) -> Unit,
 ) {
-    private val input = BufferedInputStream(process.inputStream)
+    private val input = BufferedInputStream(input)
     private var block: MutableList<String>? = null
     private var terminator = ""
     private var ours = false
+
+    /** Lines of the open block still to be taken as text, or [UNCOUNTED]. */
+    private var textLines = UNCOUNTED
+
+    /** The open block had more lines than its count said, so its reply is a failure. */
+    private var overran = false
 
     fun run() {
         var running = true
@@ -57,14 +75,22 @@ internal class ControlReader(
         val text = String(line, Charsets.ISO_8859_1)
         val open = block
         when {
-            // A pane can print a line that looks like a terminator. Only the one that repeats this block's
-            // time and command number ends it.
+            // A counted line is pane text whatever it looks like, so it is never compared with the terminator.
+            open != null && textLines > 0 -> {
+                open.add(text)
+                textLines--
+            }
+
+            // Only the line that repeats this block's time and command number ends it.
             open != null && (text.startsWith("%end $terminator") || text.startsWith("%error $terminator")) -> {
-                if (ours) finish(open, ok = text.startsWith("%end "))
+                if (ours) finish(open, ok = text.startsWith("%end ") && !overran)
                 block = null
             }
 
             open != null -> {
+                // A counted block that goes on past its count is out of step with its count. It is read to its
+                // terminator as before, and fails.
+                if (textLines == 0) overran = true
                 open.add(text)
             }
 
@@ -89,6 +115,9 @@ internal class ControlReader(
         terminator = "${fields.getOrNull(1)} ${fields.getOrNull(2)} "
         // The third field is 1 for the reply to a command we sent, 0 for the attach itself.
         ours = fields.getOrNull(FLAGS_FIELD) == "1"
+        overran = false
+        textLines = if (ours) replies.peek()?.lineCount?.invoke() ?: UNCOUNTED else UNCOUNTED
+        if (ours) target.lastBegin = text
     }
 
     private fun notification(
@@ -157,6 +186,7 @@ internal class ControlReader(
     }
 
     companion object {
+        private const val UNCOUNTED = -1
         private const val FLAGS_FIELD = 3
         private const val OUTPUT_FIELDS = 2
         private const val EXTENDED_OUTPUT_FIELDS = 4

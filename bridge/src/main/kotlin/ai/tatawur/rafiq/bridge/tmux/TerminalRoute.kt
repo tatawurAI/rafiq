@@ -262,7 +262,10 @@ private class TerminalConnection(
             }
 
             is TermItem.Screen -> {
-                true.also { sendScreen(item) }
+                true.also {
+                    failedScreens = 0
+                    sendScreen(item)
+                }
             }
 
             TermItem.LayoutChanged -> {
@@ -281,13 +284,30 @@ private class TerminalConnection(
             }
 
             TermItem.ScreenFailed -> {
-                stillThere(false, "pane")
+                onScreenFailed(client)
             }
 
             is TermItem.Ended -> {
                 false.also { end(item.reason) }
             }
         }
+
+    /** Snapshots that failed in a row while the pane was still there. */
+    private var failedScreens = 0
+
+    /**
+     * A failed snapshot is never sent as a short screen. While the pane is there, a fresh one is asked for, a
+     * few times at most, so a pane that keeps breaking its reply cannot keep the bridge busy.
+     */
+    private suspend fun onScreenFailed(client: TmuxControlClient): Boolean {
+        val exists = client.paneExists()
+        if (exists && ++failedScreens <= MAX_FAILED_SCREENS) {
+            client.requestSnapshot()
+            return true
+        }
+        if (exists) end("The screen of the tmux pane could not be read.") else stillThere(false, "pane")
+        return false
+    }
 
     private suspend fun sendScreen(item: TermItem.Screen) {
         lastSize = item.snapshot.cols to item.snapshot.rows
@@ -478,6 +498,7 @@ private class TerminalConnection(
         const val IDLE_CHECKS = 4
         const val ABUSE_WINDOW_SECONDS = 10.0
         const val CLOSE_REASON_MAX = 100
+        const val MAX_FAILED_SCREENS = 3
         val MIN_IDLE_CHECK = 50.milliseconds
         val MAX_IDLE_CHECK = 5.seconds
     }

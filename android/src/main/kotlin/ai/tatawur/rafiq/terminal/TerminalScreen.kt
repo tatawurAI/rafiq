@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.terminal
 
 import ai.tatawur.rafiq.R
+import ai.tatawur.rafiq.client.terminal.MirroredWindow
 import ai.tatawur.rafiq.client.terminal.TerminalPort
 import ai.tatawur.rafiq.client.terminal.TerminalStatus
 import ai.tatawur.rafiq.client.terminal.viewportCells
@@ -82,14 +83,14 @@ private val MIN_FORCED_FONT = 4.sp
  * view client so the desk gets its size back. Screenshots and the recents thumbnail are blocked
  * while it shows.
  *
- * @param header the session header with the Chat and Terminal toggle.
+ * @param header the session header with the Chat and Terminal toggle, given the mirrored window.
  */
 @Composable
 fun TerminalRoute(
     port: TerminalPort,
     sessionId: String,
     hinge: Hinge?,
-    header: @Composable () -> Unit,
+    header: @Composable (MirroredWindow?) -> Unit,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -112,11 +113,12 @@ fun TerminalRoute(
     val typeface = remember { ResourcesCompat.getFont(context, R.font.plex_mono_regular) ?: Typeface.MONOSPACE }
     var keyboard by remember { mutableStateOf(false) }
     val status by controller.status.collectAsStateWithLifecycle()
+    val window by controller.window.collectAsStateWithLifecycle()
     val paste = { controller.paste(clipboardText(context)) }
 
     TerminalLayout(
         hinge = hinge,
-        header = header,
+        header = { header(window) },
         status = status,
         onRetry = { attempt++ },
         pane = { modifier ->

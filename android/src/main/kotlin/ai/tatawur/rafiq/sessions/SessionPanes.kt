@@ -6,6 +6,7 @@ import ai.tatawur.rafiq.client.ConnectionState
 import ai.tatawur.rafiq.client.SessionScreenState
 import ai.tatawur.rafiq.client.ThreadTab
 import ai.tatawur.rafiq.client.TimelineItem
+import ai.tatawur.rafiq.client.terminal.MirroredWindow
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.MessageRole
@@ -185,9 +186,9 @@ internal fun SessionComposer(
 internal fun SessionHeader(
     state: SessionUiState,
     actions: SessionActions,
+    windowLabel: String? = null,
 ) {
     val spacing = RafiqTheme.spacing
-    val session = state.screen.session
     val thread = state.selectedThread
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = spacing.xSmall, vertical = spacing.xSmall),
@@ -202,35 +203,7 @@ internal fun SessionHeader(
                 tint = RafiqTheme.colors.text,
             )
         }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = session?.title.orEmpty(),
-                style = MaterialTheme.typography.titleLarge,
-                color = RafiqTheme.colors.text,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (session != null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(spacing.small),
-                ) {
-                    StatusDot(session.status)
-                    Text(
-                        text =
-                            stringResource(
-                                R.string.session_subtitle,
-                                session.agent,
-                                stringResource(sessionStatusLabel(session.status, state.mainHasMessages)),
-                            ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = RafiqTheme.colors.textMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
+        HeaderTitle(state, windowLabel, Modifier.weight(1f))
         actions.viewToggle?.let { ChatTerminalToggle(it) }
         if (actions.viewToggle?.terminal != true && thread != null && thread.status == AgentState.WORKING) {
             IconButton(onClick = { actions.onCancel(thread.id) }) {
@@ -244,6 +217,74 @@ internal fun SessionHeader(
         }
     }
 }
+
+/** The session's title, the mirrored window when Terminal shows, and the agent and status. */
+@Composable
+private fun HeaderTitle(
+    state: SessionUiState,
+    windowLabel: String?,
+    modifier: Modifier = Modifier,
+) {
+    val spacing = RafiqTheme.spacing
+    val session = state.screen.session
+    Column(modifier = modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+        ) {
+            Text(
+                text = session?.title.orEmpty(),
+                style = MaterialTheme.typography.titleLarge,
+                color = RafiqTheme.colors.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            // Terminal mirrors one window, but the grant covers the whole session: say which.
+            windowLabel?.let { MirroredWindowLabel(it) }
+        }
+        if (session != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(spacing.small),
+            ) {
+                StatusDot(session.status)
+                Text(
+                    text =
+                        stringResource(
+                            R.string.session_subtitle,
+                            session.agent,
+                            stringResource(sessionStatusLabel(session.status, state.mainHasMessages)),
+                        ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RafiqTheme.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MirroredWindowLabel(label: String) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        color = RafiqTheme.colors.textMuted,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** "Window 1: build", or "Window 1" for a window with no name. */
+@Composable
+internal fun windowLabel(window: MirroredWindow): String =
+    if (window.name.isEmpty()) {
+        stringResource(R.string.terminal_window_unnamed, window.index)
+    } else {
+        stringResource(R.string.terminal_window, window.index, window.name)
+    }
 
 @Composable
 internal fun CenteredNote(text: String) {

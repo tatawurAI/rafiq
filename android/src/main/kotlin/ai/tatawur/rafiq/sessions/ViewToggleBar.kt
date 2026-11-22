@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.sessions
 
 import ai.tatawur.rafiq.R
+import ai.tatawur.rafiq.client.terminal.MirroredWindow
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -72,6 +73,20 @@ private fun ChatTerminalTogglePreview() {
             Row(modifier = Modifier.padding(RafiqTheme.spacing.medium)) {
                 ChatTerminalToggle(ViewToggle(terminal = true) {})
             }
+        }
+    }
+}
+
+@Preview(name = "Terminal header, mirrored window", widthDp = 412)
+@Composable
+private fun TerminalHeaderPreview() {
+    RafiqTheme {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            SessionHeader(
+                previewState(),
+                SessionActions(viewToggle = ViewToggle(terminal = true) {}),
+                windowLabel = windowLabel(MirroredWindow(1, "build")),
+            )
         }
     }
 }

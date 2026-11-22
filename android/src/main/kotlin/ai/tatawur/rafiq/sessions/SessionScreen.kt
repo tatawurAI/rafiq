@@ -122,7 +122,9 @@ fun SessionRoute(
     }
     SessionOrTerminal(terminal, state, actions) { viewActions, showTerminal ->
         if (showTerminal) {
-            TerminalRoute(terminal.port, state.screen.sessionId, hinge) { SessionHeader(state, viewActions) }
+            TerminalRoute(terminal.port, state.screen.sessionId, hinge) { window ->
+                SessionHeader(state, viewActions, window?.let { windowLabel(it) })
+            }
         } else {
             SessionScreen(state, viewActions, dictation, modifier, hinge = hinge)
         }
@@ -341,7 +343,7 @@ private val previewTimeline =
         ),
     )
 
-private fun previewState(): SessionUiState {
+internal fun previewState(): SessionUiState {
     val pinned = previewApproval.copy(threadId = "m")
     val screen =
         SessionScreenState(

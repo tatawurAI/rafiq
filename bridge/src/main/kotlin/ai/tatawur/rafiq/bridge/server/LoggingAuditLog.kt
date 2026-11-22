@@ -30,6 +30,16 @@ class LoggingAuditLog(
             "option=${clean(optionId)}",
     )
 
+    override fun terminalHistory(
+        deviceId: String,
+        sessionId: String,
+        window: Int?,
+        lines: Int,
+    ) = write(
+        "Terminal history read: device=${clean(deviceId)} session=${clean(sessionId)} " +
+            "window=${window ?: "current"} lines=$lines",
+    )
+
     companion object {
         private val logger = LoggerFactory.getLogger("ai.tatawur.rafiq.bridge.Audit")
         private const val MAX_FIELD = 128

@@ -67,6 +67,9 @@ class RealBridge(
     deviceOf: (
         io.ktor.server.application.ApplicationCall,
     ) -> String = { it.request.header("X-Test-Device") ?: "phone" },
+    audit: ai.tatawur.rafiq.bridge.server.AuditLog =
+        ai.tatawur.rafiq.bridge.server
+            .LoggingAuditLog(),
 ) : AutoCloseable {
     val fixture: BridgeFixture
     private val server: EmbeddedServer<*, *>
@@ -115,6 +118,7 @@ class RealBridge(
                     testSecurity(),
                     terminal = service,
                     connections = recording,
+                    audit = audit,
                     deviceOf = deviceOf,
                 )
             }.also { it.start(wait = false) }
@@ -143,11 +147,15 @@ class RealBridge(
         viaSubprotocol: Boolean = false,
     ): TestSocket = TestSocket(http, "ws://127.0.0.1:$port$path", token, device, viaSubprotocol).also(sockets::add)
 
-    fun get(path: String): HttpResponse<String> =
+    fun get(
+        path: String,
+        device: String = "phone",
+    ): HttpResponse<String> =
         http.send(
             HttpRequest
                 .newBuilder(URI("http://127.0.0.1:$port$path"))
                 .header("Authorization", "Bearer $TEST_TOKEN")
+                .header("X-Test-Device", device)
                 .build(),
             HttpResponse.BodyHandlers.ofString(),
         )

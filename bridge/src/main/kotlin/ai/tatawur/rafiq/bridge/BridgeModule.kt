@@ -82,7 +82,7 @@ fun Application.bridgeModule(
     routing {
         sessionRoutes(sessions, audit, deviceOf)
         eventsRoute(log, EventStreamer(log), sessions::isVisible, connections, deviceOf)
-        terminal?.routes(this, connections, deviceOf)
+        terminal?.routes(this, connections, deviceOf, audit)
         devices?.let { deviceRoutes(it) }
         hooks?.let { hookRoutes(it, sessions, deviceOf) }
         if (devPage) devRoutes(sessions)

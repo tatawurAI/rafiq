@@ -1,7 +1,11 @@
 package ai.tatawur.rafiq.bridge.tmux
 
+import ai.tatawur.rafiq.bridge.server.AuditLog
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import ai.tatawur.rafiq.bridge.sessions.SessionException
+import ai.tatawur.rafiq.bridge.sessions.TMUX_SESSION_PREFIX
+import ai.tatawur.rafiq.protocol.api.ApiError
+import ai.tatawur.rafiq.protocol.api.ApiErrorDetail
 import ai.tatawur.rafiq.protocol.api.MAX_HISTORY_LINES
 import ai.tatawur.rafiq.protocol.api.TerminalEnded
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
@@ -13,8 +17,11 @@ import ai.tatawur.rafiq.protocol.api.TerminalSelectWindow
 import ai.tatawur.rafiq.protocol.api.TerminalSize
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
 import ai.tatawur.rafiq.protocol.api.terminalJson
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.origin
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -55,6 +62,7 @@ private val TRY_AGAIN = CloseReason.Codes.TRY_AGAIN_LATER
 private val END_SEND_WAIT = 1.seconds
 private val RESIZE_RETRY = 100.milliseconds
 private val ESCAPE_WAIT = 60.milliseconds
+private const val HISTORY_RETRY_SECONDS = 2
 private const val DEFAULT_COLS = 80
 private const val DEFAULT_ROWS = 24
 
@@ -124,23 +132,43 @@ fun Route.terminalRoute(
  *
  * It sits behind the device token like every route, and reaches only an allowed session, by the same rule as
  * `WS /terminal`. Anything else is `404 session_not_found`, so the answer does not say which tmux sessions
- * exist.
+ * exist. A device that reads too often, or a read while the bridge runs all it may at once, gets `429
+ * too_many_requests` with `Retry-After` ([HistoryLimits]). Each read is written to the audit log.
  */
-fun Route.terminalHistoryRoute(gate: TerminalGate) {
+fun Route.terminalHistoryRoute(
+    gate: TerminalGate,
+    deviceOf: (ApplicationCall) -> String,
+    audit: AuditLog,
+) {
     get("/terminal/history") {
         val query = call.request.queryParameters
         val window = query["window"]?.let { it.toIntOrNull()?.takeIf { index -> index >= 0 } ?: invalidQuery() }
-        val lines = query["lines"]?.let { it.toIntOrNull()?.takeIf { n -> n > 0 } ?: invalidQuery() }
-        val name =
-            gate.allowedName(query["session"])?.takeIf { runCatching { gate.server.session(it) }.getOrNull() != null }
-                ?: throw SessionException.NotFound("session_not_found", "No such tmux session.")
-        val history =
-            gate.server.history(name, window, (lines ?: MAX_HISTORY_LINES).coerceAtMost(MAX_HISTORY_LINES))
-                ?: throw SessionException.NotFound("no_such_window", "That window is not in this session.")
-        val lineCount = if (history.text.isEmpty()) 0 else history.text.count { it == '\n' } + 1
-        call.respond(TerminalHistory(history.text, lineCount, history.cols, history.alternateScreen))
+        val asked = query["lines"]?.let { it.toIntOrNull()?.takeIf { n -> n > 0 } ?: invalidQuery() }
+        val lines = (asked ?: MAX_HISTORY_LINES).coerceAtMost(MAX_HISTORY_LINES)
+        val name = gate.allowedName(query["session"]) ?: sessionNotFound()
+        val device = deviceOf(call)
+        val permit = gate.historyLimits.tryStart(device)
+        if (permit == null) {
+            call.response.header(HttpHeaders.RetryAfter, HISTORY_RETRY_SECONDS.toString())
+            call.respond(
+                HttpStatusCode.TooManyRequests,
+                ApiError(ApiErrorDetail("too_many_requests", "Too many scrollback reads. Wait a moment.")),
+            )
+            return@get
+        }
+        permit.use {
+            if (runCatching { gate.server.session(name) }.getOrNull() == null) sessionNotFound()
+            val history =
+                gate.server.history(name, window, lines)
+                    ?: throw SessionException.NotFound("no_such_window", "That window is not in this session.")
+            audit.terminalHistory(device, TMUX_SESSION_PREFIX + name, window, lines)
+            val lineCount = if (history.text.isEmpty()) 0 else history.text.count { it == '\n' } + 1
+            call.respond(TerminalHistory(history.text, lineCount, history.cols, history.alternateScreen))
+        }
     }
 }
+
+private fun sessionNotFound(): Nothing = throw SessionException.NotFound("session_not_found", "No such tmux session.")
 
 private fun invalidQuery(): Nothing =
     throw SessionException.Invalid("invalid_query", "window and lines are whole numbers.")

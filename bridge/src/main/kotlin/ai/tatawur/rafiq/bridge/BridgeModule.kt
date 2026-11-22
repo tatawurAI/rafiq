@@ -9,6 +9,7 @@ import ai.tatawur.rafiq.bridge.server.installSecurity
 import ai.tatawur.rafiq.bridge.server.sessionRoutes
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.store.EventLog
+import ai.tatawur.rafiq.protocol.api.Health
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -21,8 +22,6 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 
 /**
  * Installs the bridge's plugins and routes. Kept separate from [main] so tests can run the same
@@ -70,10 +69,3 @@ private const val MAX_FRAME_BYTES = 64L * 1024
 private const val MAX_BODY_BYTES = 1024L * 1024
 private const val PING_PERIOD_MS = 20_000L
 private const val PING_TIMEOUT_MS = 30_000L
-
-/** Body of `GET /health`. */
-@Serializable
-data class Health(
-    @SerialName("status") val status: String,
-    @SerialName("version") val version: String,
-)

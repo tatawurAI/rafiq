@@ -1,17 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+  <!-- The bridge is reached over https and wss only (ADR 0012). The network state lets the app
+       reconnect the moment the network comes back. -->
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+  <!-- Dictation in the composer, on-device only. Asked for the first time you tap the mic. -->
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+  <!-- Lets the app see the speech recognition service, which Android 11 and later hide. -->
+  <queries>
+    <intent>
+      <action android:name="android.speech.RecognitionService" />
+    </intent>
+  </queries>
+
   <application
+    android:name=".data.RafiqApplication"
     android:allowBackup="false"
+    android:usesCleartextTraffic="false"
     android:icon="@mipmap/ic_launcher"
     android:roundIcon="@mipmap/ic_launcher_round"
     android:label="@string/app_name"
     android:supportsRtl="true"
     android:theme="@style/Theme.Rafiq">
 
+    <!-- adjustResize: the app draws edge to edge, so the window keeps its size when the keyboard
+         opens. The keyboard reaches Compose as the IME window inset, and the screens pad their
+         content above it. This is the mode Android documents for apps that handle that inset.
+         configChanges: folding, unfolding and moving to the cover screen reach Compose as a new
+         configuration instead of restarting the activity, so lists keep their scroll position. The
+         cover screen has its own density, so density is in the list too.
+         singleTop: a launch aimed at the app while it is already on top, as the cover screen can
+         send when the phone closes, reaches the running activity instead of stacking a second
+         copy that starts over from its first screen. -->
     <activity
       android:name=".MainActivity"
-      android:exported="true">
+      android:exported="true"
+      android:launchMode="singleTop"
+      android:resizeableActivity="true"
+      android:configChanges="screenLayout|smallestScreenSize|screenSize|orientation|density"
+      android:windowSoftInputMode="adjustResize">
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />

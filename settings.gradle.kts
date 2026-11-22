@@ -30,4 +30,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "rafiq"
 
-include(":protocol", ":bridge", ":android")
+include(":protocol", ":client", ":bridge", ":android")

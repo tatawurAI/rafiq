@@ -2,6 +2,7 @@
 
 | Path | What it holds |
 |---|---|
+| [setup.md](setup.md) | How to reach the bridge from your phone over HTTPS with `tailscale serve`, and pair the app. |
 | [architecture.md](architecture.md) | The design of Rafiq: layers, event model, bridge, app. States which parts are built today. |
 | [adr/](adr/) | One short record per architecture decision, with its reasons. Start at the [index](adr/README.md). |
 

@@ -13,6 +13,7 @@ import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
+import ai.tatawur.rafiq.protocol.api.SessionSummary
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -132,6 +133,9 @@ class SessionManager(
 
     /** Every session, most recently updated first. */
     suspend fun sessions(): List<Session> = log.sessions()
+
+    /** Every session with what the session list shows, most recently updated first. See [EventLog.summaries]. */
+    suspend fun summaries(): List<SessionSummary> = log.summaries()
 
     /** @throws SessionException.NotFound when there is no such session. */
     suspend fun threads(sessionId: String): List<AgentThread> {

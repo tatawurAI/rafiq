@@ -17,6 +17,7 @@ private object Palette {
     val accent = Color(0xFF3FD9BC)
     val needsYou = Color(0xFFF2B84B)
     val deletion = Color(0xFFF2777A)
+    val hinge = Color(0xFF0E1112)
 }
 
 /**
@@ -24,6 +25,7 @@ private object Palette {
  *
  * @property needsYou marks anything waiting on you, such as an approval or a sign-in.
  * @property deletion marks removed lines in diffs and destructive actions.
+ * @property hinge the band over the hinge when the phone is half folded, darker than the ground.
  */
 @Immutable
 data class RafiqColors(
@@ -37,6 +39,7 @@ data class RafiqColors(
     val accent: Color,
     val needsYou: Color,
     val deletion: Color,
+    val hinge: Color,
 )
 
 internal val darkRafiqColors =
@@ -51,6 +54,7 @@ internal val darkRafiqColors =
         accent = Palette.accent,
         needsYou = Palette.needsYou,
         deletion = Palette.deletion,
+        hinge = Palette.hinge,
     )
 
 // Every slot is mapped, so no Material default colour leaks into a component.

@@ -11,6 +11,7 @@ import ai.tatawur.rafiq.protocol.AgentThread
 import ai.tatawur.rafiq.protocol.ApprovalOption
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
 import ai.tatawur.rafiq.protocol.ApprovalOutcome
+import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
@@ -47,6 +48,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
@@ -505,6 +507,80 @@ class RoutesTest {
             )
         }
     }
+
+    @Test
+    fun session_summaries_give_the_newest_seq_a_one_line_preview_and_the_open_approvals_oldest_first() =
+        testApplication {
+            val (fixture, http) = start()
+            val sessionId = fixture.sessions.create("fake", project, null).id
+            http.postJson("/sessions/$sessionId/prompt", """{"text":"Summarise the forecast"}""")
+            val options = listOf(ApprovalOption("allow", ApprovalOptionKind.ALLOW_ONCE, "Allow"))
+            val helper = AgentThread("sub-1", sessionId, "main", ThreadKind.SUBAGENT, "Explore", AgentState.WORKING)
+            fixture.report(
+                sessionId,
+                EventPayload.Message("reply", "main", MessageRole.AGENT, isStreaming = true),
+                EventPayload.MessageDelta("reply", "main", "Rain on Tuesday,\n\nthen "),
+                EventPayload.MessageDelta("reply", "main", "sun " + "and more sun ".repeat(20)),
+                EventPayload.ApprovalRequest("apr_1", "tool_1", "Run tests", options),
+                EventPayload.ApprovalRequest("apr_2", "tool_2", "Edit forecast.txt", options),
+                EventPayload.ApprovalRequest("apr_3", "tool_3", "Read README.md", options),
+                EventPayload.ApprovalResolved("apr_2", ApprovalOutcome.SELECTED, "allow"),
+                // A helper's message is not what the session row previews.
+                EventPayload.ThreadUpdated(helper),
+                EventPayload.Message("note", "sub-1", MessageRole.AGENT, listOf(ContentBlock.Text("helper notes"))),
+            )
+
+            val summary = parse(http.get("/sessions/summaries").bodyAsText()).jsonArray.single().jsonObject
+
+            assertEquals(
+                sessionId,
+                summary
+                    .getValue("session")
+                    .jsonObject
+                    .getValue("id")
+                    .jsonPrimitive.content,
+            )
+            assertEquals(
+                fixture.log
+                    .after(sessionId, 0, 1000)
+                    .last()
+                    .seq,
+                summary.getValue("last_seq").jsonPrimitive.long,
+            )
+            val line = summary.getValue("last_line").jsonPrimitive.content
+            assertTrue(line.startsWith("Rain on Tuesday, then sun and more sun"), line)
+            assertTrue(line.endsWith("…") && line.length <= 141, "Cut to about 140 characters: $line")
+            assertEquals(
+                listOf("apr_1", "apr_3"),
+                summary.getValue("open_approvals").jsonArray.map {
+                    it.jsonObject
+                        .getValue("id")
+                        .jsonPrimitive.content
+                },
+            )
+        }
+
+    @Test
+    fun the_agents_route_lists_the_configured_agents_and_the_dev_page_list_still_works() =
+        testApplication {
+            val (_, http) = start(devPage = true)
+
+            assertEquals("""[{"id":"fake"}]""", http.get("/agents").bodyAsText())
+            assertEquals("""["fake"]""", http.get("/dev/agents").bodyAsText())
+        }
+
+    @Test
+    fun the_summary_and_agent_routes_need_the_device_token() =
+        testApplication {
+            start()
+            val anonymous = createClient {}
+
+            for (path in listOf("/sessions/summaries", "/agents")) {
+                val response = anonymous.get(path)
+                assertEquals(HttpStatusCode.Unauthorized, response.status, path)
+                assertEquals("unauthorized", response.code())
+            }
+        }
 
     /** Has the fake agent report [payloads] and waits until the last one is in the log. */
     private suspend fun BridgeFixture.report(

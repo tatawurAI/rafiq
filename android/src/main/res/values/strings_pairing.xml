@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The pairing screen's strings, kept in their own file so the data lane owns them. -->
+<resources>
+  <string name="pairing_title">Connect to your server</string>
+  <string name="pairing_intro">Enter your server\'s address from tailscale serve and paste the device token from RAFIQ_DEVICE_TOKEN.</string>
+  <string name="pairing_url_label">Server address</string>
+  <string name="pairing_url_placeholder">https://your-server.your-tailnet.ts.net</string>
+  <string name="pairing_token_label">Device token</string>
+  <string name="pairing_token_show">Show</string>
+  <string name="pairing_token_hide">Hide</string>
+  <string name="pairing_connect">Connect</string>
+  <string name="pairing_connecting">Connecting</string>
+  <string name="pairing_hint_invalid_url">Enter an https:// address. The app only talks to your server over HTTPS.</string>
+  <string name="pairing_hint_unreachable">Your server did not answer. Check that Tailscale is on on your phone and that tailscale serve is running on your server. (%1$s)</string>
+  <string name="pairing_hint_not_a_bridge">Something answered, but it is not a Rafiq bridge. Check the address and port.</string>
+  <string name="pairing_hint_host_rejected">The bridge refused this address. Add the name to RAFIQ_ALLOWED_HOSTS on your server and restart the bridge.</string>
+  <string name="pairing_hint_token_rejected">The bridge refused the token. Paste the value of RAFIQ_DEVICE_TOKEN from your server.</string>
+  <string name="pairing_hint_not_saved">This phone could not finish pairing. Try again.</string>
+</resources>

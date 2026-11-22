@@ -14,6 +14,14 @@ The Android app bundles the following typefaces. Both families are licensed unde
 
 The full licence text and copyright notice for each family are in the upstream repositories linked above. Each bundled font ships with its original licence file.
 
+## Markdown rendering
+
+The app renders chat messages with the following library. It is a Gradle dependency, listed here because its output is a visible part of the app.
+
+| Library | Used for | Licence | Source |
+|---|---|---|---|
+| Multiplatform Markdown Renderer | Markdown in chat messages | Apache-2.0 | https://github.com/mikepenz/multiplatform-markdown-renderer |
+
 ## Gradle dependencies
 
 Licences for Gradle dependencies are listed by a report task added in a later change. This file does not carry a hand-maintained dependency list, because it would drift from `gradle/libs.versions.toml`.

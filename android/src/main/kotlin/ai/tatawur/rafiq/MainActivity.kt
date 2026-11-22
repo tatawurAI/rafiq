@@ -1,6 +1,10 @@
 package ai.tatawur.rafiq
 
-import ai.tatawur.rafiq.sessions.SessionsScreen
+import ai.tatawur.rafiq.data.RafiqApplication
+import ai.tatawur.rafiq.pairing.PairingScreen
+import ai.tatawur.rafiq.ui.fold.LocalHinge
+import ai.tatawur.rafiq.ui.fold.rememberHinge
+import ai.tatawur.rafiq.ui.navigation.RafiqNavHost
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import android.graphics.Color
 import android.os.Bundle
@@ -11,7 +15,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 /** The app's single activity. It hosts the Compose UI and draws behind the system bars. */
 class MainActivity : ComponentActivity() {
@@ -22,10 +29,21 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        // The screens see only the repository interfaces from :client.
+        val container = (application as RafiqApplication).container
+        val sessions = sessionsForLaunch(intent, container.sessions)
         setContent {
-            RafiqTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    SessionsScreen()
+            // Folding is handled as a configuration change (see the manifest), so the hinge updates
+            // in place and the screens keep their scroll position.
+            CompositionLocalProvider(LocalHinge provides rememberHinge(this)) {
+                RafiqTheme {
+                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        RafiqNavHost(
+                            sessions = sessions,
+                            pairing = { onPaired -> PairingScreen(container.pairing, onPaired) },
+                            onPairAgain = { lifecycleScope.launch { container.pairing.unpair() } },
+                        )
+                    }
                 }
             }
         }

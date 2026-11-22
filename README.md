@@ -1,5 +1,7 @@
 <a id="readme-top"></a>
 
+<p align="center"><img src="docs/assets/rafiq-logo.svg" width="128" height="128" alt="Rafiq logo: a sitting cat"></p>
+
 # Rafiq
 
 Run and steer coding-agent sessions on your own server from your phone, in a chat interface and not a terminal.
@@ -53,14 +55,20 @@ Read [docs/architecture.md](docs/architecture.md) for the full picture.
 
 ## Status
 
-Rafiq is pre-alpha and nothing is released. Today the bridge answers `GET /health`, the protocol types exist, and the app is a themed shell. Plans and progress are on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
+Rafiq is pre-alpha and nothing is released. Today the bridge runs Claude Code sessions over ACP and replays their events, and the app pairs with it, lists your sessions, streams a session's threads and lets you answer approvals and send prompts. Setup is still manual; see [docs/setup.md](docs/setup.md). Plans and progress are on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
 
 ## Requirements
 
 - JDK 21
 - The Android SDK, to build the app. The app needs Android 12 (API 31) or newer.
 - [Tailscale](https://tailscale.com) on your server and on your phone
-- An ACP adapter for your agent, installed on your server. For Claude Code that is `claude-agent-acp`.
+- An ACP adapter for your agent, installed on your server. For Claude Code that is `claude-agent-acp`, from npm, and Claude Code itself must be signed in on the server:
+
+  ```sh
+  npm install -g @agentclientprotocol/claude-agent-acp
+  ```
+
+  To run it without a global install, use `npx` in `RAFIQ_AGENTS` instead, pinned to a version: `claude-code=npx -y @agentclientprotocol/claude-agent-acp@0.109.0`.
 
 ## Quickstart
 
@@ -125,7 +133,7 @@ The bridge reads environment variables. Export them in your shell, or use `Envir
 | `RAFIQ_DEVICE_TOKEN` | Token every request except `GET /health` must present as `Authorization: Bearer <token>`. At least 32 characters, required when `RAFIQ_AGENTS` is set. Make one with `openssl rand -hex 32`. Sensitive: keep it out of git. | unset |
 | `RAFIQ_ALLOWED_HOSTS` | Extra names the bridge accepts in the `Host` header, separated by commas, for example your Tailscale name. The bind address and `localhost` are always accepted. Any other host gets `421`, which blocks DNS rebinding. | unset |
 
-For real use, set `RAFIQ_BIND_ADDRESS` to your server's Tailscale address so only your devices can reach the bridge. A request that carries an `Origin` header is refused unless it comes from the bridge itself, so web pages on other sites cannot use it. With `RAFIQ_DEV_PAGE=1`, open `/dev` and paste the token into the page. The page keeps it in memory only.
+To use the app on your phone, keep the bridge on `127.0.0.1` and publish it over HTTPS with `tailscale serve`, as [docs/setup.md](docs/setup.md) describes. A request that carries an `Origin` header is refused unless it comes from the bridge itself, so web pages on other sites cannot use it. With `RAFIQ_DEV_PAGE=1`, open `/dev` and paste the token into the page. The page keeps it in memory only.
 
 ## Repository layout
 
@@ -144,6 +152,7 @@ rafiq/
 
 | Document | What is in it |
 |---|---|
+| [docs/setup.md](docs/setup.md) | Reach the bridge from your phone over HTTPS with `tailscale serve`, and pair the app |
 | [docs/architecture.md](docs/architecture.md) | Layers, event model, bridge server, Android app |
 | [docs/adr/](docs/adr/) | Architecture decision records: what we decided and why |
 | [STYLE.md](STYLE.md) | Code, comment, protocol, test and docs conventions |

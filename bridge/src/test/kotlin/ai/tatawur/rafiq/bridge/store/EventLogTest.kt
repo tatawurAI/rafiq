@@ -4,7 +4,10 @@ import ai.tatawur.rafiq.bridge.TEST_SESSION
 import ai.tatawur.rafiq.bridge.seed
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
+import ai.tatawur.rafiq.protocol.ApprovalOutcome
+import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.EventPayload
+import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.ThreadKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -16,6 +19,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
+import java.sql.DriverManager
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -85,6 +89,40 @@ class EventLogTest {
 
             assertEquals(AgentState.WORKING, log.sessions().single().status)
             assertEquals(TEST_SESSION.id, log.sessions().single().id)
+        }
+
+    @Test
+    fun a_log_from_before_the_summary_tables_gets_its_summaries_rebuilt_on_open() =
+        runBlocking {
+            val old = open()
+            old.seed()
+            val reply =
+                EventPayload.Message(
+                    "m1",
+                    "main",
+                    MessageRole.AGENT,
+                    listOf(ContentBlock.Markdown("Tests pass")),
+                )
+            old.append("ses_1", reply)
+            old.append("ses_1", EventPayload.ApprovalRequest("apr_1", "tool_1", "Run tests", emptyList()))
+            old.append("ses_1", EventPayload.ApprovalRequest("apr_2", "tool_2", "Edit file", emptyList()))
+            old.append("ses_1", EventPayload.ApprovalResolved("apr_1", ApprovalOutcome.SELECTED, "allow"))
+            old.close()
+            opened.remove(old)
+            // What a bridge without the summary tables left behind.
+            DriverManager.getConnection("jdbc:sqlite:${dir.resolve("data/rafiq.db")}").use { db ->
+                db.createStatement().use {
+                    it.execute("DROP TABLE session_previews")
+                    it.execute("DROP TABLE open_approvals")
+                    it.execute("PRAGMA user_version = 0")
+                }
+            }
+
+            val summary = open().summaries().single()
+
+            assertEquals(6, summary.lastSeq)
+            assertEquals("Tests pass", summary.lastLine)
+            assertEquals(listOf("apr_2"), summary.openApprovals.map { it.id })
         }
 
     @Test

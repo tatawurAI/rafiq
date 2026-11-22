@@ -63,3 +63,26 @@ tasks.processResources {
 tasks.test {
     useJUnitPlatform()
 }
+
+// Rewrites the event streams the app's tests replay, from the ACP fixtures, through the real adapter
+// and event log. Not part of `test`: run it when the mapping changes and review the diff. See
+// client/src/test/resources/events/recorded/README.md.
+tasks.register<Test>("recordEventFixtures") {
+    description = "Records client/src/test/resources/events/recorded/ from the ACP fixtures."
+    group = "verification"
+    testClassesDirs =
+        sourceSets.test
+            .get()
+            .output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching("ai.tatawur.rafiq.bridge.RecordEventFixtures") }
+    systemProperty("rafiq.recordEventFixtures", "true")
+    systemProperty(
+        "rafiq.recordedEventsDir",
+        rootProject.layout.projectDirectory
+            .dir("client/src/test/resources/events/recorded")
+            .asFile.path,
+    )
+    outputs.upToDateWhen { false }
+}

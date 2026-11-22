@@ -1,0 +1,1 @@
+Opening a session shows its main thread and helper threads as tabs, with replies in markdown as they stream in, collapsible tool cards and the newest approval pinned above the composer as one short line with an Answer button. The pin steps aside while its own card is on screen or while you type, and the screen stays above the keyboard.

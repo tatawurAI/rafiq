@@ -6,6 +6,7 @@ import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
+import ai.tatawur.rafiq.protocol.api.SessionSummary
 import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.channels.Channel
@@ -57,7 +58,24 @@ class EventLog(
             // With WAL, NORMAL can lose the last few commits in a power cut but never corrupts the log,
             // and it saves an fsync on every event.
             statement.execute("PRAGMA synchronous = NORMAL")
-            SCHEMA.forEach(statement::execute)
+            (SCHEMA + SummaryProjection.schema).forEach(statement::execute)
+        }
+        migrate()
+    }
+
+    /**
+     * Brings a database written by an older bridge up to date. `user_version` counts the steps
+     * applied: step 1 added the summary tables, which are rebuilt from the events once.
+     */
+    private fun migrate() {
+        val version =
+            connection.createStatement().use { statement ->
+                statement.executeQuery("PRAGMA user_version").use { rows -> if (rows.next()) rows.getInt(1) else 0 }
+            }
+        if (version >= SCHEMA_VERSION) return
+        transaction {
+            SummaryProjection.rebuild(connection)
+            connection.createStatement().use { it.execute("PRAGMA user_version = $SCHEMA_VERSION") }
         }
     }
 
@@ -210,6 +228,31 @@ class EventLog(
             }
         }
 
+    /**
+     * Every session with its newest `seq`, preview line and open approvals, most recently updated
+     * first. Reads the summary tables kept by [SummaryProjection], never the events.
+     */
+    suspend fun summaries(): List<SessionSummary> =
+        onDispatcher {
+            val previews = SummaryProjection.previews(connection)
+            val approvals = SummaryProjection.openApprovals(connection)
+            connection.createStatement().use { statement ->
+                statement
+                    .executeQuery("SELECT $SESSION_COLUMNS, last_seq FROM sessions ORDER BY updated_at_ms DESC, id")
+                    .use { rows ->
+                        rows.collect { row ->
+                            val session = readSession(row).session
+                            SessionSummary(
+                                session = session,
+                                lastSeq = row.getLong(9),
+                                lastLine = previews[session.id],
+                                openApprovals = approvals[session.id].orEmpty(),
+                            )
+                        }
+                    }
+            }
+        }
+
     /** The session's threads, oldest first. */
     suspend fun threads(sessionId: String): List<AgentThread> =
         onDispatcher {
@@ -272,6 +315,7 @@ class EventLog(
             it.executeUpdate()
         }
         project(sessionId, payload)
+        SummaryProjection.apply(connection, sessionId, seq, payload)
         return Event(sessionId = sessionId, seq = seq, timestampMs = now, payload = payload)
     }
 
@@ -402,6 +446,9 @@ class EventLog(
         )
 
     companion object {
+        /** The schema steps this build applies, see [migrate]. */
+        private const val SCHEMA_VERSION = 1
+
         private const val SESSION_COLUMNS =
             "id, agent, project_path, title, status, agent_session_ref, created_at_ms, updated_at_ms"
 

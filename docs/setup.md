@@ -132,6 +132,46 @@ What to know before you turn it on:
 
 A listed session shows in your session list with the agent that runs in it. Its row opens in Terminal. A session you did not list is not shown, and cannot be opened, even if its name starts with a listed name.
 
+## Chat for tmux sessions: the hooks
+
+Chat for a tmux session gets the agent's replies, steps and approvals from Claude Code's own hooks. You install them per project, from the app, and only after you have seen exactly what will be written. Rafiq never installs hooks for all projects, and never edits your user-level settings file (`~/.claude/settings.json`).
+
+You need `python3` on your server. The hook program is `hooks/rafiq-hook.py` in the installed bridge, next to `bin` and `lib`, and uses only Python's standard library. Keep the bridge where you installed it: the hooks point at that path. If you move it, remove the hooks from the app and install them again.
+
+To install, open a tmux session in the app and follow the prompt to set up Chat. The app shows:
+
+- The file it will write: `.claude/settings.local.json` in the session's project folder. Claude Code reads that file for this project only, and does not share it.
+- The whole file exactly as it will be after the install, including anything already in it.
+- The hook events, and what the hook program sends: each event as Claude Code's own JSON, with the tmux pane and the agent's process id, to the bridge over a Unix socket in `RAFIQ_DATA_DIR/hook`. Nothing goes over the network.
+
+Nothing is written until you tap to agree. The bridge then records your agreement with the file's path and a hash of what it wrote. If the project is a git repository, the app offers to add the file to `.git/info/exclude`, so it is not committed by accident.
+
+What to know:
+
+- The first time Claude Code opens a folder, it asks whether you trust it, and says the folder configures hooks. That is Claude Code's own dialog. Answer it at your desk. Rafiq does not answer it for you. In a folder you already trust, the hooks start with the next event, with no restart.
+- The install also adds read and edit deny rules for `RAFIQ_DATA_DIR`, where the bridge keeps its database and the hook credential, so the agent's file tools are refused there.
+- A permission request waits up to 10 minutes for your phone, while the dialog at your desk stays open. The first answer wins. If the bridge is not running, or anything goes wrong, the hook says nothing and Claude Code asks at your desk as usual. A hook error never approves anything.
+- Remove takes out exactly the entries Rafiq added and nothing else. If nothing else is left in the file, the file is deleted. If you edited Rafiq's entries by hand, the bridge refuses to remove them and asks you to do it in the file. It never switches all hooks off.
+- Another tool's hooks in the same file keep working. Hooks from other files, and other tools, can still answer a permission request themselves. How several hooks combine is Claude Code's rule.
+
+### The limit of a hook on the same user
+
+The hook channel is a Unix socket in a folder only your user can open, and each call needs a credential that is new every time the bridge starts. Another user on your server cannot reach it. An agent runs as your user, though. One that is allowed to read the bridge's data folder, for example through a shell command, can read the credential and approve its own requests. The deny rules make that harder. They do not make it impossible.
+
+The complete fix is to run the bridge as a different OS user from the one that runs your agents, with `RAFIQ_DATA_DIR` owned by that user, so no agent can read it. This is optional hardening, not a requirement. Today it covers sessions the bridge starts itself. Tmux sessions do not work in that layout yet, because the hook socket accepts only the bridge's own user, and tmux's socket only the user who started tmux.
+
+If you keep `RAFIQ_DEVICE_TOKEN` in a systemd `EnvironmentFile=`, make that file mode 0600. Once your phone is paired with its own token, revoke `legacy` and remove the variable. Do not export any `RAFIQ_` variable in the shell that starts tmux: every new pane would inherit it. The bridge warns at start if the tmux server already holds one, by name only.
+
+### What the bridge logs about your phone
+
+The bridge writes these lines to its log, which goes to standard output (the systemd journal, if you run it as a service):
+
+- Terminal open and close, with the device, session, address, duration, bytes each way and number of resizes. Never the keys you type, because people type passwords into panes.
+- Each Chat prompt, with the device, session and a SHA-256 hash of the text. Never the text.
+- Each approval answer, with the device, session, approval and the option you chose.
+
+The log is not the only record. Chat prompts and the agent's replies and tool output are stored in the bridge's event log in `RAFIQ_DATA_DIR`, and cached on your phone, so Chat can show them again.
+
 ## If it does not connect
 
 | Symptom | Likely cause |

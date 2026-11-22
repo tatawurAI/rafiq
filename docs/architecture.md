@@ -182,6 +182,20 @@ Terminal shows the real screen of a tmux session on your server in the app, and 
 
 **Keys.** The bridge passes on only what a person typing could send: printable text, Enter, Tab, Backspace, Ctrl keys, Escape, Alt plus a key, arrows, Home, End, Insert, Delete, page keys, function keys with their modifiers, and the bracketed paste markers. Everything else is dropped, including the replies a terminal emulator makes to the program's questions. tmux already answers those, so a reply that reached the pane would be read as typing.
 
+### Hook channel
+
+Chat for tmux sessions gets its events from the agent's hooks ([ADR 0013](adr/0013-agents-in-tmux.md)). The hook program, `hooks/rafiq-hook.py` in the installed bridge, sends each call to a Unix socket at `$RAFIQ_DATA_DIR/hook/hook.sock`. It never uses the network port, and the main listener has no hook route and no exemption for one.
+
+- **Who can connect.** The `hook` folder is created with mode 0700 and checked like the admin folder. The socket is 0600. Where the JDK reports the peer's user (Linux and macOS), any other user is refused. Each request carries the credential from `hook/credential` (0600), 256 random bits written fresh at every start and compared in constant time. It is never logged.
+- **Wire.** One JSON line in, of at most 1 MiB, then for a permission request at most one JSON line back, of at most 64 KiB. A call that fails any check is closed with no reply. The wire types are in `bridge/.../hook/HookContract.kt`.
+- **Permission requests.** The connection stays open while the reader waits for your phone. If the hook program hangs up, because the desk answered first, the wait is cancelled at once.
+- **Fail closed.** On any error, timeout, missing bridge, malformed or oversized reply, or unknown decision, the hook program prints nothing and exits 0, so Claude Code asks at the desk. It builds Claude Code's decision itself from a checked reply, and a session rule may only cover the tool that asked.
+- **The channel runs** only with Terminal on and `RAFIQ_DATA_DIR` set. tmux commands the bridge runs get no `RAFIQ_` variable, so panes do not inherit the device token.
+
+`GET`, `POST` and `DELETE /sessions/{id}/hooks` preview, install and remove the hooks in the session project's `.claude/settings.local.json`. Install and remove need the hash of a preview, which covers the proposed text and the file as it is, so a stale preview gets 409 `hooks_file_changed`. Handlers are tagged by the hook program's path. Observers are async and the `PermissionRequest` handler has a 900 second timeout. The install adds `Read` and `Edit` deny rules for the data folder. Remove takes out only entries that are exactly what install wrote, and is refused otherwise. The bridge refuses a project at the root or in your home folder, and a `.claude` folder or settings file that is a link, so it can never write the user-level settings. Consent is recorded in `rafiq.db` with the file path and a hash of the text written.
+
+**Audit log.** Each Chat prompt and each approval answer from a phone writes one line to the bridge's log, with the device and session, next to the Terminal open and close lines. A prompt is logged as the SHA-256 of its text, never the text.
+
 ### Devices and tokens
 
 Each phone is a device with its own token. The bridge keeps devices and one-time pairing codes in `rafiq.db`, as SHA-256 digests. It never stores a token or a code. Tokens and codes are random, so a plain digest is enough, and the fetched digest is compared in constant time.

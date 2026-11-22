@@ -42,6 +42,8 @@ The finished bridge will also read files in your project folders. The protection
 | Path scoping | The file API refuses paths outside the session's project root. | M5 |
 | Auth relay | Sign-in flows are relayed without exposing credentials to the phone or a third party. | M5 |
 
+An agent in tmux runs as the same OS user as the bridge. Its hooks reach the bridge over a Unix socket in a folder only that user can open, with a credential that is new at every start. A same-user agent that is allowed to read the bridge's data folder can still read that credential and approve its own requests. Running the bridge as a different OS user is the complete fix. [docs/setup.md](docs/setup.md#the-limit-of-a-hook-on-the-same-user) describes it, and what it does not cover yet.
+
 M3 and M5 are [milestones](https://github.com/tatawurAI/rafiq/milestones). Agent credentials stay on your server, and the phone never holds them.
 
 ## In scope

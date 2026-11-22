@@ -30,15 +30,36 @@ class LoggingAuditLog(
             "option=${clean(optionId)}",
     )
 
+    override fun hooksInstalled(
+        deviceId: String,
+        projectPath: String,
+        fileSha256: String,
+    ) = write(
+        "Hooks installed: device=${clean(deviceId)} project=${cleanPath(projectPath)} sha256=${clean(fileSha256)}",
+    )
+
+    override fun hooksRemoved(
+        deviceId: String,
+        projectPath: String,
+        fileSha256: String?,
+    ) = write(
+        "Hooks removed: device=${clean(deviceId)} project=${cleanPath(projectPath)} " +
+            "sha256=${fileSha256?.let(::clean) ?: "deleted"}",
+    )
+
     companion object {
         private val logger = LoggerFactory.getLogger("ai.tatawur.rafiq.bridge.Audit")
         private const val MAX_FIELD = 128
+        private const val MAX_PATH = 512
 
         /** The SHA-256 of [text] as lowercase hex, which is what the audit log keeps of a prompt. */
         fun sha256Hex(text: String): String =
             MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 
         // Ids come from requests. Keep each on one line, short, and without spaces that would fake another field.
+        private fun cleanPath(value: String): String =
+            value.take(MAX_PATH).map { if (it.isLetterOrDigit() || it in "_-.:%/") it else '?' }.joinToString("")
+
         private fun clean(value: String): String =
             value.take(MAX_FIELD).map { if (it.isLetterOrDigit() || it in "_-.:%") it else '?' }.joinToString("")
     }

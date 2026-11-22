@@ -84,7 +84,7 @@ fun Application.bridgeModule(
         eventsRoute(log, EventStreamer(log), sessions::isVisible, connections, deviceOf)
         terminal?.routes(this, connections, deviceOf)
         devices?.let { deviceRoutes(it) }
-        hooks?.let { hookRoutes(it, sessions, deviceOf) }
+        hooks?.let { hookRoutes(it, sessions, deviceOf, audit) }
         if (devPage) devRoutes(sessions)
         // Open to any caller on purpose, though the host and origin checks still apply: it reveals only
         // liveness and version, and it is what you check first when the phone cannot connect.

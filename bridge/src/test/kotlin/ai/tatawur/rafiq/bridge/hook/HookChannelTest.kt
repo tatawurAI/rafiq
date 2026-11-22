@@ -174,6 +174,17 @@ class HookChannelTest {
     }
 
     @Test
+    fun a_second_bridge_on_the_same_folder_fails_and_leaves_the_first_credential_alone() {
+        val first = start(NoopHookSink)
+        val before = Files.readAllBytes(first.credentialPath)
+
+        val failure = runCatching { HookChannel(dir, NoopHookSink, scope).start() }.exceptionOrNull()
+
+        assertTrue(failure is IllegalStateException, "a second channel started on a folder in use")
+        assertTrue(before.contentEquals(Files.readAllBytes(first.credentialPath)), "the credential was replaced")
+    }
+
+    @Test
     fun the_folder_credential_and_socket_are_private_to_the_bridge_user() {
         val channel = start(NoopHookSink)
         if ("posix" !in dir.fileSystem.supportedFileAttributeViews()) return

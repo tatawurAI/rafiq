@@ -5,14 +5,19 @@ import ai.tatawur.rafiq.protocol.api.HookSetupPreview
 import ai.tatawur.rafiq.protocol.api.HookSetupRequest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission
 import java.security.MessageDigest
 import java.time.Clock
+import java.util.concurrent.ConcurrentHashMap
 
 /** One recorded agreement to install the hooks in a project. */
 data class HookConsent(
@@ -22,6 +27,15 @@ data class HookConsent(
     val writtenSha256: String,
     val deviceId: String,
     val atMs: Long,
+)
+
+/**
+ * What an install or remove did: the preview of the new state, and the SHA-256 of the file text written, or null
+ * when the file was deleted.
+ */
+data class HookChange(
+    val preview: HookSetupPreview,
+    val writtenSha256: String?,
 )
 
 /** Where the bridge keeps hook consents. The device store implements it. */
@@ -40,7 +54,11 @@ interface HookConsentStore {
  * The bridge never writes the user-level settings: a project at the root or in your home folder is refused, and
  * so is a `.claude` folder or settings file that is a symbolic link, since either could point at that file.
  *
+ * Install and remove for one project run one at a time, and the file is read again right before it is replaced. If
+ * it changed since the plan, nothing is written.
+ *
  * @param home your home folder, which is never treated as a project.
+ * @param beforeCommit runs right before the last check and the write. Tests use it to change the file in between.
  */
 class HookSetup(
     private val settings: HookSettings,
@@ -48,13 +66,18 @@ class HookSetup(
     private val home: Path = Path.of(System.getProperty("user.home")),
     private val clock: Clock = Clock.systemUTC(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val beforeCommit: suspend () -> Unit = {},
 ) {
     private val files = ProjectFiles(home)
+    private val locks = ConcurrentHashMap<Path, Mutex>()
 
+    @Suppress("LongParameterList") // A value holder for one plan. Each field is read by install, remove or preview.
     private class Plan(
         val project: Path,
         val target: Path,
         val installed: Boolean,
+        /** The file text the plan was made from. Null when there was no file. */
+        val current: String?,
         /** The file text after the change. Null means the file is deleted. */
         val after: String?,
         /** Removing would also take entries install did not write. */
@@ -74,17 +97,18 @@ class HookSetup(
         projectPath: String,
         request: HookSetupRequest,
         deviceId: String,
-    ): HookSetupPreview =
-        withContext(io) {
+    ): HookChange =
+        locked(projectPath) {
             val plan = plan(projectPath, forRemove = false)
             if (!MessageDigest.isEqual(plan.hash.toByteArray(), request.previewHash.toByteArray())) throw changed()
+            if (request.addGitExclude) files.checkGitExclude(plan.project)
             val text = plan.after ?: error("An install always leaves a file.")
-            files.write(plan.target, text)
+            commit(plan, text)
             if (request.addGitExclude) files.addGitExclude(plan.project)
             consents.recordHookConsent(
                 HookConsent(plan.project.toString(), plan.target.toString(), sha256(text), deviceId, clock.millis()),
             )
-            previewOf(plan(projectPath))
+            HookChange(previewOf(plan(projectPath)), sha256(text))
         }
 
     /**
@@ -96,8 +120,8 @@ class HookSetup(
     suspend fun remove(
         projectPath: String,
         request: HookSetupRequest,
-    ): HookSetupPreview =
-        withContext(io) {
+    ): HookChange =
+        locked(projectPath) {
             val plan = plan(projectPath, forRemove = true)
             if (!plan.installed) {
                 throw SessionException.Conflict(HOOKS_NOT_INSTALLED, "Rafiq's hooks are not in ${plan.target}.")
@@ -110,11 +134,29 @@ class HookSetup(
                 )
             }
             if (!MessageDigest.isEqual(plan.hash.toByteArray(), request.previewHash.toByteArray())) throw changed()
-            val after = plan.after
-            if (after == null) Files.deleteIfExists(plan.target) else files.write(plan.target, after)
+            commit(plan, plan.after)
             consents.forgetHookConsent(plan.project.toString())
-            previewOf(plan(projectPath))
+            HookChange(previewOf(plan(projectPath)), plan.after?.let(::sha256))
         }
+
+    /** One change at a time per project, on the IO dispatcher. */
+    private suspend fun <T> locked(
+        projectPath: String,
+        block: suspend () -> T,
+    ): T =
+        withContext(io) {
+            val project = files.projectFolder(projectPath)
+            locks.computeIfAbsent(project) { Mutex() }.withLock { block() }
+        }
+
+    /** Writes [text] (or deletes the file for null), unless the file changed since [plan] read it. */
+    private suspend fun commit(
+        plan: Plan,
+        text: String?,
+    ) {
+        beforeCommit()
+        if (!files.replace(plan.target, text) { now -> now == plan.current }) throw changed()
+    }
 
     private fun previewOf(plan: Plan) =
         HookSetupPreview(
@@ -134,7 +176,7 @@ class HookSetup(
     ): Plan {
         val project = files.projectFolder(projectPath)
         val target = files.targetIn(project)
-        val current = if (Files.exists(target)) Files.readString(target) else null
+        val current = files.read(target)
         val parsed = current?.let(::parse) ?: JsonObject(emptyMap())
         val installed = settings.isInstalled(parsed)
         val removing = forRemove ?: installed
@@ -157,7 +199,7 @@ class HookSetup(
         val operation = if (removing) "remove" else "install"
         val hash =
             sha256(listOf(operation, target.toString(), after ?: ABSENT, current ?: ABSENT).joinToString("\u0000"))
-        return Plan(project, target, installed, after, changed, hash)
+        return Plan(project, target, installed, current, after, changed, hash)
     }
 
     private fun parse(text: String): JsonObject =
@@ -210,7 +252,8 @@ class HookSetup(
 
         /**
          * The installed hook program: the first `hooks/rafiq-hook.py` above the bridge's own code. In an installed
-         * bridge that is `<install>/hooks/rafiq-hook.py`, next to `bin` and `lib`. Null when it cannot be found.
+         * bridge that is `<install>/hooks/rafiq-hook.py`, next to `bin` and `lib`. Null when it cannot be found, or
+         * when it is not safe to point Claude Code at (see [isTrustedProgram]).
          */
         fun locateProgram(): Path? {
             val code =
@@ -222,7 +265,26 @@ class HookSetup(
                 }.getOrNull()
             return generateSequence(code) { it.parent }
                 .map { it.resolve("hooks").resolve("rafiq-hook.py") }
-                .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
+                .firstOrNull { Files.isRegularFile(it) }
+                ?.takeIf(::isTrustedProgram)
+        }
+
+        /**
+         * True when [program] is an executable regular file that only you can change: it and its folder belong to
+         * the bridge's user, and neither is writable by the group or others. Claude Code runs this file on every
+         * hook event, so anyone who could change it could run code as you.
+         */
+        internal fun isTrustedProgram(program: Path): Boolean {
+            val runnable = Files.isRegularFile(program, LinkOption.NOFOLLOW_LINKS) && Files.isExecutable(program)
+            val posix = "posix" in program.fileSystem.supportedFileAttributeViews()
+            return runnable && (!posix || listOf(program, program.parent).all(::onlyMine))
+        }
+
+        private fun onlyMine(path: Path): Boolean {
+            val modes = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS)
+            return Files.getOwner(path, LinkOption.NOFOLLOW_LINKS).name == System.getProperty("user.name") &&
+                PosixFilePermission.GROUP_WRITE !in modes &&
+                PosixFilePermission.OTHERS_WRITE !in modes
         }
     }
 }

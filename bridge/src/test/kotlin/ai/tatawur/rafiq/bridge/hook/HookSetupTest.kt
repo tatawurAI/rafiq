@@ -4,11 +4,17 @@ import ai.tatawur.rafiq.bridge.sessions.SessionException
 import ai.tatawur.rafiq.bridge.store.DeviceStore
 import ai.tatawur.rafiq.protocol.api.HookSetupRequest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -24,8 +30,15 @@ class HookSetupTest {
     @AfterEach
     fun close() = store.close()
 
-    private fun setup(home: Path = dir.resolve("home")) =
-        HookSetup(HookSettings("/opt/rafiq-bridge/hooks/rafiq-hook.py", "/var/lib/rafiq"), store, home)
+    private fun setup(
+        home: Path = dir.resolve("home"),
+        beforeCommit: suspend () -> Unit = {},
+    ) = HookSetup(
+        HookSettings("/opt/rafiq-bridge/hooks/rafiq-hook.py", "/var/lib/rafiq"),
+        store,
+        home,
+        beforeCommit = beforeCommit,
+    )
 
     private fun project(name: String = "weather-app"): Path = Files.createDirectories(dir.resolve(name))
 
@@ -52,7 +65,7 @@ class HookSetupTest {
             val after = setup.install(project.toString(), HookSetupRequest(preview.previewHash), "dev_1")
 
             assertEquals(preview.fileText, Files.readString(target))
-            assertTrue(after.installed)
+            assertTrue(after.preview.installed)
             val consent = store.hookConsent(project.toRealPath().toString())
             assertEquals(target.toRealPath().toString(), consent?.filePath)
             assertEquals(HookSetup.sha256(preview.fileText), consent?.writtenSha256)
@@ -152,10 +165,120 @@ class HookSetupTest {
                     "dev_1",
                 )
 
-            assertFalse(after.gitExcludeOffered)
+            assertFalse(after.preview.gitExcludeOffered)
             assertEquals(
                 "# local excludes\n*.log\n/.claude/settings.local.json\n",
                 Files.readString(project.resolve(".git/info/exclude")),
             )
         }
+
+    @Test
+    fun a_linked_git_info_folder_or_exclude_file_is_refused_before_anything_is_written() {
+        val elsewhere = Files.createDirectories(dir.resolve("elsewhere"))
+        Files.writeString(elsewhere.resolve("exclude"), "# not yours\n")
+        val linkedFolder = project("docs-site")
+        Files.createDirectories(linkedFolder.resolve(".git"))
+        Files.createSymbolicLink(linkedFolder.resolve(".git/info"), elsewhere)
+        val linkedFile = project("api-server")
+        Files.createDirectories(linkedFile.resolve(".git/info"))
+        Files.createSymbolicLink(linkedFile.resolve(".git/info/exclude"), elsewhere.resolve("exclude"))
+        val setup = setup()
+
+        for (project in listOf(linkedFolder, linkedFile)) {
+            val preview = runBlocking { setup.preview(project.toString()) }
+            assertFalse(preview.gitExcludeOffered, project.toString())
+
+            val code =
+                conflictCode {
+                    setup.install(project.toString(), HookSetupRequest(preview.previewHash, addGitExclude = true), "d")
+                }
+
+            assertEquals("hooks_no_project", code, project.toString())
+            assertFalse(Files.exists(project.resolve(".claude/settings.local.json")), project.toString())
+        }
+        assertEquals("# not yours\n", Files.readString(elsewhere.resolve("exclude")))
+    }
+
+    @Test
+    fun a_change_to_the_file_between_the_plan_and_the_write_is_kept_and_refused() {
+        val project = project()
+        val file = project.resolve(".claude/settings.local.json")
+        val setup =
+            setup(beforeCommit = {
+                Files.createDirectories(file.parent)
+                Files.writeString(file, """{"model":"placeholder-model"}""")
+            })
+        val preview = runBlocking { setup.preview(project.toString()) }
+
+        assertEquals(
+            HookSetup.HOOKS_FILE_CHANGED,
+            conflictCode { setup.install(project.toString(), HookSetupRequest(preview.previewHash), "dev_1") },
+        )
+        assertEquals("""{"model":"placeholder-model"}""", Files.readString(file))
+    }
+
+    @Test
+    fun changes_to_one_project_run_one_at_a_time() {
+        val project = project()
+        val inside = AtomicInteger()
+        val mostInside = AtomicInteger()
+        // Each change waits at the write for the other to arrive. One at a time, the other never does.
+        val setup =
+            setup(beforeCommit = {
+                mostInside.accumulateAndGet(inside.incrementAndGet(), ::maxOf)
+                withTimeoutOrNull(OVERLAP_WAIT_MS) { awaitOther(inside) }
+                inside.decrementAndGet()
+            })
+        val hash = runBlocking { setup.preview(project.toString()).previewHash }
+
+        runBlocking {
+            (1..2)
+                .map {
+                    async(Dispatchers.IO) {
+                        runCatching { setup.install(project.toString(), HookSetupRequest(hash), "dev_$it") }
+                    }
+                }.awaitAll()
+        }
+
+        assertEquals(1, mostInside.get())
+    }
+
+    private suspend fun awaitOther(inside: AtomicInteger) {
+        while (inside.get() < 2) delay(POLL_MS)
+    }
+
+    @Test
+    fun a_hook_program_others_can_change_is_not_trusted() {
+        val folder = Files.createDirectories(dir.resolve("install/hooks"))
+        val program = Files.writeString(folder.resolve("rafiq-hook.py"), "#!/usr/bin/env python3\n")
+
+        fun modes(
+            file: String,
+            dirMode: String,
+        ) {
+            Files.setPosixFilePermissions(program, PosixFilePermissions.fromString(file))
+            Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString(dirMode))
+        }
+        val link = dir.resolve("install/link.py")
+        Files.createSymbolicLink(link, program)
+
+        modes("rwxr-xr-x", "rwxr-xr-x")
+        assertTrue(HookSetup.isTrustedProgram(program))
+        assertFalse(HookSetup.isTrustedProgram(link), "a link")
+        modes("rwxrwxr-x", "rwxr-xr-x")
+        assertFalse(HookSetup.isTrustedProgram(program), "group can write the program")
+        modes("rwxr-xrwx", "rwxr-xr-x")
+        assertFalse(HookSetup.isTrustedProgram(program), "others can write the program")
+        modes("rwxr-xr-x", "rwxrwxr-x")
+        assertFalse(HookSetup.isTrustedProgram(program), "group can write the folder")
+        modes("rwxr-xr-x", "rwxr-xrwx")
+        assertFalse(HookSetup.isTrustedProgram(program), "others can write the folder")
+        modes("rw-r--r--", "rwxr-xr-x")
+        assertFalse(HookSetup.isTrustedProgram(program), "not executable")
+    }
+
+    private companion object {
+        const val OVERLAP_WAIT_MS = 2000L
+        const val POLL_MS = 10L
+    }
 }

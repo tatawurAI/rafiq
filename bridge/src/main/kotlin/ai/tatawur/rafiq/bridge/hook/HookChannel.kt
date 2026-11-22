@@ -82,11 +82,13 @@ class HookChannel(
     fun start(): HookChannel {
         DeviceAdminServer.checkPathLength(socketPath)
         DeviceAdminServer.prepareFolder(socketPath.parent)
-        credential = writeCredential()
+        // Checked before anything is written, so a second bridge on the same folder leaves the first one's
+        // credential alone.
         if (Files.exists(socketPath)) {
             check(!isAnswering(socketPath)) { "Another bridge is already answering on $socketPath." }
             Files.delete(socketPath)
         }
+        credential = writeCredential()
         val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
         channel.bind(UnixDomainSocketAddress.of(socketPath))
         if (posix(socketPath)) Files.setPosixFilePermissions(socketPath, OWNER_ONLY_FILE)

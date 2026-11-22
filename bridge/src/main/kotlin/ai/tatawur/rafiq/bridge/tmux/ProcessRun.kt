@@ -27,6 +27,25 @@ internal fun cleanEnvironment(builder: ProcessBuilder) {
 }
 
 /**
+ * The names of the `RAFIQ_` variables in the global environment of [server], which every new pane inherits.
+ * The bridge keeps them out of every tmux process it starts, but a server started from a shell that exported
+ * one already has it. Names only: the values are never read out. Empty when there is no server or none is set.
+ */
+internal fun inheritedRafiqVariables(server: TmuxServer): List<String> {
+    val result = runCapturing(server.commandLine("show-environment", "-g"), SHOW_ENVIRONMENT_TIMEOUT_SECONDS)
+    if (result == null || result.exit != 0) return emptyList()
+    // A line is `NAME=value`, or `-NAME` for a variable tmux removes from new panes.
+    return result.out
+        .lineSequence()
+        .map { it.substringBefore('=') }
+        .filter { it.startsWith("RAFIQ_") }
+        .distinct()
+        .toList()
+}
+
+private const val SHOW_ENVIRONMENT_TIMEOUT_SECONDS = 5L
+
+/**
  * Runs [command] to the end and returns what it printed. Blocks the caller.
  *
  * A process that outlives [timeoutSeconds] is killed together with its children, which also ends the

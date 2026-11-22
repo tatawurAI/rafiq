@@ -1,6 +1,8 @@
 package ai.tatawur.rafiq.bridge.server
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -21,5 +23,18 @@ class ConnectionRegistryTest {
             assertEquals(listOf("a1:revoked", "a3:revoked"), closed.sorted())
             assertEquals(0, registry.closeAll("dev_a", "revoked"))
             assertEquals(1, registry.openCount("dev_b"))
+        }
+
+    @Test
+    fun a_connection_that_registers_after_its_device_was_revoked_is_closed_at_once() =
+        runBlocking {
+            val registry = InMemoryConnectionRegistry()
+            val reason = CompletableDeferred<String>()
+            registry.closeAll("dev_a", "device revoked")
+
+            registry.register("dev_a", "terminal") { reason.complete(it) }
+
+            assertEquals("device revoked", withTimeout(5_000) { reason.await() })
+            assertEquals(0, registry.openCount("dev_a"))
         }
 }

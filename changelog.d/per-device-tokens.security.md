@@ -1,0 +1,1 @@
+Each phone now pairs with its own token. Run `rafiq-bridge pair --name <device>` on your server, enter the code and your server address in the app, and the phone gets a token only it holds. Revoke one phone with `rafiq-bridge revoke <id>` and it is cut off at once, including any open connection. Your current token keeps working as a device called `legacy` until you revoke it.

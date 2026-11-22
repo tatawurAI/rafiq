@@ -11,6 +11,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
@@ -40,7 +41,7 @@ class SecurityTest {
         origin: String? = null,
         authorization: String? = "Bearer $TEST_TOKEN",
         protocols: String? = null,
-    ) = security.inspect(path, host, origin, authorization, protocols)
+    ) = runBlocking { security.inspect(path, host, origin, authorization, protocols) }
 
     private fun rejected(verdict: BridgeSecurity.Verdict) = (verdict as BridgeSecurity.Verdict.Rejected).status
 
@@ -56,7 +57,7 @@ class SecurityTest {
         val noToken = BridgeSecurity(null, "100.64.0.1")
         assertEquals(
             HttpStatusCode.Unauthorized,
-            rejected(noToken.inspect("/sessions", "100.64.0.1", null, "Bearer ", null)),
+            rejected(runBlocking { noToken.inspect("/sessions", "100.64.0.1", null, "Bearer ", null) }),
         )
     }
 

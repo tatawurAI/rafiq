@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.data
 
+import ai.tatawur.rafiq.client.pairing.DeviceRevoked
 import ai.tatawur.rafiq.client.sync.EventSource
 import ai.tatawur.rafiq.client.sync.HandshakeRejectedException
 import ai.tatawur.rafiq.client.sync.HttpMethod
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -36,12 +38,16 @@ internal object BridgeClients {
     // silently is noticed within one to two intervals. The bridge (Ktor) answers pings on its own.
     private const val PING_INTERVAL_S = 5L
 
-    /** For REST calls. */
-    fun rest(): OkHttpClient =
+    /**
+     * For REST calls. [onDeviceRevoked] hears the token of any request the bridge answered with
+     * `device_revoked`, and sockets derived from this client report the same way.
+     */
+    fun rest(onDeviceRevoked: (token: String) -> Unit = {}): OkHttpClient =
         OkHttpClient
             .Builder()
             .connectTimeout(CONNECT_TIMEOUT_S, TimeUnit.SECONDS)
             .callTimeout(CALL_TIMEOUT_S, TimeUnit.SECONDS)
+            .addInterceptor(DeviceRevokedInterceptor(onDeviceRevoked))
             .build()
 
     /**
@@ -55,6 +61,42 @@ internal object BridgeClients {
             .readTimeout(0, TimeUnit.SECONDS)
             .pingInterval(PING_INTERVAL_S, TimeUnit.SECONDS)
             .build()
+}
+
+/**
+ * Tells [onRevoked] when the bridge answers a request with 401 `device_revoked`, passing the token that
+ * request carried so the receiver can ignore an answer to a token it has already replaced. It reads at most
+ * a kilobyte of the body and never changes the response. The token is never logged.
+ */
+internal class DeviceRevokedInterceptor(
+    private val onRevoked: (token: String) -> Unit,
+) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val response = chain.proceed(request)
+        if (response.code == UNAUTHORIZED &&
+            DeviceRevoked.matches(response.code, response.peekBody(PEEK_BYTES).string())
+        ) {
+            tokenOf(request)?.let(onRevoked)
+        }
+        return response
+    }
+
+    private fun tokenOf(request: Request): String? {
+        val bearer = request.header("Authorization")?.takeIf { it.startsWith("Bearer ") }?.removePrefix("Bearer ")
+        // A socket carries the token as the subprotocol value that is not the protocol name.
+        return bearer
+            ?: request
+                .header("Sec-WebSocket-Protocol")
+                ?.split(',')
+                ?.map(String::trim)
+                ?.lastOrNull { it.isNotEmpty() && !it.startsWith("rafiq.") }
+    }
+
+    private companion object {
+        const val UNAUTHORIZED = 401
+        const val PEEK_BYTES = 1024L
+    }
 }
 
 /** [HttpTransport] over OkHttp. Cancelling the caller cancels the call. */

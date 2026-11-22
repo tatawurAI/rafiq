@@ -1,8 +1,7 @@
 package ai.tatawur.rafiq.pairing
 
 import ai.tatawur.rafiq.R
-import ai.tatawur.rafiq.client.PairingRepository
-import ai.tatawur.rafiq.client.PairingResult
+import ai.tatawur.rafiq.client.pairing.CodePairResult
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import android.view.View
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,53 +38,58 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * Pairs the app with your server: its `tailscale serve` address and the device token. On success it
- * calls [onPaired]. On failure it shows the hint for that kind of failure and keeps what you typed.
+ * Pairs the app with your server: its `tailscale serve` address and the code `rafiq-bridge pair` printed.
+ * On success it calls [onPaired]. On failure it shows the hint for that kind of failure and keeps what you
+ * typed. After the bridge revoked this phone it also shows why you are here.
  *
- * The token is held only in memory while you type, never in saved instance state.
+ * The code is held only in memory while you type, never in saved instance state.
  */
 @Composable
 fun PairingScreen(
-    pairing: PairingRepository,
+    pairing: DevicePairing,
     onPaired: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var url by rememberSaveable { mutableStateOf("") }
-    var token by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var failure by remember { mutableStateOf<PairingResult?>(null) }
+    var failure by remember { mutableStateOf<CodePairResult?>(null) }
     var notSaved by remember { mutableStateOf(false) }
+    val revoked by pairing.revokedNotice.collectAsState()
     val scope = rememberCoroutineScope()
     KeepOutOfAutofill()
     PairingForm(
-        url = url,
-        token = token,
-        busy = busy,
-        hint = if (notSaved) stringResource(R.string.pairing_hint_not_saved) else failure?.let { hintFor(it) },
+        state =
+            PairingFormState(
+                url = url,
+                code = code,
+                busy = busy,
+                revoked = revoked,
+                hint = if (notSaved) stringResource(R.string.pairing_hint_not_saved) else failure?.let { hintFor(it) },
+            ),
         onUrlChange = {
             url = it
             failure = null
             notSaved = false
         },
-        onTokenChange = {
-            token = it
+        onCodeChange = {
+            code = it
             failure = null
             notSaved = false
         },
+        onDismissRevoked = pairing::dismissRevokedNotice,
         onConnect = {
             busy = true
             scope.launch {
-                val result = pairOrNull(pairing, url, token)
+                val result = pairOrNull(pairing, url, code)
                 busy = false
                 when {
-                    result is PairingResult.Paired -> onPaired()
+                    result is CodePairResult.Paired -> onPaired()
                     result == null -> notSaved = true
                     else -> failure = result
                 }
@@ -114,12 +119,12 @@ private fun KeepOutOfAutofill() {
  */
 @Suppress("TooGenericExceptionCaught") // DataStore and vendor Keystores throw more than they document.
 private suspend fun pairOrNull(
-    pairing: PairingRepository,
+    pairing: DevicePairing,
     url: String,
-    token: String,
-): PairingResult? =
+    code: String,
+): CodePairResult? =
     try {
-        pairing.pair(url, token)
+        pairing.pairWithCode(url, code)
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Exception) {
@@ -127,18 +132,26 @@ private suspend fun pairOrNull(
     }
 
 /**
- * The pairing form itself, stateless so every failure hint can be previewed.
+ * What the pairing form shows.
  *
- * @param hint why the last attempt failed, or null to show none.
+ * @property hint why the last attempt failed, or null to show none.
+ * @property revoked whether to explain that the bridge removed this phone.
  */
+internal data class PairingFormState(
+    val url: String,
+    val code: String,
+    val busy: Boolean = false,
+    val revoked: Boolean = false,
+    val hint: String? = null,
+)
+
+/** The pairing form itself, stateless so every failure hint can be previewed. */
 @Composable
-private fun PairingForm(
-    url: String,
-    token: String,
-    busy: Boolean,
-    hint: String?,
+internal fun PairingForm(
+    state: PairingFormState,
     onUrlChange: (String) -> Unit,
-    onTokenChange: (String) -> Unit,
+    onCodeChange: (String) -> Unit,
+    onDismissRevoked: () -> Unit,
     onConnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -157,18 +170,19 @@ private fun PairingForm(
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
+        if (state.revoked) RevokedNotice(onDismiss = onDismissRevoked)
         Text(
-            text = stringResource(R.string.pairing_intro),
+            text = stringResource(R.string.pair_intro),
             style = MaterialTheme.typography.bodyLarge,
             color = RafiqTheme.colors.textMuted,
         )
         OutlinedTextField(
-            value = url,
+            value = state.url,
             onValueChange = onUrlChange,
             label = { Text(stringResource(R.string.pairing_url_label)) },
             placeholder = { Text(stringResource(R.string.pairing_url_placeholder)) },
             singleLine = true,
-            enabled = !busy,
+            enabled = !state.busy,
             keyboardOptions =
                 KeyboardOptions(
                     capitalization = KeyboardCapitalization.None,
@@ -178,113 +192,80 @@ private fun PairingForm(
                 ),
             modifier = Modifier.fillMaxWidth(),
         )
-        TokenField(token = token, enabled = !busy, onTokenChange = onTokenChange)
-        hint?.let {
+        CodeField(code = state.code, enabled = !state.busy, onCodeChange = onCodeChange)
+        state.hint?.let {
             Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
         Button(
             onClick = onConnect,
-            enabled = !busy && url.isNotBlank() && token.isNotBlank(),
+            enabled = !state.busy && state.url.isNotBlank() && state.code.isNotBlank(),
             modifier = Modifier.fillMaxWidth().heightIn(min = spacing.minTouchTarget),
         ) {
-            Text(stringResource(if (busy) R.string.pairing_connecting else R.string.pairing_connect))
+            Text(stringResource(if (state.busy) R.string.pairing_connecting else R.string.pairing_connect))
         }
     }
 }
 
-/** The device token, masked unless you choose to show it. Pasting works as in any text field. */
+/** The pairing code. Upper case, and a typed or pasted hyphen or space is fine. */
 @Composable
-private fun TokenField(
-    token: String,
+private fun CodeField(
+    code: String,
     enabled: Boolean,
-    onTokenChange: (String) -> Unit,
+    onCodeChange: (String) -> Unit,
 ) {
-    val spacing = RafiqTheme.spacing
-    var tokenVisible by remember { mutableStateOf(false) }
     OutlinedTextField(
-        value = token,
-        // A pasted token often carries a trailing newline or spaces.
-        onValueChange = { onTokenChange(it.trim()) },
-        label = { Text(stringResource(R.string.pairing_token_label)) },
+        value = code,
+        onValueChange = {
+            onCodeChange(
+                it
+                    .uppercase()
+                    .filter { c ->
+                        c.isLetterOrDigit() || c == '-'
+                    }.take(MAX_CODE_CHARS),
+            )
+        },
+        label = { Text(stringResource(R.string.pair_code_label)) },
+        placeholder = { Text(stringResource(R.string.pair_code_placeholder)) },
         singleLine = true,
         enabled = enabled,
-        visualTransformation = if (tokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
         keyboardOptions =
             KeyboardOptions(
+                capitalization = KeyboardCapitalization.Characters,
                 autoCorrectEnabled = false,
-                keyboardType = KeyboardType.Password,
+                keyboardType = KeyboardType.Ascii,
                 imeAction = ImeAction.Done,
             ),
-        trailingIcon = {
-            TextButton(
-                onClick = { tokenVisible = !tokenVisible },
-                modifier = Modifier.heightIn(min = spacing.minTouchTarget),
-            ) {
-                Text(stringResource(if (tokenVisible) R.string.pairing_token_hide else R.string.pairing_token_show))
-            }
-        },
         // Not a value for autofill to fill or save, even if the screen's exclusion is lost.
         modifier = Modifier.fillMaxWidth().semantics { contentDataType = ContentDataType.None },
     )
 }
 
+/** Says why you are on this screen after the bridge removed the phone. */
 @Composable
-private fun hintFor(result: PairingResult): String? =
-    when (result) {
-        is PairingResult.Paired -> null
-        PairingResult.InvalidUrl -> stringResource(R.string.pairing_hint_invalid_url)
-        is PairingResult.Unreachable -> stringResource(R.string.pairing_hint_unreachable, result.detail)
-        PairingResult.NotABridge -> stringResource(R.string.pairing_hint_not_a_bridge)
-        PairingResult.HostRejected -> stringResource(R.string.pairing_hint_host_rejected)
-        PairingResult.TokenRejected -> stringResource(R.string.pairing_hint_token_rejected)
-    }
-
-@Preview(name = "Pairing, empty", showSystemUi = true)
-@Composable
-private fun PairingEmptyPreview() {
-    PairingPreview(url = "", token = "", failure = null)
-}
-
-@Preview(name = "Pairing, host refused", showSystemUi = true)
-@Composable
-private fun PairingHostRejectedPreview() {
-    PairingPreview(
-        url = "https://server.example.ts.net",
-        token = "replace-with-a-long-random-value",
-        failure = PairingResult.HostRejected,
-    )
-}
-
-@Preview(name = "Pairing, unreachable, long detail", showSystemUi = true)
-@Composable
-private fun PairingUnreachablePreview() {
-    PairingPreview(
-        url = "https://server.example.ts.net",
-        token = "replace-with-a-long-random-value",
-        failure =
-            PairingResult.Unreachable(
-                "Unable to resolve host server.example.ts.net: No address associated with hostname",
-            ),
-    )
-}
-
-@Composable
-private fun PairingPreview(
-    url: String,
-    token: String,
-    failure: PairingResult?,
-) {
-    RafiqTheme {
-        Surface(color = MaterialTheme.colorScheme.background) {
-            PairingForm(
-                url,
-                token,
-                busy = false,
-                hint = failure?.let { hintFor(it) },
-                onUrlChange = {},
-                onTokenChange = {},
-                onConnect = {},
-            )
+private fun RevokedNotice(onDismiss: () -> Unit) {
+    val spacing = RafiqTheme.spacing
+    Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+        Text(
+            text = stringResource(R.string.pair_revoked_notice),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.error,
+        )
+        TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = spacing.minTouchTarget)) {
+            Text(stringResource(R.string.pair_revoked_dismiss))
         }
     }
 }
+
+private const val MAX_CODE_CHARS = 9
+
+@Composable
+internal fun hintFor(result: CodePairResult): String? =
+    when (result) {
+        is CodePairResult.Paired -> null
+        CodePairResult.InvalidUrl -> stringResource(R.string.pairing_hint_invalid_url)
+        is CodePairResult.Unreachable -> stringResource(R.string.pairing_hint_unreachable, result.detail)
+        CodePairResult.NotABridge -> stringResource(R.string.pairing_hint_not_a_bridge)
+        CodePairResult.HostRejected -> stringResource(R.string.pairing_hint_host_rejected)
+        CodePairResult.CodeRejected -> stringResource(R.string.pair_hint_code_rejected)
+        CodePairResult.TooManyAttempts -> stringResource(R.string.pair_hint_too_many)
+    }

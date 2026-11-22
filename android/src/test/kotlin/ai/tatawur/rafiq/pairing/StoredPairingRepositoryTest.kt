@@ -1,6 +1,10 @@
 package ai.tatawur.rafiq.pairing
 
+import ai.tatawur.rafiq.client.pairing.CodePairResult
+import ai.tatawur.rafiq.client.pairing.DevicePairingApi
 import ai.tatawur.rafiq.client.sync.EventStore
+import ai.tatawur.rafiq.client.sync.HttpResponse
+import ai.tatawur.rafiq.client.sync.HttpTransport
 import ai.tatawur.rafiq.client.sync.PairingProbe
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.api.SessionSummary
@@ -13,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import java.io.IOException
 import java.security.ProviderException
@@ -44,23 +49,76 @@ class StoredPairingRepositoryTest {
         assertNull(repository.server.value)
     }
 
+    @Test
+    fun a_revoked_answer_for_the_stored_token_unpairs_and_raises_the_notice_but_a_stale_one_is_ignored() =
+        runBlocking {
+            val prefs = FakePrefs(storedPairing(token = "sealed:rfqd_old"))
+            val repository = repository(prefs, PlainSeal)
+            assertEquals("rfqd_old", repository.credentials.value?.token)
+
+            // A late answer to a request made with a token this phone no longer holds.
+            repository.deviceRevoked("rfqd_older")
+            assertEquals("rfqd_old", repository.credentials.value?.token)
+            assertEquals(false, repository.revokedNotice.value)
+
+            repository.deviceRevoked("rfqd_old")
+            assertNull(repository.server.value)
+            assertNull(repository.credentials.value)
+            assertEquals(emptyPreferences(), prefs.current.value)
+            assertEquals(true, repository.revokedNotice.value)
+        }
+
+    @Test
+    fun pairing_with_a_code_stores_the_new_token_sealed_and_clears_the_notice() =
+        runBlocking {
+            val prefs = FakePrefs(emptyPreferences())
+            val transport =
+                HttpTransport { request ->
+                    if (request.url.endsWith("/health")) {
+                        HttpResponse(200, """{"status":"ok","version":"0.9.0"}""")
+                    } else {
+                        HttpResponse(201, """{"device_id":"dev_1","name":"Pixel","token":"rfqd_new"}""")
+                    }
+                }
+            val repository = repository(prefs, PlainSeal, api = DevicePairingApi(transport))
+
+            val result = repository.pairWithCode("https://bridge.example.ts.net", "ABCD-EFGH")
+
+            assertTrue(result is CodePairResult.Paired)
+            assertEquals("rfqd_new", repository.credentials.value?.token)
+            assertEquals("sealed:rfqd_new", prefs.current.value[stringPreferencesKey("token_ciphertext")])
+            assertEquals(false, repository.revokedNotice.value)
+        }
+
     private fun repository(
         prefs: DataStore<Preferences>,
         seal: TokenSeal,
+        api: DevicePairingApi = DevicePairingApi { throw IOException("This test makes no calls.") },
     ) = StoredPairingRepository(
         prefs = prefs,
         cipher = seal,
         probe = PairingProbe { throw IOException("This test makes no calls.") },
+        api = api,
         cache = NoCache,
         io = Dispatchers.Unconfined,
     )
 
-    private fun storedPairing(): Preferences =
+    private fun storedPairing(token: String = "c2VhbGVk"): Preferences =
         mutablePreferencesOf(
             stringPreferencesKey("base_url") to "https://bridge.example.ts.net",
             stringPreferencesKey("bridge_version") to "0.2.0",
-            stringPreferencesKey("token_ciphertext") to "c2VhbGVk",
+            stringPreferencesKey("token_ciphertext") to token,
         )
+}
+
+/** A seal that only tags the token, so a test can see what was stored. */
+private object PlainSeal : TokenSeal {
+    override fun encrypt(token: String): String = "sealed:$token"
+
+    override fun decrypt(stored: String): String? =
+        stored.removePrefix("sealed:").takeIf { stored.startsWith("sealed:") }
+
+    override fun forget() = Unit
 }
 
 /** A vendor Keystore that fails the way some phones do: with an unchecked ProviderException. */

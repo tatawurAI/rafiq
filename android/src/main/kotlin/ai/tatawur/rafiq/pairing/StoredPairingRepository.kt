@@ -3,6 +3,8 @@ package ai.tatawur.rafiq.pairing
 import ai.tatawur.rafiq.client.PairedServer
 import ai.tatawur.rafiq.client.PairingRepository
 import ai.tatawur.rafiq.client.PairingResult
+import ai.tatawur.rafiq.client.pairing.CodePairResult
+import ai.tatawur.rafiq.client.pairing.DevicePairingApi
 import ai.tatawur.rafiq.client.sync.BridgeCredentials
 import ai.tatawur.rafiq.client.sync.EventStore
 import ai.tatawur.rafiq.client.sync.PairingProbe
@@ -28,18 +30,23 @@ import kotlinx.coroutines.withContext
  * A pairing that cannot be read, for any reason, is cleared, and the app starts on the pairing screen
  * instead of crashing on every launch.
  *
+ * @param probe pairs with a device token the user already holds, which is how a phone paired before
+ *   per-device tokens still works.
+ * @param api pairs with a code from `rafiq-bridge pair`.
  * @param cache cleared on unpair, and when pairing with a different server.
  */
 class StoredPairingRepository(
     private val prefs: DataStore<Preferences>,
     private val cipher: TokenSeal,
     private val probe: PairingProbe,
+    private val api: DevicePairingApi,
     private val cache: EventStore,
     private val io: CoroutineDispatcher,
-) : PairingRepository {
+) : DevicePairing {
     private val paired = MutableStateFlow(runBlocking(io) { load() })
     private val currentServer = MutableStateFlow(paired.value?.server)
     private val currentCredentials = MutableStateFlow(paired.value?.credentials)
+    private val revoked = MutableStateFlow(false)
 
     override val server: StateFlow<PairedServer?> = currentServer.asStateFlow()
 
@@ -57,6 +64,35 @@ class StoredPairingRepository(
             )
         }
         return result
+    }
+
+    override suspend fun pairWithCode(
+        baseUrl: String,
+        code: String,
+    ): CodePairResult {
+        val result = api.pair(baseUrl, code)
+        if (result is CodePairResult.Paired) {
+            save(Pairing(result.server, BridgeCredentials(result.server.baseUrl, result.deviceToken)))
+            revoked.value = false
+        }
+        return result
+    }
+
+    override val revokedNotice: StateFlow<Boolean> = revoked.asStateFlow()
+
+    override fun dismissRevokedNotice() {
+        revoked.value = false
+    }
+
+    /**
+     * The bridge answered [usedToken] with `device_revoked`. Clears the token, the cached sessions and the
+     * pairing, and raises the notice. Ignored when [usedToken] is no longer the stored token, for example
+     * a late answer to a request made before the phone paired again.
+     */
+    suspend fun deviceRevoked(usedToken: String) {
+        if (currentCredentials.value?.token != usedToken) return
+        revoked.value = true
+        unpair()
     }
 
     override suspend fun unpair() {

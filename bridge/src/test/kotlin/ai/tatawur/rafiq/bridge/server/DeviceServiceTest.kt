@@ -142,4 +142,16 @@ class DeviceServiceTest {
             assertEquals(DeviceCheck.Active(otherId), devices.service.verify(otherToken))
             assertEquals(listOf("events:device revoked"), closed)
         }
+
+    @Test
+    fun making_a_new_code_ends_a_lockout_that_strangers_caused() =
+        runBlocking {
+            val devices = fixture()
+            repeat(5) { devices.service.redeem("AAAAAAAA") }
+            assertIs<RedeemResult.Throttled>(devices.service.redeem("AAAAAAAA"))
+
+            val code = devices.service.issueCode("phone").code
+
+            assertIs<RedeemResult.Paired>(devices.service.redeem(code))
+        }
 }

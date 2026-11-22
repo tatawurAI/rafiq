@@ -27,8 +27,9 @@ class TestClock(
 class DeviceFixture(
     dir: Path? = null,
     val clock: TestClock = TestClock(),
+    busyTimeoutMs: Int = 5000,
 ) : AutoCloseable {
-    val store = DeviceStore.open(dir, Dispatchers.IO.limitedParallelism(1))
+    val store = DeviceStore.open(dir, Dispatchers.IO.limitedParallelism(1), busyTimeoutMs)
     val registry = InMemoryConnectionRegistry()
     val service = DeviceService(store, registry, clock)
 

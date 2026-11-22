@@ -3,9 +3,11 @@ package ai.tatawur.rafiq.bridge
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import ai.tatawur.rafiq.bridge.server.DevicePrincipalKey
+import ai.tatawur.rafiq.bridge.server.DeviceService
 import ai.tatawur.rafiq.bridge.server.EventStreamer
 import ai.tatawur.rafiq.bridge.server.InMemoryConnectionRegistry
 import ai.tatawur.rafiq.bridge.server.devRoutes
+import ai.tatawur.rafiq.bridge.server.deviceRoutes
 import ai.tatawur.rafiq.bridge.server.eventsRoute
 import ai.tatawur.rafiq.bridge.server.installErrorShape
 import ai.tatawur.rafiq.bridge.server.installSecurity
@@ -37,6 +39,7 @@ import kotlinx.coroutines.runBlocking
  * @param devPage whether to serve the development page at `/dev`. When false the route does not exist.
  * @param terminal the Terminal view and the tmux session source, or null when Terminal is off. With null,
  *   `WS /terminal` does not exist and no tmux session is listed.
+ * @param devices the per-device tokens, which add `POST /pair` and `DELETE /devices/me`. Null keeps neither.
  * @param connections where every `/events` and `/terminal` socket registers, so revoking a device closes its
  *   sockets at once.
  * @param deviceOf names the device a call came from, for the connection registry and the per-device terminal
@@ -50,6 +53,7 @@ fun Application.bridgeModule(
     devPage: Boolean = false,
     terminal: TerminalService? = null,
     connections: ConnectionRegistry = InMemoryConnectionRegistry(),
+    devices: DeviceService? = null,
     deviceOf: (ApplicationCall) -> String = { it.attributes.getOrNull(DevicePrincipalKey)?.deviceId ?: UNKNOWN_DEVICE },
 ) {
     install(ContentNegotiation) {
@@ -71,6 +75,7 @@ fun Application.bridgeModule(
         sessionRoutes(sessions)
         eventsRoute(log, EventStreamer(log), sessions::isVisible, connections, deviceOf)
         terminal?.routes(this, connections, deviceOf)
+        devices?.let { deviceRoutes(it) }
         if (devPage) devRoutes(sessions)
         // Open to any caller on purpose, though the host and origin checks still apply: it reveals only
         // liveness and version, and it is what you check first when the phone cannot connect.

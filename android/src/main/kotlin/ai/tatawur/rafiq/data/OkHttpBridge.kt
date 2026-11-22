@@ -123,7 +123,11 @@ class OkHttpTransport(
                     ) {
                         val answer =
                             try {
-                                response.use { HttpResponse(it.code, it.body.string()) }
+                                response.use {
+                                    // Retry-After as seconds; the date form is rare and ignored.
+                                    val retryAfter = it.header("Retry-After")?.trim()?.toLongOrNull()
+                                    HttpResponse(it.code, it.body.string(), retryAfter)
+                                }
                             } catch (failure: IOException) {
                                 continuation.resumeWithException(failure)
                                 return

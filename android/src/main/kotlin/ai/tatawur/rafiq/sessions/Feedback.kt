@@ -19,6 +19,11 @@ sealed interface Feedback {
         override val textRes = R.string.feedback_still_working
     }
 
+    /** Your server is rate limiting this kind of call. */
+    data object RateLimited : Feedback {
+        override val textRes = R.string.feedback_rate_limited
+    }
+
     data object AlreadyAnswered : Feedback {
         override val textRes = R.string.feedback_already_answered
     }
@@ -58,6 +63,10 @@ fun CommandResult<*>.feedback(): Feedback? =
             Feedback.StillWorking
         }
 
+        is CommandResult.RateLimited -> {
+            Feedback.RateLimited
+        }
+
         CommandResult.Gone -> {
             Feedback.AlreadyAnswered
         }
@@ -87,5 +96,11 @@ fun CommandResult<*>.feedback(): Feedback? =
 internal fun CommandResult<*>.canRetryAnswer(): Boolean =
     when (this) {
         is CommandResult.Ok, CommandResult.Gone, CommandResult.NotFound -> false
-        CommandResult.Busy, CommandResult.Offline, CommandResult.Unauthorized, is CommandResult.Failed -> true
+
+        CommandResult.Busy,
+        CommandResult.Offline,
+        CommandResult.Unauthorized,
+        is CommandResult.RateLimited,
+        is CommandResult.Failed,
+        -> true
     }

@@ -61,10 +61,15 @@ data class HttpRequest(
     override fun toString(): String = "HttpRequest($method $url)"
 }
 
-/** Whatever the bridge answered, success or not. */
+/**
+ * Whatever the bridge answered, success or not.
+ *
+ * @property retryAfterSeconds the `Retry-After` header as a number of seconds, or null when absent or a date.
+ */
 data class HttpResponse(
     val status: Int,
     val body: String,
+    val retryAfterSeconds: Long? = null,
 )
 
 /** Sends HTTP requests. */

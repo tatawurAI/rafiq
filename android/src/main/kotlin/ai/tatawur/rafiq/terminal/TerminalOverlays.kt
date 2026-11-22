@@ -301,6 +301,10 @@ private fun historyFailure(result: CommandResult<Nothing>): Int =
             R.string.terminal_history_offline
         }
 
+        is CommandResult.RateLimited -> {
+            R.string.terminal_history_rate_limited
+        }
+
         is CommandResult.Failed -> {
             if (result.code ==
                 INVALID_QUERY

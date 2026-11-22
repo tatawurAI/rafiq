@@ -26,6 +26,19 @@ import java.util.concurrent.CompletionStage
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
+/**
+ * A gate whose listed sessions all open in Terminal, as if a scan had found an agent in each. For tests that are
+ * about the terminal routes, not the gate. Their panes run `cat`, so they are named as shells too, and a later
+ * scan keeps them open.
+ */
+fun openGate(
+    settings: TerminalSettings,
+    server: TmuxServer,
+): TerminalGate =
+    TerminalGate(settings.copy(terminal = true, shellSessions = settings.sessions), server).also {
+        it.updateOpenable(settings.sessions)
+    }
+
 /** What a test socket received, in order. */
 sealed interface Received {
     data class Text(
@@ -85,7 +98,12 @@ class RealBridge(
     init {
         lateinit var created: TmuxSessionSource
         fixture =
-            BridgeFixture(dir, adapter) { id -> gate == null || !id.startsWith("tmux-") || created.isVisible(id) }
+            BridgeFixture(
+                dir,
+                adapter,
+                visibility = { id -> gate == null || !id.startsWith("tmux-") || created.isVisible(id) },
+                present = { session -> if (gate == null) session else created.present(session) },
+            )
         tmuxSource = gate?.let { TmuxSessionSource(it, fixture.log, agents).also { source -> created = source } }
         val service = gate?.let { TerminalService(it, tmuxSource!!) }
         server =

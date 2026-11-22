@@ -68,6 +68,7 @@ class SessionManager(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val visibility: (sessionId: String) -> Boolean = { !isTmuxSessionId(it) },
     private val tmuxChat: TmuxChat? = null,
+    private val present: (Session) -> Session = { it },
 ) {
     private val adaptersById = adapters.associateBy(AgentAdapter::agentId)
     private val live = ConcurrentHashMap<String, LiveSession>()
@@ -151,12 +152,17 @@ class SessionManager(
     suspend fun summaries(): List<SessionSummary> =
         log.summaries().filter { visibility(it.session.id) }.map { it.copy(session = withPermissionMode(it.session)) }
 
-    /** A tmux session's permission mode lives with its reader, not in the stored row. */
-    private fun withPermissionMode(session: Session): Session =
-        tmuxChat
-            ?.takeIf { isTmuxSessionId(session.id) }
-            ?.permissionMode(session.id)
-            ?.let { session.copy(permissionMode = it) } ?: session
+    /**
+     * A tmux session's permission mode lives with its reader, not in the stored row, and whether Terminal may
+     * open it lives with the tmux source ([present]).
+     */
+    private fun withPermissionMode(stored: Session): Session =
+        present(stored).let { session ->
+            tmuxChat
+                ?.takeIf { isTmuxSessionId(session.id) }
+                ?.permissionMode(session.id)
+                ?.let { session.copy(permissionMode = it) } ?: session
+        }
 
     /** @throws SessionException.NotFound when there is no such session. */
     suspend fun threads(sessionId: String): List<AgentThread> {

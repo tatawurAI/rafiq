@@ -101,30 +101,63 @@ rafiq-bridge revoke <id>
 
 If you set `RAFIQ_DEVICE_TOKEN` before this version, that token still works. The bridge lists it as the device `legacy`. Once your phone is paired with its own token, run `rafiq-bridge revoke legacy`, then remove `RAFIQ_DEVICE_TOKEN` from your service environment. The bridge no longer needs it. A revoked `legacy` stays revoked even if the variable is still set, so a leftover value is harmless.
 
+### Check your Tailscale login too (optional)
+
+`tailscale serve` tells the bridge which Tailscale login made each request, in the `Tailscale-User-Login` header. It removes that header if a client sent it, so the value comes from Tailscale. Tailscale describes these headers under "Identity headers" in [Tailscale Serve](https://tailscale.com/kb/1312/serve). Set your login, and the bridge refuses any request from another login, even one with a valid device token:
+
+```sh
+export RAFIQ_TAILSCALE_LOGIN=alex@example.com
+```
+
+Use the login exactly as Tailscale shows it. You find it on the Users page of the Tailscale admin console, or with `tailscale whois 100.64.0.2` on your server, using your phone's Tailscale address.
+
+What it does:
+
+- Every request and both sockets, `/events` and `/terminal`, need the header to name your login, on top of the device token. Only `GET /health` is left open. A missing or different login gets `403 identity_mismatch`.
+- A stolen device token is then useless from someone else's Tailscale login, for example on a shared tailnet.
+- Someone you shared your server with in Tailscale reaches it with their own login, so they are refused. That is intended.
+- The bridge trusts the header only on a connection from `127.0.0.1`, where `tailscale serve` connects from. It will not start with `RAFIQ_TAILSCALE_LOGIN` set and `RAFIQ_BIND_ADDRESS` on another address, and says so.
+- A refusal is logged with the login that was refused, and nothing else from the request.
+
+What it does not do:
+
+- It does not help against anything that runs on your server. A local process can connect from `127.0.0.1` and send any header it likes.
+- Tailscale adds no identity header for a tagged device, so a phone that is tagged is refused. Leave the setting unset if your phone is tagged.
+- `tailscale funnel` requests carry no identity header, so they are refused. Never use funnel for the bridge anyway.
+- A login with non-ASCII characters is not supported. Tailscale sends it encoded, and the bridge refuses it. The bridge also will not start if `RAFIQ_TAILSCALE_LOGIN` holds an encoded value.
+
 ## Terminal
 
 Terminal shows a tmux session on your server in the app, and sends your keys to it. It is a remote shell. It is off until you turn it on, and it reaches only the sessions you name.
 
 You need tmux 3.2 or newer on your server, and the default `window-size latest`.
 
-Turn it on in the bridge's environment:
+There are two switches. `RAFIQ_TMUX=1` lists your tmux sessions, so you can chat with the agent in them. `RAFIQ_TERMINAL=1` also lets your phone open them in Terminal, and turns on the list by itself. To list and open the sessions where an agent runs:
 
 ```sh
 export RAFIQ_TERMINAL=1
 export RAFIQ_TMUX_SESSIONS=weather-app,docs-site
 ```
 
+A session with no agent in it, such as a plain shell, is listed but does not open in Terminal until you name it a second time. This is a change: with `RAFIQ_TERMINAL=1` alone, a plain shell used to open, and now it needs `RAFIQ_TERMINAL_SHELLS`.
+
+```sh
+export RAFIQ_TERMINAL_SHELLS=docs-site
+```
+
 | Setting | Meaning |
 |---|---|
-| `RAFIQ_TERMINAL` | `1` turns Terminal and tmux sessions on. Anything else, or unset, leaves them off. |
-| `RAFIQ_TMUX_SESSIONS` | The exact names of the tmux sessions your phone may see and open. Letters, digits, `.`, `_` and `-` only. No `*`. The bridge will not start with a bad name, and says which variable it is. |
+| `RAFIQ_TMUX` | `1` lists the tmux sessions you name, without Terminal. Anything else, or unset, lists none unless `RAFIQ_TERMINAL` is on. |
+| `RAFIQ_TERMINAL` | `1` lists the tmux sessions you name and lets your phone open them in Terminal. Anything else, or unset, leaves Terminal off. |
+| `RAFIQ_TMUX_SESSIONS` | The exact names of the tmux sessions your phone may see. Letters, digits, `.`, `_` and `-` only. No `*`. The bridge will not start with a bad name, and says which variable it is. |
+| `RAFIQ_TERMINAL_SHELLS` | Sessions from `RAFIQ_TMUX_SESSIONS` that open in Terminal even when no agent runs in them. Same name rules. A session with an agent does not need to be here. A name that is not also in `RAFIQ_TMUX_SESSIONS` fails the start. |
 | `RAFIQ_TMUX_SOCKET` | The tmux socket name, if your sessions run on a tmux server started with `tmux -L <name>`. Unset uses the default server. |
-| `RAFIQ_TERMINAL_ALLOW_NON_LOOPBACK` | `1` lets the bridge bind to an address other than `127.0.0.1` while Terminal is on. Leave it unset. |
+| `RAFIQ_TERMINAL_ALLOW_NON_LOOPBACK` | `1` lets the bridge bind to an address other than `127.0.0.1` while tmux sessions are on. Leave it unset. |
 
 What to know before you turn it on:
 
 - Terminal reaches every window and pane of each session you list. Name only sessions you are happy to type into from your phone.
-- With Terminal on, the bridge refuses to start on a non-loopback address. Keep `RAFIQ_BIND_ADDRESS` at its default and use `tailscale serve`, as above. Never use `tailscale funnel`.
+- With tmux sessions on, the bridge refuses to start on a non-loopback address. Keep `RAFIQ_BIND_ADDRESS` at its default and use `tailscale serve`, as above. Never use `tailscale funnel`.
 - Each phone can have 2 terminals open, and the bridge 4. A terminal closes after 10 minutes with no keys or resize from your phone and no output from the pane. A phone that is watching an agent work stays open. A terminal socket is closed after 8 hours whatever it is doing, so a forgotten phone does not stay attached. The app reconnects only if Terminal is on screen. A device may open at most 5 terminals a minute. Past that, the bridge answers "too many terminal opens, wait a moment". Fast size changes, such as a keyboard or fold animation, are merged into the newest size. More than 60 size changes in 10 seconds end the terminal.
 - While you have Terminal open, the window in tmux has the size of your phone. When you leave, it goes back to the size of your terminal at your desk. If nothing is attached at your desk, it goes back to the size it had before you opened Terminal.
 - Tap the window label to show another window of the session. Only your phone changes window, and your desk stays where it is. After you pick another window on your phone, your desk's window takes back its size the next time you type at the desk.
@@ -132,7 +165,7 @@ What to know before you turn it on:
 - Rafiq can ask for your fingerprint or face before Terminal opens. Turn it on in the app's settings. It asks once when Terminal opens, and not for each key.
 - The bridge's own view sessions are named `rafiq-view-...`. Do not use that name for your own sessions. When the bridge starts, it ends only the `rafiq-view-` sessions that have no client attached, so two bridges do not close each other's live views.
 
-A listed session shows in your session list with the agent that runs in it. Its row opens in Terminal. A session you did not list is not shown, and cannot be opened, even if its name starts with a listed name.
+A listed session shows in your session list with the agent that runs in it. When Terminal may open it, its row has the Terminal toggle. When it may not, because `RAFIQ_TERMINAL` is off or no agent runs in it and it is not in `RAFIQ_TERMINAL_SHELLS`, the row says so and has no toggle. A session you did not list is not shown, and cannot be opened, even if its name starts with a listed name.
 
 ## Chat for tmux sessions
 
@@ -195,8 +228,11 @@ The log is not the only record. Chat prompts and the agent's replies and tool ou
 | `429`, `too_many_attempts` | 100 wrong codes in five minutes. Run `rafiq-bridge pair` again for a fresh code. That also clears the lockout. |
 | The app says your server removed the phone | The phone was revoked. Run `rafiq-bridge pair` again. |
 | The app says the code is wrong | Codes work once and expire after 10 minutes. Run `rafiq-bridge pair` for a new one. |
+| `403`, `identity_mismatch` | `RAFIQ_TAILSCALE_LOGIN` is set and the request came from another Tailscale login, a tagged device, or not through `tailscale serve`. Check the login is the one Tailscale shows for your phone. |
+| The bridge will not start and names `RAFIQ_TAILSCALE_LOGIN` | The value is not one login, or `RAFIQ_BIND_ADDRESS` is not a loopback address. |
 | `403`, `forbidden_origin` | A browser page on another site called the bridge. The app sends no `Origin`, so this is not the app. |
 | `502` from `tailscale serve` | The bridge is not running, or not on `127.0.0.1:8740`. |
 | No answer at all | Tailscale is off on your phone, the phone is on another tailnet, or your tailnet's access rules block it from your server. |
-| The bridge will not start and names `RAFIQ_TMUX_SESSIONS`, `RAFIQ_TMUX_SOCKET` or `RAFIQ_BIND_ADDRESS` | A Terminal setting is wrong. Terminal needs at least one exact session name, and a loopback bind address. |
+| The bridge will not start and names `RAFIQ_TMUX_SESSIONS`, `RAFIQ_TERMINAL_SHELLS`, `RAFIQ_TMUX_SOCKET` or `RAFIQ_BIND_ADDRESS` | A tmux setting is wrong. tmux sessions need at least one exact session name, and a loopback bind address. Every name in `RAFIQ_TERMINAL_SHELLS` must also be in `RAFIQ_TMUX_SESSIONS`. |
+| A session is listed but has no Terminal toggle | `RAFIQ_TERMINAL` is off, or no agent runs in the session and its name is not in `RAFIQ_TERMINAL_SHELLS`. |
 | A session is listed but Terminal closes at once | tmux is older than 3.2, or the session was killed. |

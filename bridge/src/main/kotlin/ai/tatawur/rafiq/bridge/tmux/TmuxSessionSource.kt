@@ -48,8 +48,22 @@ class TmuxSessionSource(
     @Volatile
     var onScan: (suspend (panes: List<PaneInfo>, processes: Map<Int, Pair<Int, String>>) -> Unit)? = null
 
+    /** The `terminalAllowed` this process last announced per session, so a change is announced once. */
+    private val announced = mutableMapOf<String, Boolean>()
+
     /** Whether clients may see the session: not a tmux session, or one this source lists right now. */
     fun isVisible(sessionId: String): Boolean = !isTmuxSessionId(sessionId) || sessionId in visible
+
+    /**
+     * [session] with `terminalAllowed` as of the last scan. The log does not store that field, because it
+     * follows the bridge's settings and the agent in the pane, not the session's history.
+     */
+    fun present(session: Session): Session =
+        if (isTmuxSessionId(session.id)) {
+            session.copy(terminalAllowed = gate.canOpen(session.id.removePrefix(TMUX_SESSION_PREFIX)))
+        } else {
+            session
+        }
 
     /** Polls until [scope] ends. */
     fun start(scope: CoroutineScope) {
@@ -62,6 +76,7 @@ class TmuxSessionSource(
                     throw cancelled
                 } catch (failure: Exception) {
                     visible = emptySet()
+                    gate.updateOpenable(emptySet())
                     logger.warn("tmux poll failed: {}", failure.toString())
                 }
                 delay(interval)
@@ -80,20 +95,23 @@ class TmuxSessionSource(
             val panes = if (allowed.isEmpty()) emptyList() else gate.server.panes().filter { it.sessionName in names }
             val processes = if (panes.isEmpty()) emptyMap() else AgentDetector.processTable()
             val detected = if (panes.isEmpty()) emptyMap() else agents.detect(panes, processes)
+            val opens = mutableSetOf<String>()
             for (session in allowed) {
-                show(
-                    session.name,
-                    detected[session.name] ?: DetectedAgent(AgentDetector.TERMINAL, null),
-                )
+                val found = detected[session.name] ?: DetectedAgent(AgentDetector.TERMINAL, null)
+                val terminalAllowed = settings.access(session.name, found.agent != AgentDetector.TERMINAL).terminal
+                if (terminalAllowed) opens += session.name
+                show(session.name, found, terminalAllowed)
             }
             settleGone(existing.map { it.name }.toSet())
             visible = names.map { TMUX_SESSION_PREFIX + it }.toSet()
+            gate.updateOpenable(opens)
             onScan?.invoke(panes, processes)
         }
 
     private suspend fun show(
         name: String,
         found: DetectedAgent,
+        terminalAllowed: Boolean,
     ) {
         val id = TMUX_SESSION_PREFIX + name
         val stored = log.session(id)
@@ -109,13 +127,16 @@ class TmuxSessionSource(
                     createdAtMs = now,
                     updatedAtMs = now,
                     terminal = true,
+                    terminalAllowed = terminalAllowed,
                 )
             val main = AgentThread(MAIN_THREAD, id, null, ThreadKind.MAIN, name, AgentState.DONE)
             log.createSession(session, AGENT_SESSION_REF, main)
-        } else if (stored.session.agent != found.agent) {
-            log.updateAgent(id, found.agent)
-            log.append(id, EventPayload.SessionUpdated(stored.session.copy(agent = found.agent, terminal = true)))
+        } else if (stored.session.agent != found.agent || announced[name] != terminalAllowed) {
+            if (stored.session.agent != found.agent) log.updateAgent(id, found.agent)
+            val updated = stored.session.copy(agent = found.agent, terminal = true, terminalAllowed = terminalAllowed)
+            log.append(id, EventPayload.SessionUpdated(updated))
         }
+        announced[name] = terminalAllowed
     }
 
     /** A tmux session tmux no longer has cannot be working or waiting on anything. */

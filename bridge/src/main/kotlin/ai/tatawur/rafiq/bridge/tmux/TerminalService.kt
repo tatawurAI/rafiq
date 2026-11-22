@@ -17,15 +17,28 @@ class TerminalGate(
     /** The sizes sessions had before a view took them, so the last view to leave gives them back. */
     val sessionSizes = SessionSizes()
 
+    /** The sessions Terminal may open, as of the tmux source's last scan. Empty until the first one. */
+    @Volatile
+    private var openable: Set<String> = emptySet()
+
     /**
-     * The tmux session name a request may reach, from its `session` parameter (`tmux-<name>`), or null. Both
-     * terminal routes ask here, so a session is reachable by one rule.
+     * The tmux session name a request may open in Terminal, from its `session` parameter (`tmux-<name>`), or
+     * null. Both terminal routes ask here, so a session is reachable by one rule: listed, Terminal on, and an
+     * agent detected in it or its name in `RAFIQ_TERMINAL_SHELLS` (see [TerminalSettings.access]).
      */
     fun allowedName(sessionParameter: String?): String? =
         sessionParameter
             ?.takeIf { it.startsWith(TMUX_SESSION_PREFIX) }
             ?.removePrefix(TMUX_SESSION_PREFIX)
-            ?.takeIf(settings::allows)
+            ?.takeIf { settings.allows(it) && it in openable }
+
+    /** Whether Terminal may open the tmux session called [name], as of the last scan. */
+    fun canOpen(name: String): Boolean = name in openable
+
+    /** Called by the tmux source after each scan, or with nothing when a scan fails. */
+    fun updateOpenable(names: Set<String>) {
+        openable = names
+    }
 
     /** The name every view of this bridge process starts with: `rafiq-view-<nonce>-`. */
     val viewPrefix: String = TmuxServer.VIEW_PREFIX + UUID.randomUUID().toString().take(NONCE_LENGTH) + "-"

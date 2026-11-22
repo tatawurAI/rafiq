@@ -158,6 +158,7 @@ fun TestScope.reader(
     offsets: ReaderOffsets = ReaderOffsets(null),
     hooksInstalled: suspend (String) -> Boolean = { true },
     projectsDir: java.nio.file.Path? = null,
+    present: (Session) -> Session = { it },
 ) = ClaudeReader(
     log = log,
     io = io,
@@ -172,6 +173,7 @@ fun TestScope.reader(
     nowMs = { testScheduler.currentTime },
     ioDispatcher = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler),
     timing = timing,
+    present = present,
 )
 
 /** One line of a session record, in the shape Claude Code writes. */

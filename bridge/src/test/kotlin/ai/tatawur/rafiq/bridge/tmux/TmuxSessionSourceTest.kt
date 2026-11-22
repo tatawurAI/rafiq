@@ -195,6 +195,7 @@ class TmuxSessionSourceTest {
         )
         list.toFile().setExecutable(true)
         val bridge = open("weather-app", agents = AgentDetector(claudeCommand = list.toString()))
+        bridge.tmuxSource!!.permissionModeOf = { "plan" }
         bridge.refresh()
         val stored = {
             runBlocking {
@@ -214,6 +215,14 @@ class TmuxSessionSourceTest {
 
         assertEquals("claude-code", stored().agent)
         assertEquals(project.toString(), stored().projectPath)
+        // The update keeps the fields the log does not store: the permission mode and the Terminal flag.
+        val update =
+            runBlocking { bridge.fixture.log.latest("tmux-weather-app", 20) }
+                .mapNotNull { it.payload as? EventPayload.SessionUpdated }
+                .last()
+                .session
+        assertEquals("plan", update.permissionMode)
+        assertEquals(bridge.tmuxSource!!.present(stored()).terminalAllowed, update.terminalAllowed)
     }
 
     @Test

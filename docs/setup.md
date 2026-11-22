@@ -185,7 +185,7 @@ A listed tmux session that runs Claude Code also has a Chat. Replies, tool steps
 
 Chat for a tmux session gets the agent's replies, steps and approvals from Claude Code's own hooks. You install them per project, from the app, and only after you have seen exactly what will be written. Rafiq never installs hooks for all projects, and never edits your user-level settings file (`~/.claude/settings.json`).
 
-You need `python3` on your server. The hook program is `hooks/rafiq-hook.py` in the installed bridge, next to `bin` and `lib`, and uses only Python's standard library. Keep the bridge where you installed it: the hooks point at that path. If you move it, remove the hooks from the app and install them again.
+You need `python3` on your server. The hook program is `hooks/rafiq-hook.py` in the installed bridge, next to `bin` and `lib`, and uses only Python's standard library. Keep the bridge where you installed it: the hooks point at that path. If you move it, remove the hooks from the app and install them again. The bridge uses the hook program only if it and its folder belong to you or to root and no other user can write to them, so a package install such as `/opt/rafiq` with mode 755 works, and a folder others can write to does not.
 
 To install, open a tmux session in the app and follow the prompt to set up Chat. The app shows:
 

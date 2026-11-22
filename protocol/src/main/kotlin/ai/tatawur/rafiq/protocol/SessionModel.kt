@@ -10,6 +10,7 @@ import kotlinx.serialization.Serializable
  * @property projectPath the project folder on your server, as an absolute path.
  * @property createdAtMs when the session started, in milliseconds since the Unix epoch.
  * @property updatedAtMs when any field last changed, in milliseconds since the Unix epoch.
+ * @property terminal true when the session runs in a tmux pane on your server, so the app offers the Terminal view.
  */
 @Serializable
 data class Session(
@@ -20,6 +21,7 @@ data class Session(
     @SerialName("status") val status: AgentState = AgentState.UNKNOWN,
     @SerialName("created_at_ms") val createdAtMs: Long,
     @SerialName("updated_at_ms") val updatedAtMs: Long,
+    @SerialName("terminal") val terminal: Boolean = false,
 )
 
 /**

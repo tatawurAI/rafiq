@@ -12,9 +12,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import java.io.IOException
 import kotlin.time.Duration
@@ -107,6 +109,9 @@ class TerminalLink(
 
     @Volatile private var outgoing: Channel<ByteArray>? = null
 
+    // Told each time a chunk ends on a string opener, so it is released if nothing follows.
+    @Volatile private var heldOpener: Channel<Unit>? = null
+
     @Volatile private var keys = KeyUplink()
     private val viewport = MutableStateFlow<CellSize?>(null)
     private val currentStatus = MutableStateFlow<TerminalStatus>(TerminalStatus.Detached)
@@ -125,7 +130,9 @@ class TerminalLink(
     fun sendKeys(bytes: ByteArray) {
         val queue = outgoing ?: return
         val filter = keys
-        synchronized(filter) { filter.frames(bytes) }.forEach { queue.trySend(it) }
+        val (frames, holding) = synchronized(filter) { filter.frames(bytes) to filter.holdingOpener }
+        frames.forEach { queue.trySend(it) }
+        if (holding) heldOpener?.trySend(Unit)
     }
 
     /**
@@ -181,6 +188,7 @@ class TerminalLink(
             val decoder = TerminalStreamDecoder()
             val pane = PaneFilter()
             val queue = Channel<ByteArray>(Channel.UNLIMITED)
+            val held = Channel<Unit>(Channel.CONFLATED)
             var ended: String? = null
             val helpers = mutableListOf<Job>()
             // A fresh allow-list per socket, so a paste cut off by a drop does not carry into the next one.
@@ -195,7 +203,9 @@ class TerminalLink(
                             // The attach does not wait for the debounce. Later changes do.
                             var sent = viewport.value
                             sent?.let { frame.uplink.sendText(resizeMessage(it)) }
+                            heldOpener = held
                             helpers += launch { sendPaced(queue, frame.uplink) }
+                            helpers += launch { releaseHeldOpeners(held, queue) }
                             // Compares with what was sent instead of skipping the first value, so a
                             // change between the open and this collector starting still goes up.
                             helpers +=
@@ -227,6 +237,7 @@ class TerminalLink(
             } finally {
                 uplink = null
                 outgoing = null
+                heldOpener = null
                 queue.close()
                 // The socket is gone: its helpers go with it, so the flow can complete.
                 helpers.forEach { it.cancel() }
@@ -251,6 +262,22 @@ class TerminalLink(
                 event
             }
         }
+
+    /**
+     * Releases a held string opener as Alt with that key when no chunk followed it for
+     * [KeyUplink.OPENER_HOLD]. A newer hold restarts the wait. If a chunk came, it already took
+     * the opener, and there is nothing to release.
+     */
+    private suspend fun releaseHeldOpeners(
+        held: Channel<Unit>,
+        queue: Channel<ByteArray>,
+    ) {
+        held.receiveAsFlow().collectLatest {
+            delay(KeyUplink.OPENER_HOLD)
+            val filter = keys
+            synchronized(filter) { filter.release() }.forEach { queue.trySend(it) }
+        }
+    }
 
     /** Sends queued key frames, pausing after each so the rate stays under [MAX_UP_BYTES_PER_SECOND]. */
     private suspend fun sendPaced(

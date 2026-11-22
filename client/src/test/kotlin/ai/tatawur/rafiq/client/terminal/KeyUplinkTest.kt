@@ -15,9 +15,10 @@ import kotlin.test.fail
  * about the app's framing, which the bridge does not see.
  */
 class KeyUplinkTest {
+    /** What goes up for [chunks], then once no further chunk comes, as the link does after a pause. */
     private fun upBytes(vararg chunks: ByteArray): List<ByteArray> {
         val uplink = KeyUplink()
-        return chunks.flatMap { uplink.frames(it) }
+        return chunks.flatMap { uplink.frames(it) } + uplink.release()
     }
 
     private fun joined(frames: List<ByteArray>): ByteArray = frames.fold(ByteArray(0)) { all, frame -> all + frame }
@@ -63,6 +64,20 @@ class KeyUplinkTest {
         val expected = byteArrayOf(0x1b, 0x5b, 0x0d, 0x0a, 0x09, 0x5c, 0xff.toByte())
         assertContentEquals(expected, decodeVector("\\e[\\r\\n\\t\\\\\\xff"))
         assertContentEquals("é👍".toByteArray(), decodeVector("é👍"))
+    }
+
+    @Test
+    fun a_string_opener_at_a_chunk_end_is_held_then_dropped_with_its_string_or_released_as_alt() {
+        val uplink = KeyUplink()
+        assertEquals(emptyList(), uplink.frames("\u001b]".toByteArray()))
+        assertTrue(uplink.holdingOpener)
+        // The next chunk carries on with a colour reply: none of it goes up.
+        assertEquals(listOf("x"), uplink.frames("11;rgb:0000/0000/0000\u0007x".toByteArray()).map { String(it) })
+        assertEquals(emptyList(), uplink.release())
+
+        // Nothing follows Alt+P: once released, it goes up as the key.
+        assertEquals(emptyList(), uplink.frames("\u001bP".toByteArray()))
+        assertEquals(listOf("\u001bP"), uplink.release().map { String(it) })
     }
 
     @Test

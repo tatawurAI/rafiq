@@ -260,6 +260,27 @@ class TerminalLinkTest {
         }
 
     @Test
+    fun a_real_alt_key_on_a_string_opener_goes_up_after_the_hold_and_a_split_reply_never_does() =
+        runTest {
+            val (sockets, link) = attached()
+            backgroundScope.launch { link.attach().collect {} }
+            runCurrent()
+
+            link.sendKeys("\u001bP".toByteArray())
+            advanceTimeBy(59)
+            assertEquals(listOf(resize(80, 24)), sockets.sent)
+            advanceTimeBy(2)
+            assertEquals(listOf(resize(80, 24), "bin:\u001bP"), sockets.sent)
+
+            // An OSC reply split after its opener: the body follows within the hold.
+            link.sendKeys("\u001b]".toByteArray())
+            advanceTimeBy(10)
+            link.sendKeys("52;c;aGk=\u0007".toByteArray())
+            advanceTimeBy(1_000)
+            assertEquals(listOf(resize(80, 24), "bin:\u001bP"), sockets.sent)
+        }
+
+    @Test
     fun the_bridge_ending_the_view_keeps_its_reason() =
         runTest {
             val (sockets, link) = attached()

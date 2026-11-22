@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.client.terminal
 
 import java.io.ByteArrayOutputStream
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Decides what of the emulator's output may go up `WS /terminal`, and how it is framed. The emulator
@@ -17,8 +18,10 @@ import java.io.ByteArrayOutputStream
  *   across frames, and closes a socket that sends a frame over 16 KiB.
  *
  * Holds state between calls. A sequence or a UTF-8 character cut off at the end of one chunk is
- * kept and finished with the next, as the bridge does. ESC and exactly one more byte at the end of
- * a chunk are complete: Alt with that key. ESC alone at the end is the Esc key.
+ * kept and finished with the next, as the bridge does. ESC alone at the end is the Esc key, and ESC
+ * with one more byte is Alt with that key, except for the string openers `]`, `P`, `_`, `^` and
+ * `X`. Those are held: if the next chunk carries on with a string, the whole string is dropped. If
+ * no chunk comes, the caller [release]s it as Alt with that key after [OPENER_HOLD].
  */
 class KeyUplink {
     private var inPaste = false
@@ -36,6 +39,16 @@ class KeyUplink {
         }
         frames.flush()
         return frames.list
+    }
+
+    /** True while a string opener at the end of the last chunk waits to see what follows it. */
+    val holdingOpener: Boolean
+        get() = carry.size == 2 && carry[0] == ESC && isStringOpener(carry[1])
+
+    /** Sends a held string opener as Alt with that key: nothing followed it. */
+    fun release(): List<ByteArray> {
+        if (!holdingOpener) return emptyList()
+        return listOf(carry).also { carry = ByteArray(0) }
     }
 
     private fun pasteStep(
@@ -162,6 +175,9 @@ class KeyUplink {
     }
 
     companion object {
+        /** How long a string opener at a chunk end waits for its body before it goes up as Alt+key. */
+        val OPENER_HOLD = 60.milliseconds
+
         /** The largest frame that goes up: half the bridge's 16 KiB limit. */
         const val MAX_FRAME_BYTES = 8 * 1024
 
@@ -208,6 +224,9 @@ internal object KeyEncodings {
     ): Token =
         when {
             bytes[at] != ESC -> text(bytes, at)
+
+            // ESC and a string opener: hold it to see whether a string follows.
+            at + 2 == bytes.size && isStringOpener(bytes[at + 1]) -> Token(bytes.size, Kind.INCOMPLETE)
 
             // Esc alone, or ESC and one more byte: Esc, or Alt with that key, complete.
             at + 2 >= bytes.size -> Token(bytes.size, Kind.KEY)
@@ -362,6 +381,11 @@ internal object KeyEncodings {
 }
 
 private fun keyIf(allowed: Boolean): KeyEncodings.Kind = if (allowed) KeyEncodings.Kind.KEY else KeyEncodings.Kind.DROP
+
+/** True for the byte after ESC that starts an OSC, DCS, APC, PM or SOS string. */
+internal fun isStringOpener(byte: Byte): Boolean = byte.toInt().toChar() in STRING_OPENERS
+
+private const val STRING_OPENERS = "]P_^X"
 
 private fun skip(
     bytes: ByteArray,

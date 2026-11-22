@@ -33,7 +33,8 @@ tasks.test {
     useJUnitPlatform()
     // KeyUplinkTest reads the bridge's key vectors, so the app and the bridge filter the same keys.
     // Declared as an input so a changed vector file reruns the test instead of reusing a cached pass.
-    inputs.file(rootProject.file("bridge/src/test/resources/terminal-input-vectors.txt"))
+    inputs
+        .file(rootProject.file("bridge/src/test/resources/terminal-input-vectors.txt"))
         .withPropertyName("terminalInputVectors")
         .withPathSensitivity(PathSensitivity.NONE)
 }

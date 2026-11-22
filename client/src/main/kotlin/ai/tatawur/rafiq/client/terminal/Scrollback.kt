@@ -6,10 +6,14 @@ import ai.tatawur.rafiq.client.withoutValue
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /** What the Terminal view shows over the live screen. */
 sealed interface ScrollbackState {
@@ -88,7 +92,7 @@ class Scrollback(
                 waitingSteps += older
                 gesture = Gesture.ASKING
                 if (older) current.value = ScrollbackState.Loading
-                asking = scope.launch { answer(fetch()) }
+                asking = scope.launch { answer(fetchOnceMore()) }
             }
 
             Gesture.ASKING -> {
@@ -117,6 +121,17 @@ class Scrollback(
             current.value = ScrollbackState.Live
             gesture = Gesture.NONE
         }
+    }
+
+    /**
+     * Reads the history, and once more after the wait your server asks for when it is rate limiting reads,
+     * capped at [MAX_RETRY_WAIT]. The loading line stays meanwhile. A second refusal is shown as such.
+     */
+    private suspend fun fetchOnceMore(): CommandResult<TerminalHistory> {
+        val first = fetch()
+        if (first !is CommandResult.RateLimited) return first
+        delay((first.retryAfterMs?.milliseconds ?: DEFAULT_RETRY_WAIT).coerceIn(Duration.ZERO, MAX_RETRY_WAIT))
+        return fetch()
     }
 
     private fun answer(result: CommandResult<TerminalHistory>) {
@@ -162,6 +177,11 @@ class Scrollback(
     }
 
     companion object {
+        /** The longest wait before reading the history again after your server said too many reads. */
+        val MAX_RETRY_WAIT: Duration = 5.seconds
+
+        private val DEFAULT_RETRY_WAIT: Duration = 1.seconds
+
         /** Steps of one swipe per Page Up or Page Down. */
         const val STEPS_PER_PAGE = 6
 

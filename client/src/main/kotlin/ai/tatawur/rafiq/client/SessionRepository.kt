@@ -142,6 +142,15 @@ sealed interface CommandResult<out T> {
     /** The bridge refused the device token (401). */
     data object Unauthorized : CommandResult<Nothing>
 
+    /**
+     * Your server is rate limiting this kind of call (429).
+     *
+     * @property retryAfterMs how long your server asked the app to wait, or null when it did not say.
+     */
+    data class RateLimited(
+        val retryAfterMs: Long?,
+    ) : CommandResult<Nothing>
+
     /** Any other error, with the bridge's error code and message. */
     data class Failed(
         val code: String,
@@ -154,6 +163,7 @@ internal fun CommandResult<*>.withoutValue(): CommandResult<Nothing> =
     when (this) {
         is CommandResult.Ok -> CommandResult.Failed("unexpected", "Your server answered in an unexpected way.")
         CommandResult.Busy -> CommandResult.Busy
+        is CommandResult.RateLimited -> this
         CommandResult.Gone -> CommandResult.Gone
         CommandResult.NotFound -> CommandResult.NotFound
         CommandResult.Offline -> CommandResult.Offline

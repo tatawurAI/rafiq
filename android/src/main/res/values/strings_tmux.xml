@@ -74,6 +74,8 @@
   <string name="terminal_history_not_found">This window or session is gone, so it has no history.</string>
   <string name="terminal_history_offline">Your phone cannot reach your server, so the history is not available.</string>
   <string name="terminal_history_bad_request">Your server could not read the history request.</string>
+  <string name="terminal_history_rate_limited">Too many history reads. Try again in a moment.</string>
+  <string name="feedback_rate_limited">Too many requests to your server. Try again in a moment.</string>
   <string name="terminal_new_output">New output</string>
   <string name="terminal_history_title">History. Your desk sees no change.</string>
   <string name="terminal_back_to_live">Back to live</string>

@@ -198,6 +198,8 @@ class BridgeApi(
         private const val UNAUTHORIZED = 401
         private const val NOT_FOUND = 404
         private const val CONFLICT = 409
+        private const val TOO_MANY_REQUESTS = 429
+        private const val MILLIS_PER_SECOND = 1_000L
 
         private fun <T> decode(
             body: String,
@@ -226,6 +228,10 @@ class BridgeApi(
                     CommandResult.NotFound
                 }
 
+                response.status == TOO_MANY_REQUESTS -> {
+                    CommandResult.RateLimited(response.retryAfterSeconds?.let { it * MILLIS_PER_SECOND })
+                }
+
                 response.status == CONFLICT && error?.code == "approval_gone" -> {
                     CommandResult.Gone
                 }
@@ -247,6 +253,7 @@ class BridgeApi(
             when (this) {
                 is CommandResult.Ok -> CommandResult.Ok(transform(value))
                 CommandResult.Busy -> CommandResult.Busy
+                is CommandResult.RateLimited -> this
                 CommandResult.Gone -> CommandResult.Gone
                 CommandResult.NotFound -> CommandResult.NotFound
                 CommandResult.Offline -> CommandResult.Offline

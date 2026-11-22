@@ -110,4 +110,37 @@ class ScrollbackTest {
 
         assertEquals(listOf("rm<U+202E>fr.txt", "a<U+200B>b<U+0007>"), lines)
     }
+
+    @Test
+    fun a_rate_limited_read_keeps_loading_and_tries_once_more_after_the_wait_capped_at_five_seconds() =
+        runTest {
+            val answers = ArrayDeque(listOf(CommandResult.RateLimited(retryAfterMs = 60_000), CommandResult.Ok(shell)))
+            val scrollback = Scrollback(backgroundScope, { answers.removeFirst() }) { }
+
+            scrollback.gestureStarted()
+            scrollback.step(older = true)
+            testScheduler.advanceTimeBy(Scrollback.MAX_RETRY_WAIT.inWholeMilliseconds - 1)
+            assertEquals(ScrollbackState.Loading, scrollback.state.value)
+
+            testScheduler.advanceTimeBy(2)
+            assertIs<ScrollbackState.Showing>(scrollback.state.value)
+        }
+
+    @Test
+    fun a_second_rate_limited_read_says_too_many_reads() =
+        runTest {
+            var reads = 0
+            val scrollback =
+                Scrollback(backgroundScope, {
+                    reads++
+                    CommandResult.RateLimited(retryAfterMs = 1_000)
+                }) { }
+
+            scrollback.gestureStarted()
+            scrollback.step(older = true)
+            testScheduler.advanceTimeBy(1_001)
+
+            assertEquals(ScrollbackState.Failed(CommandResult.RateLimited(1_000)), scrollback.state.value)
+            assertEquals(2, reads)
+        }
 }

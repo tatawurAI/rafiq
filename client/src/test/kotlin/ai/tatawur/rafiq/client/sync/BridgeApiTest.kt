@@ -20,6 +20,8 @@ class BridgeApiTest {
                     answer(409, error("turn_in_progress")) to CommandResult.Busy,
                     answer(409, error("something_new")) to CommandResult.Failed("something_new", "Not now."),
                     answer(404, error("not_found")) to CommandResult.NotFound,
+                    HttpTransport { HttpResponse(429, error("too_many_requests"), retryAfterSeconds = 3) } to
+                        CommandResult.RateLimited(retryAfterMs = 3_000),
                     answer(500, "not json") to CommandResult.Failed("http_500", "The bridge answered with HTTP 500."),
                     HttpTransport { throw IOException("Network is unreachable") } to CommandResult.Offline,
                 )

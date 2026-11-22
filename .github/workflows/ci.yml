@@ -66,6 +66,15 @@ jobs:
           set -euo pipefail
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0"
 
+      # The terminal tests drive a real tmux on a throwaway socket, and fail on CI
+      # when tmux 3.2 or newer is missing, so install it explicitly.
+      - name: Install tmux
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tmux
+          tmux -V
+
       - name: Format, lint and test
         run: ./gradlew --console=plain spotlessCheck detekt test
 

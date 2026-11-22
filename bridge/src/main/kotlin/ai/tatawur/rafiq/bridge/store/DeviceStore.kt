@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge.store
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
@@ -49,6 +50,7 @@ enum class RevokeOutcome { REVOKED, ALREADY_REVOKED, NOT_FOUND }
 class DeviceStore(
     jdbcUrl: String,
     private val dispatcher: CoroutineDispatcher,
+    busyTimeoutMs: Int = BUSY_TIMEOUT_MS,
 ) : AutoCloseable {
     private val connection: Connection = DriverManager.getConnection(jdbcUrl)
 
@@ -57,7 +59,7 @@ class DeviceStore(
             statement.execute("PRAGMA journal_mode = WAL")
             statement.execute("PRAGMA synchronous = NORMAL")
             // The event log writes the same file. Wait for it instead of failing.
-            statement.execute("PRAGMA busy_timeout = 5000")
+            statement.execute("PRAGMA busy_timeout = $busyTimeoutMs")
             SCHEMA.forEach(statement::execute)
         }
     }
@@ -252,6 +254,16 @@ class DeviceStore(
     companion object {
         /** The id of the device the shared `RAFIQ_DEVICE_TOKEN` stands for. */
         const val LEGACY_ID = "legacy"
+        private const val BUSY_TIMEOUT_MS = 5000
+
+        /** The warning for a bridge with no data folder, or null when there is one. */
+        fun persistenceWarning(dataDir: Path?): String? =
+            if (dataDir == null) {
+                "RAFIQ_DATA_DIR is not set, so paired devices and revocations are not saved. After a restart every " +
+                    "phone must pair again, and a revoked legacy token works again. Set RAFIQ_DATA_DIR."
+            } else {
+                null
+            }
 
         private const val SELECT_DEVICE = "SELECT id, name, created_at_ms, last_seen_ms, revoked_at_ms"
         private const val PURGE_CODES = "DELETE FROM pairing_codes WHERE used_at_ms IS NOT NULL OR expires_at_ms <= ?"
@@ -280,7 +292,9 @@ class DeviceStore(
         fun open(
             dataDir: Path?,
             dispatcher: CoroutineDispatcher,
+            busyTimeoutMs: Int = BUSY_TIMEOUT_MS,
         ): DeviceStore {
+            persistenceWarning(dataDir)?.let { LoggerFactory.getLogger(DeviceStore::class.java).warn(it) }
             val url =
                 if (dataDir == null) {
                     "jdbc:sqlite::memory:"
@@ -289,7 +303,7 @@ class DeviceStore(
                     createPrivateFile(dataDir, file)
                     "jdbc:sqlite:$file"
                 }
-            return DeviceStore(url, dispatcher)
+            return DeviceStore(url, dispatcher, busyTimeoutMs)
         }
 
         private fun createPrivateFile(

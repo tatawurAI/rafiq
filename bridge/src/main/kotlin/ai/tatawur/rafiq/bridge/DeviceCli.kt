@@ -12,6 +12,11 @@ import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import java.nio.file.Path
 import java.time.Instant
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The `rafiq-bridge pair`, `devices` and `revoke` commands. They talk to the running bridge over the
@@ -26,6 +31,7 @@ object DeviceCli {
     private const val FAILED = 1
     private const val USAGE_ERROR = 2
     private const val PAIR_ARGS = 3
+    private val ANSWER_TIMEOUT = 10.seconds
     private const val MS_PER_MINUTE = 60_000L
 
     /** Runs one command and returns the exit code: 0 done, 1 the bridge refused or is not running, 2 bad usage. */
@@ -34,6 +40,7 @@ object DeviceCli {
         environment: Map<String, String>,
         out: PrintStream,
         err: PrintStream,
+        answerTimeout: Duration = ANSWER_TIMEOUT,
     ): Int {
         val request = parse(args)
         val dataDir = environment["RAFIQ_DATA_DIR"]?.trim()?.takeIf { it.isNotEmpty() }
@@ -51,9 +58,11 @@ object DeviceCli {
             else -> {
                 val response =
                     try {
-                        send(DeviceAdminServer.socketPathFor(Path.of(dataDir)), request)
+                        send(DeviceAdminServer.socketPathFor(Path.of(dataDir)), request, answerTimeout)
                     } catch (failure: IOException) {
-                        err.println("Could not reach the bridge in $dataDir: ${failure.message}. Is it running?")
+                        err.println(
+                            "Could not reach the bridge in $dataDir: ${failure.message?.trimEnd('.')}. Is it running?",
+                        )
                         return FAILED
                     }
                 print(request, response, out, err)
@@ -142,12 +151,28 @@ object DeviceCli {
     private fun send(
         socket: Path,
         request: AdminRequest,
-    ): AdminResponse =
-        SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+        timeout: Duration,
+    ): AdminResponse {
+        val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
+        val timedOut = AtomicBoolean(false)
+        // Closing the channel from here is what ends a read that would otherwise wait for ever.
+        val watchdog =
+            Executors.newSingleThreadScheduledExecutor { Thread(it, "rafiq-cli-deadline").apply { isDaemon = true } }
+        watchdog.schedule({
+            timedOut.set(true)
+            channel.close()
+        }, timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+        try {
             channel.connect(UnixDomainSocketAddress.of(socket))
             val line = protocolJson.encodeToString(AdminRequest.serializer(), request) + "\n"
             channel.write(ByteBuffer.wrap(line.toByteArray()))
             val answer = DeviceAdminServer.readLine(channel) ?: throw IOException("The bridge closed the connection.")
-            protocolJson.decodeFromString(AdminResponse.serializer(), answer)
+            return protocolJson.decodeFromString(AdminResponse.serializer(), answer)
+        } catch (failure: IOException) {
+            throw if (timedOut.get()) IOException("The bridge did not answer within $timeout.", failure) else failure
+        } finally {
+            watchdog.shutdownNow()
+            channel.close()
         }
+    }
 }

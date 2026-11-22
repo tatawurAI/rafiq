@@ -8,6 +8,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.io.IOException
@@ -20,6 +21,7 @@ import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
+import kotlin.coroutines.cancellation.CancellationException
 
 /** One line of JSON from the `rafiq-bridge` command to the running bridge. [op] is `pair`, `devices` or `revoke`. */
 @Serializable
@@ -78,6 +80,7 @@ class DeviceAdminServer(
      * @throws IllegalStateException if the folder is unsafe or another bridge holds the socket.
      */
     fun start(): DeviceAdminServer {
+        checkPathLength(socketPath)
         prepareFolder(socketPath.parent)
         if (Files.exists(socketPath)) {
             check(!isAnswering(socketPath)) { "Another bridge is already answering on $socketPath." }
@@ -89,14 +92,17 @@ class DeviceAdminServer(
         channel = server
         acceptor =
             scope.launch(Dispatchers.IO) {
-                while (isActive) {
-                    val client =
-                        try {
-                            server.accept()
-                        } catch (_: ClosedChannelException) {
-                            break
-                        }
-                    launch { serve(client) }
+                // Supervised, so a failure in one connection can never cancel the acceptor.
+                supervisorScope {
+                    while (isActive) {
+                        val client =
+                            try {
+                                server.accept()
+                            } catch (_: ClosedChannelException) {
+                                break
+                            }
+                        launch { serve(client) }
+                    }
                 }
             }
         return this
@@ -113,6 +119,11 @@ class DeviceAdminServer(
                         handle(protocolJson.decodeFromString(AdminRequest.serializer(), line))
                     } catch (_: IllegalArgumentException) {
                         AdminResponse(ok = false, error = "Not a request this bridge understands.")
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        // A database that is busy for a moment, for example. Say so and keep serving.
+                        AdminResponse(ok = false, error = TRY_AGAIN)
                     }
                 val bytes = (protocolJson.encodeToString(AdminResponse.serializer(), response) + "\n").toByteArray()
                 client.write(ByteBuffer.wrap(bytes))
@@ -183,7 +194,10 @@ class DeviceAdminServer(
     }
 
     companion object {
+        private const val TRY_AGAIN = "The bridge could not do that. Try again."
         private const val NO_SUCH_DEVICE = "No device has that id. Run rafiq-bridge devices."
+        private const val MAC_SOCKET_PATH = 103
+        private const val LINUX_SOCKET_PATH = 107
         private const val MAX_NAME = 60
         private const val MAX_LINE = 4096
         private const val CONNECTION_LIMIT_MS = 10_000L
@@ -206,6 +220,33 @@ class DeviceAdminServer(
                         ignoreCase = true,
                     ) && !it.equals("localhost", ignoreCase = true)
                 }?.let { "https://$it" }
+
+        /**
+         * A Unix socket path must fit in `sun_path`: 104 bytes on macOS, 108 on Linux, each with a final NUL.
+         * Binding a longer one fails with an error that does not say why.
+         */
+        internal fun checkPathLength(
+            path: Path,
+            limit: Int = maxSocketPathBytes(),
+        ) {
+            val bytes = path.toString().toByteArray().size
+            check(bytes <= limit) {
+                "The admin socket path is $bytes bytes, over the Unix limit of $limit: $path. " +
+                    "Set RAFIQ_DATA_DIR to a shorter folder."
+            }
+        }
+
+        private fun maxSocketPathBytes(): Int =
+            if (System
+                    .getProperty(
+                        "os.name",
+                    ).orEmpty()
+                    .contains("mac", ignoreCase = true)
+            ) {
+                MAC_SOCKET_PATH
+            } else {
+                LINUX_SOCKET_PATH
+            }
 
         /**
          * Creates [folder] as 0700, or checks an existing one: not a symbolic link, owned by this user, mode

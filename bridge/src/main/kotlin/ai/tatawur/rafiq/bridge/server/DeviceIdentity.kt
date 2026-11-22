@@ -4,8 +4,15 @@ import io.ktor.util.AttributeKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** The device a request authenticated as. Set by the security plugin on every authenticated call. */
 data class DevicePrincipal(
@@ -37,9 +44,12 @@ interface ConnectionRegistry {
  * before the revoke and registers just after it.
  *
  * @param scope runs the close of a connection that registers after its device was revoked.
+ * @param closeTimeout how long one connection may take to close. A socket whose peer stopped reading must
+ *   not hold up the others, or the answer to `rafiq-bridge revoke`.
  */
 class InMemoryConnectionRegistry(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val closeTimeout: Duration = 5.seconds,
 ) : ConnectionRegistry {
     private class Entry(
         val kind: String,
@@ -68,7 +78,8 @@ class InMemoryConnectionRegistry(
 
     /**
      * Closes every connection of [deviceId] with [reason] and forgets them. Each close callback runs at
-     * most once, and one that throws does not stop the others. Connections registered later are closed too.
+     * most once. They close at the same time, each with its own time limit, and one that throws or stalls does
+     * not hold up the others. Connections registered later are closed too.
      *
      * @return how many connections were closed.
      */
@@ -78,7 +89,7 @@ class InMemoryConnectionRegistry(
     ): Int {
         closedOut[deviceId] = reason
         val entries = byDevice[deviceId]?.toList().orEmpty().filter { byDevice[deviceId]?.remove(it) == true }
-        entries.forEach { runClose(it, reason) }
+        coroutineScope { entries.map { entry -> async { runClose(entry, reason) } }.awaitAll() }
         return entries.size
     }
 
@@ -88,7 +99,9 @@ class InMemoryConnectionRegistry(
         reason: String,
     ) {
         try {
-            entry.close(reason)
+            withTimeoutOrNull(closeTimeout) { entry.close(reason) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
             // The socket is already gone or going. Revocation still counts.
         }

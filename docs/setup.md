@@ -86,7 +86,7 @@ Run this on your server, in the same environment as the bridge (it needs the sam
 rafiq-bridge pair --name pixel
 ```
 
-It prints a pairing code like `ABCD-EFGH` and the address to enter. The code works once and expires after 10 minutes. After five wrong codes the bridge refuses every code for five minutes. In the app, enter your server address (your https `*.ts.net` name) and the code. The phone gets its own token and keeps it in the Android Keystore. Nobody, including you, can read it again.
+It prints a pairing code like `ABCD-EFGH` and the address to enter. The code works once and expires after 10 minutes. After five wrong codes the bridge refuses every code for five minutes, a right one too. Anyone who can reach your server's address could cause that, so running `rafiq-bridge pair` again clears the lockout and gives you a fresh code at once. In the app, enter your server address (your https `*.ts.net` name) and the code. The phone gets its own token and keeps it in the Android Keystore. Nobody, including you, can read it again.
 
 ### List and revoke phones
 
@@ -95,7 +95,7 @@ rafiq-bridge devices
 rafiq-bridge revoke <id>
 ```
 
-`devices` shows each phone's id, name, when it last connected and whether it is active. `revoke` cuts that phone off at once: its open connections close and its next request is refused. The phone clears its token and shows the pairing screen. Revoking is permanent. Pair the phone again for a new token. Unpairing in the app does the same thing from the phone. If your server cannot be reached when you unpair, the app tells you the phone is still listed, and you run `rafiq-bridge revoke <id>` later. These commands talk to the running bridge over a Unix socket in `$RAFIQ_DATA_DIR/admin`, a folder only your user can open. They never use the network port.
+`devices` shows each phone's id, name, when it last connected and whether it is active. `revoke` cuts that phone off at once: its open connections close and its next request is refused. The phone clears its token and shows the pairing screen. Revoking is permanent. Pair the phone again for a new token. Unpairing in the app does the same thing from the phone. If your server cannot be reached when you unpair, the app tells you the phone is still listed, and you run `rafiq-bridge revoke <id>` later. These commands talk to the running bridge over a Unix socket in `$RAFIQ_DATA_DIR/admin`, a folder only your user can open. They never use the network port. They are for you: any process that runs as the same user as the bridge can reach this socket and the database in `RAFIQ_DATA_DIR`. The Wave 2 installer adds read-deny rules so an agent run by the bridge cannot.
 
 ### Retire the old shared token
 
@@ -125,10 +125,10 @@ What to know before you turn it on:
 
 - Terminal reaches every window and pane of each session you list. Name only sessions you are happy to type into from your phone.
 - With Terminal on, the bridge refuses to start on a non-loopback address. Keep `RAFIQ_BIND_ADDRESS` at its default and use `tailscale serve`, as above. Never use `tailscale funnel`.
-- Each phone can have 2 terminals open, and the bridge 4. A terminal you leave alone for 10 minutes closes.
+- Each phone can have 2 terminals open, and the bridge 4. A terminal closes after 10 minutes with no keys or resize from your phone and no output from the pane. A phone that is watching an agent work stays open.
 - While you have Terminal open, the window in tmux has the size of your phone. When you leave, it goes back to the size of your terminal at your desk. If nothing is attached at your desk, the window keeps your phone's size until something attaches.
 - Rafiq can ask for your fingerprint or face before Terminal opens. Turn it on in the app's settings. It asks once when Terminal opens, and not for each key.
-- The bridge's own view sessions are named `rafiq-view-...`. Do not use that name for your own sessions. When the bridge starts, it ends any `rafiq-view-` session left on its tmux server, so run one bridge for each tmux server.
+- The bridge's own view sessions are named `rafiq-view-...`. Do not use that name for your own sessions. When the bridge starts, it ends only the `rafiq-view-` sessions that have no client attached, so two bridges do not close each other's live views.
 
 A listed session shows in your session list with the agent that runs in it. Its row opens in Terminal. A session you did not list is not shown, and cannot be opened, even if its name starts with a listed name.
 
@@ -140,7 +140,7 @@ A listed session shows in your session list with the agent that runs in it. Its 
 | `401`, `unauthorized` | The phone's token is not one the bridge knows. Pair again. |
 | `401`, `device_revoked` | You revoked this phone with `rafiq-bridge revoke`, or unpaired it in the app. Pair it again. |
 | `401`, `invalid_pairing_code` | The code is wrong, expired or already used. Run `rafiq-bridge pair` for a new one. |
-| `429`, `too_many_attempts` | Five wrong codes in five minutes. Wait a few minutes, then run `rafiq-bridge pair` for a new code. |
+| `429`, `too_many_attempts` | Five wrong codes in five minutes. Run `rafiq-bridge pair` again for a fresh code. That also clears the lockout. |
 | The app says your server removed the phone | The phone was revoked. Run `rafiq-bridge pair` again. |
 | The app says the code is wrong | Codes work once and expire after 10 minutes. Run `rafiq-bridge pair` for a new one. |
 | `403`, `forbidden_origin` | A browser page on another site called the bridge. The app sends no `Origin`, so this is not the app. |

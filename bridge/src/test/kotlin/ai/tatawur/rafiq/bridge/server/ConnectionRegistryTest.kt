@@ -1,10 +1,12 @@
 package ai.tatawur.rafiq.bridge.server
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.milliseconds
 
 class ConnectionRegistryTest {
     @Test
@@ -36,5 +38,20 @@ class ConnectionRegistryTest {
 
             assertEquals("device revoked", withTimeout(5_000) { reason.await() })
             assertEquals(0, registry.openCount("dev_a"))
+        }
+
+    @Test
+    fun a_stalled_socket_does_not_hold_up_the_others_or_the_answer() =
+        runBlocking {
+            val registry = InMemoryConnectionRegistry(closeTimeout = 300.milliseconds)
+            val closed = mutableListOf<String>()
+            registry.register("dev_a", "events") { awaitCancellation() }
+            registry.register("dev_a", "events") { closed += "second" }
+            registry.register("dev_a", "terminal") { closed += "third" }
+
+            val count = withTimeout(5_000) { registry.closeAll("dev_a", "device revoked") }
+
+            assertEquals(3, count)
+            assertEquals(listOf("second", "third"), closed.sorted())
         }
 }

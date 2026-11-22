@@ -12,6 +12,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.json.JsonObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** A permission request from a pane, held while a phone may answer it. */
 @Suppress("LongParameterList") // A record of one request. Every field is read when it is shown or answered.
@@ -29,7 +30,7 @@ internal class PendingPhoneApproval(
     val reply: CompletableDeferred<HookReply?>,
 ) {
     /** Registrations with the connection registry, closed when the approval settles. */
-    val revocations = mutableListOf<AutoCloseable>()
+    val revocations = CopyOnWriteArrayList<AutoCloseable>()
 }
 
 /**
@@ -106,6 +107,8 @@ internal class PhoneApprovals(
             approval.revocations +=
                 registry.register(device, REGISTRY_KIND) { settle(approval.id, ApprovalOutcome.ASK_AT_DESK) }
         }
+        // A revoke that raced the registrations may have settled it already. Nothing is left to close then.
+        if (!pending.containsKey(approval.id)) approval.revocations.forEach(AutoCloseable::close)
     }
 
     /**

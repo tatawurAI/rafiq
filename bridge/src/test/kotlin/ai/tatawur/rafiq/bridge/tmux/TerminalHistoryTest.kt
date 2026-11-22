@@ -39,7 +39,7 @@ class TerminalHistoryTest {
         Files.writeString(wrapper, "#!/bin/sh\necho \"\$@\" >> '$calls'\nexec tmux \"\$@\"\n")
         wrapper.toFile().setExecutable(true)
         val settings = TerminalSettings(true, sessions.toSet(), tmux.socket, TerminalLimits())
-        return RealBridge(dir.resolve("data"), TerminalGate(settings, TmuxServer(tmux.socket, wrapper.toString())))
+        return RealBridge(dir.resolve("data"), openGate(settings, TmuxServer(tmux.socket, wrapper.toString())))
             .also { bridge = it }
     }
 

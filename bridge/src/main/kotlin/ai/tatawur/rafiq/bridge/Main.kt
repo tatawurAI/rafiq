@@ -8,6 +8,7 @@ import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.DeviceAdminServer
 import ai.tatawur.rafiq.bridge.server.DeviceService
 import ai.tatawur.rafiq.bridge.server.InMemoryConnectionRegistry
+import ai.tatawur.rafiq.bridge.server.installIdentityCheck
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.sessions.isTmuxSessionId
 import ai.tatawur.rafiq.bridge.store.DeviceStore
@@ -56,12 +57,7 @@ fun main(args: Array<String>) {
             val url = DeviceAdminServer.urlFor(config.bindAddress, config.allowedHosts)
             DeviceAdminServer(DeviceAdminServer.socketPathFor(dir), devices, url, scope).start()
         }
-    // With Terminal off none of this exists, so no tmux command runs and no tmux session is listed.
-    val terminal =
-        config.terminal.takeIf { it.enabled }?.let { settings ->
-            val gate = TerminalGate(settings)
-            TerminalService(gate, TmuxSessionSource(gate, eventLog, AgentDetector()))
-        }
+    val terminal = terminalServiceFor(config, eventLog)
     // Hooks feed tmux Chat, so the channel and the installer exist only with tmux on and a data folder for them.
     val hookDir = terminal?.let { config.dataDir }
     val hooks = hookDir?.let { hookSetup(it, deviceStore) }
@@ -76,6 +72,7 @@ fun main(args: Array<String>) {
             visibility =
                 terminal?.source?.let { source -> { id: String -> source.isVisible(id) } } ?: { !isTmuxSessionId(it) },
             tmuxChat = claude,
+            present = terminal?.source?.let { source -> source::present } ?: { it },
         )
     runBlocking {
         sessions.recoverAfterRestart()
@@ -88,6 +85,8 @@ fun main(args: Array<String>) {
         embeddedServer(CIO, host = config.bindAddress, port = config.port) {
             log.info("Rafiq bridge {} starting with {}", version, config)
             bridgeModule(version, eventLog, sessions, security, config.devPage, terminal, connections, devices, hooks)
+            // After the token check, so a request with no token still gets 401 first.
+            installIdentityCheck(config.tailscaleLogin)
         }.start(wait = true)
     } finally {
         hookChannel?.close()
@@ -98,6 +97,16 @@ fun main(args: Array<String>) {
         eventLog.close()
     }
 }
+
+/** With tmux sessions off none of this exists, so no tmux command runs and no tmux session is listed. */
+private fun terminalServiceFor(
+    config: BridgeConfig,
+    eventLog: EventLog,
+): TerminalService? =
+    config.terminal.takeIf { it.enabled }?.let { settings ->
+        val gate = TerminalGate(settings)
+        TerminalService(gate, TmuxSessionSource(gate, eventLog, AgentDetector()))
+    }
 
 /** The Claude reader for tmux Chat, asking the device service for paired devices and the installer for hooks. */
 @Suppress("LongParameterList") // Start-up pieces the reader needs, each built in main.

@@ -3,6 +3,7 @@ package ai.tatawur.rafiq.bridge.server
 import ai.tatawur.rafiq.bridge.tmux.TerminalSettings
 import ai.tatawur.rafiq.protocol.api.ApiError
 import ai.tatawur.rafiq.protocol.api.ApiErrorDetail
+import ai.tatawur.rafiq.protocol.api.AuthErrorCodes
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCallPipeline
@@ -25,7 +26,8 @@ import org.slf4j.LoggerFactory
  * health probe keeps working, and it reveals only the version.
  *
  * @param ownerLogin the login to accept, compared without regard to case, as Tailscale shows it in the admin
- *   console, for example `alex@example.com`.
+ *   console, for example `alex@example.com`. Plain ASCII only: a login Tailscale would send RFC 2047 encoded is
+ *   not supported.
  */
 class TailscaleIdentityCheck(
     private val ownerLogin: String,
@@ -59,6 +61,7 @@ class TailscaleIdentityCheck(
             !TerminalSettings.isLoopback(peerAddress) -> Verdict.Rejected(loggable(login), "peer is not loopback")
             loginHeaders.isEmpty() -> Verdict.Rejected(null, "no identity header")
             login == null -> Verdict.Rejected(null, "more than one identity header")
+            isEncodedWord(login) -> Verdict.Rejected(loggable(login), "encoded login, not supported")
             !login.equals(ownerLogin, ignoreCase = true) -> Verdict.Rejected(loggable(login), "wrong login")
             else -> Verdict.Accepted
         }
@@ -72,9 +75,14 @@ class TailscaleIdentityCheck(
         const val LOGIN_HEADER = "Tailscale-User-Login"
 
         /** The error code of the 403 answer, so the app can tell this refusal from a wrong token. */
-        const val ERROR_CODE = "identity_mismatch"
+        const val ERROR_CODE = AuthErrorCodes.IDENTITY_MISMATCH
 
         private val OPEN_PATHS = setOf("/health")
+
+        // Tailscale may send a login with non-ASCII characters as an RFC 2047 encoded word, `=?utf-8?q?...?=`.
+        // The bridge does not decode it: such a login is refused with its own reason, so the log says why.
+        private fun isEncodedWord(login: String): Boolean = login.startsWith("=?") && login.endsWith("?=")
+
         private const val MAX_LOGGED_LENGTH = 64
 
         // A refused login is whatever the caller sent. Keep it to one short printable line in the log.

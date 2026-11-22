@@ -33,7 +33,7 @@ class TerminalWindowsTest {
 
     private fun bridgeFor(vararg sessions: String): RealBridge {
         val settings = TerminalSettings(true, sessions.toSet(), tmux.socket, TerminalLimits())
-        return RealBridge(dir.resolve("data"), TerminalGate(settings, tmux.server)).also { bridge = it }
+        return RealBridge(dir.resolve("data"), openGate(settings, tmux.server)).also { bridge = it }
     }
 
     @Test

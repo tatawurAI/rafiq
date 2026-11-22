@@ -79,6 +79,9 @@ class BridgeConfig(
             require(tailscaleLogin == null || LOGIN.matches(tailscaleLogin)) {
                 "$TAILSCALE_LOGIN must be one Tailscale login, for example alex@example.com, with no spaces or commas."
             }
+            require(tailscaleLogin == null || !(tailscaleLogin.startsWith("=?") && tailscaleLogin.endsWith("?="))) {
+                "$TAILSCALE_LOGIN looks RFC 2047 encoded. A login with non-ASCII characters is not supported."
+            }
             require(tailscaleLogin == null || TerminalSettings.isLoopback(bindAddress)) {
                 "$TAILSCALE_LOGIN is set, so RAFIQ_BIND_ADDRESS must be a loopback address, got '$bindAddress'. " +
                     "The identity header can be trusted only from tailscale serve on the same machine."

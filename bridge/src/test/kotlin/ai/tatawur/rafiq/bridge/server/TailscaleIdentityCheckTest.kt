@@ -180,6 +180,23 @@ class TailscaleIdentityCheckTest {
     }
 
     @Test
+    fun an_rfc_2047_encoded_login_is_refused_with_its_own_reason_and_not_accepted_at_start() {
+        val check = TailscaleIdentityCheck(OWNER)
+        val encoded = "=?utf-8?q?alex@example.com?="
+        val rejected =
+            assertIs<TailscaleIdentityCheck.Verdict.Rejected>(check.inspect("/sessions", "127.0.0.1", listOf(encoded)))
+        assertEquals("encoded login, not supported", rejected.reason)
+        // Even when the owner wrote the same encoded value: the bridge compares plain logins only.
+        val literal = TailscaleIdentityCheck(encoded).inspect("/sessions", "127.0.0.1", listOf(encoded))
+        assertIs<TailscaleIdentityCheck.Verdict.Rejected>(literal)
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                BridgeConfig.fromEnvironment(mapOf("RAFIQ_TAILSCALE_LOGIN" to encoded))
+            }
+        assertTrue(failure.message.orEmpty().contains("RAFIQ_TAILSCALE_LOGIN"), failure.message)
+    }
+
+    @Test
     fun the_refusal_log_line_names_the_refused_login_and_nothing_else() {
         val check = TailscaleIdentityCheck(OWNER)
         val forged = "mallory@example.com\r\nAuthorization: Bearer $TEST_TOKEN"

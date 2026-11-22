@@ -40,7 +40,7 @@ class TerminalRouteTest {
         server: TmuxServer = tmux.server,
     ): RealBridge {
         val settings = TerminalSettings(enabled, sessions.toSet(), tmux.socket, limits)
-        return RealBridge(dir.resolve("data-${opened++}"), TerminalGate(settings, server)).also { bridge = it }
+        return RealBridge(dir.resolve("data-${opened++}"), openGate(settings, server)).also { bridge = it }
     }
 
     /** The snapshot text frame and the one binary frame that must follow it at once. */

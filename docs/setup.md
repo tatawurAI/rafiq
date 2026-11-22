@@ -103,7 +103,7 @@ If you set `RAFIQ_DEVICE_TOKEN` before this version, that token still works. The
 
 ### Check your Tailscale login too (optional)
 
-`tailscale serve` tells the bridge which Tailscale login made each request, in the `Tailscale-User-Login` header. It removes that header if a client sent it, so the value comes from Tailscale. Set your login, and the bridge refuses any request from another login, even one with a valid device token:
+`tailscale serve` tells the bridge which Tailscale login made each request, in the `Tailscale-User-Login` header. It removes that header if a client sent it, so the value comes from Tailscale. Tailscale describes these headers under "Identity headers" in [Tailscale Serve](https://tailscale.com/kb/1312/serve). Set your login, and the bridge refuses any request from another login, even one with a valid device token:
 
 ```sh
 export RAFIQ_TAILSCALE_LOGIN=alex@example.com
@@ -115,6 +115,7 @@ What it does:
 
 - Every request and both sockets, `/events` and `/terminal`, need the header to name your login, on top of the device token. Only `GET /health` is left open. A missing or different login gets `403 identity_mismatch`.
 - A stolen device token is then useless from someone else's Tailscale login, for example on a shared tailnet.
+- Someone you shared your server with in Tailscale reaches it with their own login, so they are refused. That is intended.
 - The bridge trusts the header only on a connection from `127.0.0.1`, where `tailscale serve` connects from. It will not start with `RAFIQ_TAILSCALE_LOGIN` set and `RAFIQ_BIND_ADDRESS` on another address, and says so.
 - A refusal is logged with the login that was refused, and nothing else from the request.
 
@@ -123,6 +124,7 @@ What it does not do:
 - It does not help against anything that runs on your server. A local process can connect from `127.0.0.1` and send any header it likes.
 - Tailscale adds no identity header for a tagged device, so a phone that is tagged is refused. Leave the setting unset if your phone is tagged.
 - `tailscale funnel` requests carry no identity header, so they are refused. Never use funnel for the bridge anyway.
+- A login with non-ASCII characters is not supported. Tailscale sends it encoded, and the bridge refuses it. The bridge also will not start if `RAFIQ_TAILSCALE_LOGIN` holds an encoded value.
 
 ## Terminal
 
@@ -137,7 +139,7 @@ export RAFIQ_TERMINAL=1
 export RAFIQ_TMUX_SESSIONS=weather-app,docs-site
 ```
 
-A session with no agent in it, such as a plain shell, is listed but does not open in Terminal until you name it a second time:
+A session with no agent in it, such as a plain shell, is listed but does not open in Terminal until you name it a second time. This is a change: with `RAFIQ_TERMINAL=1` alone, a plain shell used to open, and now it needs `RAFIQ_TERMINAL_SHELLS`.
 
 ```sh
 export RAFIQ_TERMINAL_SHELLS=docs-site

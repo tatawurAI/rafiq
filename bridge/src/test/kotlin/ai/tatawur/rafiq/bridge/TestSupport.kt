@@ -108,10 +108,11 @@ class BridgeFixture(
     dir: Path,
     val adapter: FakeAdapter = FakeAdapter(),
     visibility: (String) -> Boolean = { !isTmuxSessionId(it) },
+    present: (Session) -> Session = { it },
 ) : AutoCloseable {
     val log: EventLog = EventLog.open(dir, Dispatchers.IO.limitedParallelism(1))
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    val sessions = SessionManager(log, listOf(adapter), scope, visibility = visibility)
+    val sessions = SessionManager(log, listOf(adapter), scope, visibility = visibility, present = present)
 
     override fun close() {
         scope.cancel()

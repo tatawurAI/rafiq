@@ -13,6 +13,10 @@ import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.ToolCallKind
 import ai.tatawur.rafiq.protocol.ToolCallStatus
+import ai.tatawur.rafiq.terminal.BiometricCheck
+import ai.tatawur.rafiq.terminal.TerminalAccess
+import ai.tatawur.rafiq.terminal.TerminalChoice
+import ai.tatawur.rafiq.terminal.TerminalRoute
 import ai.tatawur.rafiq.ui.components.ConnectionBanner
 import ai.tatawur.rafiq.ui.components.FeedbackBar
 import ai.tatawur.rafiq.ui.components.StatusDot
@@ -67,22 +71,31 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.launch
 
-/** The session view, wired to its [SessionViewModel]. */
+/**
+ * The session view, wired to its [SessionViewModel]. A session your server serves as a terminal
+ * gets the Chat and Terminal toggle, when [terminal] is given.
+ */
 @Composable
 fun SessionRoute(
     viewModel: SessionViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onPairAgain: () -> Unit = {},
+    terminal: TerminalAccess? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dictation = rememberDictation(viewModel::appendDictation)
@@ -102,7 +115,64 @@ fun SessionRoute(
                 onPairAgain = onPairAgain,
             )
         }
-    SessionScreen(state, actions, dictation, modifier, hinge = LocalHinge.current)
+    val hinge = LocalHinge.current
+    if (terminal == null) {
+        SessionScreen(state, actions, dictation, modifier, hinge = hinge)
+        return
+    }
+    SessionOrTerminal(terminal, state, actions) { viewActions, showTerminal ->
+        if (showTerminal) {
+            TerminalRoute(terminal.port, state.screen.sessionId, hinge) { SessionHeader(state, viewActions) }
+        } else {
+            SessionScreen(state, viewActions, dictation, modifier, hinge = hinge)
+        }
+    }
+}
+
+/**
+ * Chooses between Chat and Terminal. Only a session your server serves as a terminal offers the
+ * toggle, and the cover screen always shows Chat. The window's height decides, not the layout's, so the keyboard never
+ * counts as a cover screen. With the Terminal lock on, Terminal opens only after a strong biometric
+ * check, and the check lasts until you leave Terminal or the app goes to the background.
+ */
+@Composable
+private fun SessionOrTerminal(
+    terminal: TerminalAccess,
+    state: SessionUiState,
+    actions: SessionActions,
+    content: @Composable (SessionActions, showTerminal: Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    // Until the setting has loaded, treat the lock as on.
+    val lockOn by terminal.lock.collectAsStateWithLifecycle(initialValue = true)
+    val cover = LocalConfiguration.current.screenHeightDp.dp < RafiqTheme.spacing.compactHeight
+    var choice by remember(state.screen.sessionId) { mutableStateOf(TerminalChoice()) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { choice = choice.leftScreen() }
+    LaunchedEffect(cover) { if (cover) choice = choice.leftScreen() }
+    val capable = state.screen.session?.terminal == true
+    val showTerminal = choice.shows(capable = capable, cover = cover, lockOn = lockOn)
+    val title = stringResource(R.string.terminal_unlock_title)
+    val subtitle = stringResource(R.string.terminal_unlock_subtitle)
+    val cancel = stringResource(R.string.terminal_unlock_cancel)
+    val toggle =
+        ViewToggle(terminal = showTerminal) { wantsTerminal ->
+            when {
+                !wantsTerminal -> {
+                    choice = choice.chat()
+                }
+
+                lockOn -> {
+                    BiometricCheck.ask(context, title, subtitle, cancel) { passed ->
+                        if (passed) choice = choice.passedCheck()
+                    }
+                }
+
+                else -> {
+                    choice = choice.terminal(lockOn = false)
+                }
+            }
+        }
+    content(if (cover || !capable) actions else actions.copy(viewToggle = toggle), showTerminal)
 }
 
 /**

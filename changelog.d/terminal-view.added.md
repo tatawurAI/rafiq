@@ -1,0 +1,1 @@
+A session your server serves from tmux has a Chat and Terminal toggle. Terminal shows the real pane, with Esc, Tab, Ctrl, Alt, the arrows and Paste on a key row, and half folded it sits above the hinge with the keys below.

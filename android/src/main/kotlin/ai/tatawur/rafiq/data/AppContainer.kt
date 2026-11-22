@@ -7,6 +7,9 @@ import ai.tatawur.rafiq.client.sync.SyncingSessionRepository
 import ai.tatawur.rafiq.pairing.StoredPairingRepository
 import ai.tatawur.rafiq.pairing.TokenCipher
 import ai.tatawur.rafiq.protocol.Event
+import ai.tatawur.rafiq.settings.SecuritySettings
+import ai.tatawur.rafiq.terminal.OkHttpTerminalPort
+import ai.tatawur.rafiq.terminal.TerminalAccess
 import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
@@ -22,6 +25,12 @@ import kotlinx.coroutines.SupervisorJob
 // A damaged file reads as empty, which means pairing again, instead of failing every launch.
 private val Context.pairingStore by preferencesDataStore(
     name = "pairing",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
+
+// A damaged file reads as empty, which leaves every setting at its default.
+private val Context.settingsStore by preferencesDataStore(
+    name = "settings",
     corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
 )
 
@@ -56,6 +65,16 @@ class AppContainer(
 
     /** Pairs the app with your server. */
     val pairing: PairingRepository = storedPairing
+
+    /** Settings that guard what the phone can do on your server. */
+    val security = SecuritySettings(application.settingsStore)
+
+    /** Opens `WS /terminal` with the same host and token as `WS /events`, behind the Terminal lock. */
+    val terminal =
+        TerminalAccess(
+            port = OkHttpTerminalPort(BridgeClients.sockets(restClient), storedPairing.credentials),
+            lock = security.terminalLock,
+        )
 
     /** Sessions from the cache and the paired bridge. */
     val sessions: SessionRepository =

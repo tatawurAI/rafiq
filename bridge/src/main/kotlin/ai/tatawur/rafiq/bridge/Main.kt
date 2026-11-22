@@ -1,6 +1,8 @@
 package ai.tatawur.rafiq.bridge
 
 import ai.tatawur.rafiq.bridge.hook.HookChannel
+import ai.tatawur.rafiq.bridge.hook.HookSettings
+import ai.tatawur.rafiq.bridge.hook.HookSetup
 import ai.tatawur.rafiq.bridge.hook.HookSink
 import ai.tatawur.rafiq.bridge.hook.NoopHookSink
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
@@ -25,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
+import java.nio.file.Path
 import java.util.Properties
 import kotlin.system.exitProcess
 
@@ -72,10 +75,11 @@ fun main(args: Array<String>) {
     terminal?.let { warnAboutInheritedSecrets(it) }
     // Hooks feed tmux Chat, so the channel exists only with tmux on, and only with a data folder to hold it.
     val hookChannel = terminal?.let { config.dataDir?.let { dir -> HookChannel(dir, hookSink, scope).start() } }
+    val hooks = hookChannel?.let { hookSetup(config.dataDir, deviceStore) }
     try {
         embeddedServer(CIO, host = config.bindAddress, port = config.port) {
             log.info("Rafiq bridge {} starting with {}", version, config)
-            bridgeModule(version, eventLog, sessions, security, config.devPage, terminal, connections, devices)
+            bridgeModule(version, eventLog, sessions, security, config.devPage, terminal, connections, devices, hooks)
         }.start(wait = true)
     } finally {
         hookChannel?.close()
@@ -88,6 +92,21 @@ fun main(args: Array<String>) {
 
 /** Where hook calls go. Until a reader is wired in, permission requests go back to the desk. */
 private val hookSink: HookSink = NoopHookSink
+
+/** The hook installer, or null with a warning when the hook program is not where an installed bridge has it. */
+private fun hookSetup(
+    dataDir: Path?,
+    consents: DeviceStore,
+): HookSetup? {
+    val program = HookSetup.locateProgram()
+    if (program == null || dataDir == null) {
+        LoggerFactory
+            .getLogger("ai.tatawur.rafiq.bridge")
+            .warn("hooks/rafiq-hook.py was not found next to the bridge, so hooks cannot be installed from the app.")
+        return null
+    }
+    return HookSetup(HookSettings(program.toString(), dataDir.toAbsolutePath().toString()), consents)
+}
 
 /** The device token must not reach the panes. Names only: a value is never printed. */
 private fun warnAboutInheritedSecrets(terminal: TerminalService) {

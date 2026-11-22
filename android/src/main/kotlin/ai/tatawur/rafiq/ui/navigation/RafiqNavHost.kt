@@ -9,6 +9,7 @@ import ai.tatawur.rafiq.sessions.SessionListRoute
 import ai.tatawur.rafiq.sessions.SessionListViewModel
 import ai.tatawur.rafiq.sessions.SessionRoute
 import ai.tatawur.rafiq.sessions.SessionViewModel
+import ai.tatawur.rafiq.terminal.TerminalAccess
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -45,6 +46,8 @@ import androidx.navigation.navArgument
  * @param pairing the pairing screen. It calls `onPaired` once a bridge is paired.
  * @param onPairAgain forgets the refused pairing when you tap "Pair again". The connection then
  *   reads as not paired and the app moves to [pairing].
+ * @param terminal offers Terminal on sessions your server serves as a terminal, or null for none.
+ * @param settings the settings screen. It calls `onBack` to leave.
  */
 @Composable
 fun RafiqNavHost(
@@ -52,6 +55,8 @@ fun RafiqNavHost(
     pairing: @Composable (onPaired: () -> Unit) -> Unit,
     onPairAgain: () -> Unit,
     modifier: Modifier = Modifier,
+    terminal: TerminalAccess? = null,
+    settings: @Composable (onBack: () -> Unit) -> Unit = {},
     navController: NavHostController = rememberNavController(),
 ) {
     val connection by sessions.connection.collectAsStateWithLifecycle()
@@ -82,7 +87,11 @@ fun RafiqNavHost(
                 onOpen = { id -> navController.navigate(Routes.session(id)) },
                 onNewSession = { navController.navigate(Routes.NEW_SESSION) },
                 onPairAgain = onPairAgain,
+                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
             )
+        }
+        composable(Routes.SETTINGS) {
+            settings { navController.popBackStack() }
         }
         composable(Routes.NEW_SESSION) {
             val viewModel = viewModel { NewSessionViewModel(sessions) }
@@ -100,7 +109,12 @@ fun RafiqNavHost(
         ) { entry ->
             val sessionId = entry.arguments?.getString(Routes.SESSION_ID) ?: return@composable
             val viewModel = viewModel(key = sessionId) { SessionViewModel(sessions, sessionId) }
-            SessionRoute(viewModel = viewModel, onBack = { navController.popBackStack() }, onPairAgain = onPairAgain)
+            SessionRoute(
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
+                onPairAgain = onPairAgain,
+                terminal = terminal,
+            )
         }
     }
 }

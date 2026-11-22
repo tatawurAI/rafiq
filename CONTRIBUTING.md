@@ -7,7 +7,7 @@ Thanks for helping. This guide covers how to build the project, how a change mov
 You need:
 
 - JDK 21
-- The Android SDK (command-line tools or Android Studio), with `ANDROID_HOME` or `local.properties` pointing at it
+- The Android SDK (command-line tools or Android Studio), with `ANDROID_HOME` or `local.properties` pointing at it. The app compiles against SDK Platform 37 (`platforms;android-37.0`) with Build-Tools 37 (`build-tools;37.0.0`), and still targets API 36
 - A phone or emulator running Android 12 (API 31) or newer
 
 Clone the repository and use the Gradle wrapper for everything. Do not install Gradle separately.

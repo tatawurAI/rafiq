@@ -231,7 +231,8 @@ internal fun SessionHeader(
                 }
             }
         }
-        if (thread != null && thread.status == AgentState.WORKING) {
+        actions.viewToggle?.let { ChatTerminalToggle(it) }
+        if (actions.viewToggle?.terminal != true && thread != null && thread.status == AgentState.WORKING) {
             IconButton(onClick = { actions.onCancel(thread.id) }) {
                 Icon(
                     painter = painterResource(R.drawable.ic_stop),

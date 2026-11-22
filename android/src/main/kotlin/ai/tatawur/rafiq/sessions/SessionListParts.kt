@@ -51,6 +51,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -83,11 +84,22 @@ internal fun LazyListScope.sessionListItems(
     skipId: String?,
 ) {
     item(key = "heading") {
-        Text(
-            text = stringResource(R.string.sessions_title),
-            style = MaterialTheme.typography.headlineMedium,
-            color = RafiqTheme.colors.text,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(R.string.sessions_title),
+                style = MaterialTheme.typography.headlineMedium,
+                color = RafiqTheme.colors.text,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = actions.onOpenSettings) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_settings),
+                    contentDescription = stringResource(R.string.settings_open),
+                    modifier = Modifier.size(RafiqTheme.spacing.icon),
+                    tint = RafiqTheme.colors.text,
+                )
+            }
+        }
     }
     item(key = "connection") {
         ConnectionBanner(

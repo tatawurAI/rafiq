@@ -59,6 +59,7 @@
   <string name="thread_empty">Nothing in this thread yet.</string>
   <string name="cancel_turn">Stop this thread</string>
   <string name="jump_to_latest">Jump to latest</string>
+  <string name="new_messages">New messages</string>
   <string name="streaming">Writing</string>
   <string name="image_placeholder">Image: %1$s</string>
   <string name="image_placeholder_no_alt">Image</string>
@@ -112,4 +113,40 @@
   <string name="feedback_unauthorized">Your server refused this phone\'s token.</string>
   <string name="feedback_failed">Your server said: %1$s</string>
   <string name="feedback_dismiss">Dismiss</string>
+  <!-- Terminal view of a tmux session -->
+  <string name="view_chat">Chat</string>
+  <string name="view_terminal">Terminal</string>
+  <string name="view_toggle">Show Chat or Terminal</string>
+  <string name="terminal_connecting">Connecting to the pane.</string>
+  <string name="terminal_ended">The terminal ended: %1$s</string>
+  <string name="terminal_closed">Your server closed the terminal.</string>
+  <string name="terminal_failed">The terminal is not connected. Check that your phone can reach your server.</string>
+  <string name="terminal_reconnect">Reconnect</string>
+  <string name="terminal_key_esc">Esc</string>
+  <string name="terminal_key_tab">Tab</string>
+  <string name="terminal_key_ctrl">Ctrl</string>
+  <string name="terminal_key_alt">Alt</string>
+  <string name="terminal_key_left">Left</string>
+  <string name="terminal_key_up">Up</string>
+  <string name="terminal_key_down">Down</string>
+  <string name="terminal_key_right">Right</string>
+  <string name="terminal_key_left_symbol">←</string>
+  <string name="terminal_key_up_symbol">↑</string>
+  <string name="terminal_key_down_symbol">↓</string>
+  <string name="terminal_key_right_symbol">→</string>
+  <string name="terminal_key_paste">Paste</string>
+  <string name="terminal_key_keyboard">Keyboard</string>
+  <string name="terminal_link_title">Open this link?</string>
+  <string name="terminal_link_open">Open</string>
+  <string name="terminal_link_cancel">Cancel</string>
+  <string name="terminal_unlock_title">Open Terminal</string>
+  <string name="terminal_unlock_subtitle">Confirm it is you before Terminal opens.</string>
+  <string name="terminal_unlock_cancel">Cancel</string>
+  <!-- Settings -->
+  <string name="settings_title">Settings</string>
+  <string name="settings_open">Settings</string>
+  <string name="settings_terminal_lock">Ask for your fingerprint or face before Terminal opens</string>
+  <string name="settings_terminal_lock_detail">Terminal types into a shell on your server. With this on, your phone asks each time you open it.</string>
+  <string name="settings_terminal_lock_unavailable">Your phone has no strong fingerprint or face unlock set up, so this cannot be turned on.</string>
+  <string name="settings_confirm_title">Change Terminal protection</string>
 </resources>

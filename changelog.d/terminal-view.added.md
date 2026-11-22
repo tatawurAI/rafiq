@@ -1,1 +1,1 @@
-Your server can show a tmux session's real terminal on your phone, after you turn Terminal on and name the sessions it may open.
+Your server can show a tmux session's real terminal on your phone, after you turn Terminal on and name the sessions it may open. The session view has a Chat and Terminal toggle. Terminal shows the real pane, with Esc, Tab, Ctrl, Alt, the arrows and Paste on a key row, and half folded it sits above the hinge with the keys below.

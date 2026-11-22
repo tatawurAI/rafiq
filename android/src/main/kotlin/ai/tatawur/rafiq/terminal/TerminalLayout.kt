@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.terminal
 
 import ai.tatawur.rafiq.R
+import ai.tatawur.rafiq.client.terminal.TerminalLink
 import ai.tatawur.rafiq.client.terminal.TerminalPort
 import ai.tatawur.rafiq.client.terminal.TerminalStatus
 import ai.tatawur.rafiq.client.terminal.viewportCells
@@ -134,7 +135,8 @@ private fun StatusStrip(
             }
 
             is TerminalStatus.Failed -> {
-                stringResource(R.string.terminal_failed)
+                val fellBehind = status.message == TerminalLink.FELL_BEHIND
+                stringResource(if (fellBehind) R.string.terminal_fell_behind else R.string.terminal_failed)
             }
         } ?: return
     val spacing = RafiqTheme.spacing

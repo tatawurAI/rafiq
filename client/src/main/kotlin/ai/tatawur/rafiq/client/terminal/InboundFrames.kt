@@ -4,6 +4,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -19,15 +20,22 @@ class InboundFrames(
 ) {
     private val channel = Channel<TerminalFrame>(maxFrames)
     private val queuedBytes = AtomicLong()
+    private val queuedFrames = AtomicInteger()
 
-    /** Queues [frame] from the socket's thread. False when it does not fit. */
+    /**
+     * Queues [frame] from the socket's thread. False when it does not fit. A frame always fits an
+     * empty queue, however large, so one big frame can never make every socket overflow.
+     */
     fun offer(frame: TerminalFrame): Boolean {
         val size = frame.byteSize()
-        if (queuedBytes.addAndGet(size) > maxBytes || !channel.trySend(frame).isSuccess) {
+        val first = queuedFrames.incrementAndGet() == 1
+        val bytes = queuedBytes.addAndGet(size)
+        val fits = (first || bytes <= maxBytes) && channel.trySend(frame).isSuccess
+        if (!fits) {
+            queuedFrames.decrementAndGet()
             queuedBytes.addAndGet(-size)
-            return false
         }
-        return true
+        return fits
     }
 
     /** Ends [frames]: normally for a null [cause], with [cause] otherwise. */
@@ -36,7 +44,11 @@ class InboundFrames(
     }
 
     /** The queued frames, in order. Collect it once. */
-    fun frames(): Flow<TerminalFrame> = channel.receiveAsFlow().onEach { queuedBytes.addAndGet(-it.byteSize()) }
+    fun frames(): Flow<TerminalFrame> =
+        channel.receiveAsFlow().onEach {
+            queuedBytes.addAndGet(-it.byteSize())
+            queuedFrames.decrementAndGet()
+        }
 
     private fun TerminalFrame.byteSize(): Long =
         when (this) {
@@ -46,7 +58,7 @@ class InboundFrames(
         }
 
     companion object {
-        const val DEFAULT_MAX_FRAMES = 256
+        const val DEFAULT_MAX_FRAMES = 4096
         const val DEFAULT_MAX_BYTES = 2L * 1024 * 1024
     }
 }

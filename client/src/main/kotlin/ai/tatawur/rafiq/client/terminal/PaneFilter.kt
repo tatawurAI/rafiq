@@ -13,7 +13,8 @@ import java.io.ByteArrayOutputStream
  * passes explicit emulator callbacks for these, so this filter does not rely on the library's
  * defaults and the library's defaults do not rely on this filter.
  *
- * C1 controls written as UTF-8 (U+0080 to U+009F) are read as their 7-bit ESC forms, so U+009D
+ * C1 controls, as UTF-8 (U+0080 to U+009F) or as raw bytes 0x80 to 0x9F outside a UTF-8
+ * character, are read as their 7-bit ESC forms, so U+009D
  * is an OSC and U+0090 a DCS and they are filtered the same way. A C1 control with no string or
  * sequence behind it is dropped.
  *
@@ -28,10 +29,15 @@ class PaneFilter {
     private var oscOverflow = false
     private var pendingC1Lead = false
 
+    // Continuation bytes still owed by the UTF-8 character being read, so one in 0x80 to 0x9F is
+    // part of that character and not a C1 control.
+    private var continuations = 0
+
     /** Forgets any half-read sequence. */
     fun reset() {
         state = State.GROUND
         pendingC1Lead = false
+        continuations = 0
         osc.reset()
         oscOverflow = false
     }
@@ -65,7 +71,18 @@ class PaneFilter {
                 pendingC1Lead = true
             }
 
+            code in CONTINUATION_RANGE && continuations > 0 -> {
+                continuations--
+                step(b, out)
+            }
+
+            // A C1 byte on its own, not inside a UTF-8 character: read it as its 7-bit form too.
+            code in C1_RANGE -> {
+                c1(code, out)
+            }
+
             else -> {
+                continuations = utf8ContinuationsAfter(code)
                 step(b, out)
             }
         }
@@ -215,6 +232,7 @@ class PaneFilter {
         // U+0080 to U+009F in UTF-8 are C2 80 to C2 9F.
         const val C1_LEAD = 0xC2
         val C1_RANGE = 0x80..0x9F
+        val CONTINUATION_RANGE = 0x80..0xBF
         const val C1_DCS = 0x90
         const val C1_SOS = 0x98
         const val C1_CSI = 0x9B
@@ -224,3 +242,13 @@ class PaneFilter {
         const val C1_APC = 0x9F
     }
 }
+
+/** How many continuation bytes the UTF-8 lead byte [code] announces. */
+@Suppress("MagicNumber") // The UTF-8 lead byte ranges, as in RFC 3629.
+private fun utf8ContinuationsAfter(code: Int): Int =
+    when (code) {
+        in 0xC3..0xDF -> 1
+        in 0xE0..0xEF -> 2
+        in 0xF0..0xF4 -> 3
+        else -> 0
+    }

@@ -93,7 +93,7 @@ class KeyUplinkTest {
     }
 
     @Test
-    fun a_bracketed_paste_stays_whole_across_chunks() {
+    fun a_paste_end_marker_split_across_chunks_still_ends_the_paste() {
         val paste = "\u001b[200~line one\rline two\u001b[201~"
         assertEquals(listOf("a", paste, "\r"), up("a$paste\r"))
         assertEquals(

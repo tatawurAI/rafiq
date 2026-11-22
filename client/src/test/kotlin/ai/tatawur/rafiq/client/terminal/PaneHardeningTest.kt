@@ -38,6 +38,11 @@ class PaneHardeningTest {
         // Split between the two bytes of the C1 character.
         val osc = "\u009d52;c;eA==\u0007b".toByteArray()
         assertEquals("ab", down(byteArrayOf('a'.code.toByte(), osc[0]), osc.copyOfRange(1, osc.size)))
+        // Raw C1 bytes, not inside a UTF-8 character, are read the same way.
+        val raw = byteArrayOf(0x9d.toByte()) + "52;c;cm0gLXJmIH4=\u0007after".toByteArray()
+        assertEquals("before after", down("before ".toByteArray(), raw))
+        // Continuation bytes in 0x80 to 0x9F inside a real character are not C1: € is E2 82 AC.
+        assertEquals("€ and £", down("€ and £"))
         // A C1 CSI is read as ESC [, and ordinary text with a C2 lead byte is untouched.
         assertEquals("\u001b[31mred £", down("\u009b31mred £"))
     }

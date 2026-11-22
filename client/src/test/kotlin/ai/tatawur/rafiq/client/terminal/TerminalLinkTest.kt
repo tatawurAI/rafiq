@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.client.terminal
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
@@ -24,6 +25,7 @@ class TerminalLinkTest {
         private val scope: TestScope,
     ) : TerminalPort {
         val sent = mutableListOf<String>()
+        var onText: (String) -> Unit = {}
         val sentAtMs = mutableListOf<Pair<Long, Int>>()
         var open = 0
         var opens = 0
@@ -38,6 +40,7 @@ class TerminalLinkTest {
 
                 override fun sendText(text: String) {
                     sent += text
+                    onText(text)
                 }
             }
 
@@ -75,7 +78,13 @@ class TerminalLinkTest {
 
     private fun TestScope.attached(): Pair<FakeSockets, TerminalLink> {
         val sockets = FakeSockets(this)
-        val link = TerminalLink(sockets, "weather-app", resizeDebounce = 150.milliseconds)
+        val link =
+            TerminalLink(
+                sockets,
+                "weather-app",
+                resizeDebounce = 150.milliseconds,
+                timeSource = testScheduler.timeSource,
+            )
         link.setViewport(CellSize(80, 24))
         return sockets to link
     }
@@ -198,6 +207,8 @@ class TerminalLinkTest {
 
             sockets.drop(TerminalOverflowException())
             runCurrent()
+            assertEquals(1, sockets.opens, "it waits before it reopens")
+            advanceTimeBy(501)
             sockets.push(TerminalFrame.Text("""{"type":"snapshot","cols":80,"rows":24,"cursor_x":0,"cursor_y":0}"""))
             sockets.push(TerminalFrame.Binary("fresh".toByteArray()))
             runCurrent()
@@ -208,6 +219,44 @@ class TerminalLinkTest {
             assertIs<TerminalEvent.Snapshot>(events.single())
             // The new socket gets the viewport at once, like the first.
             assertEquals(listOf(resize(80, 24), resize(80, 24)), sockets.sent)
+        }
+
+    @Test
+    fun a_phone_that_keeps_falling_behind_backs_off_then_stops_with_failed() =
+        runTest {
+            var opens = 0
+            // Every socket overflows a moment after it opens.
+            val behind =
+                TerminalPort {
+                    flow {
+                        opens++
+                        delay(1)
+                        throw TerminalOverflowException()
+                    }
+                }
+            val link = TerminalLink(behind, "weather-app", timeSource = testScheduler.timeSource)
+            link.setViewport(CellSize(80, 24))
+            backgroundScope.launch { link.attach().collect {} }
+
+            advanceTimeBy(30_000)
+
+            // Open, wait 0.5 s, open, wait 1 s, open: the third overflow in 30 s stops it.
+            assertEquals(3, opens)
+            assertEquals(TerminalStatus.Failed(TerminalLink.FELL_BEHIND), link.status.value)
+        }
+
+    @Test
+    fun a_viewport_change_right_after_the_socket_opens_still_goes_up() =
+        runTest {
+            val (sockets, link) = attached()
+            // The layout settles at a new size while the open is still being handled.
+            sockets.onText = { if (it == resize(80, 24)) link.setViewport(CellSize(60, 30)) }
+            backgroundScope.launch { link.attach().collect {} }
+            runCurrent()
+
+            advanceTimeBy(200)
+
+            assertEquals(listOf(resize(80, 24), resize(60, 30)), sockets.sent)
         }
 
     @Test

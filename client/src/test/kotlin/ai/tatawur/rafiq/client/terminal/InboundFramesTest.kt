@@ -19,6 +19,13 @@ class InboundFramesTest {
     }
 
     @Test
+    fun one_frame_larger_than_the_byte_limit_still_fits_an_empty_queue() {
+        val queue = InboundFrames(maxFrames = 100, maxBytes = 1_000)
+        assertTrue(queue.offer(binary(5_000)))
+        assertFalse(queue.offer(binary(1)))
+    }
+
+    @Test
     fun a_frame_past_the_byte_limit_does_not_fit_until_the_view_catches_up() =
         runTest {
             val queue = InboundFrames(maxFrames = 100, maxBytes = 1_000)

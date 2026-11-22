@@ -123,6 +123,7 @@
   <string name="terminal_ended">The terminal ended: %1$s</string>
   <string name="terminal_closed">Your server closed the terminal.</string>
   <string name="terminal_failed">The terminal is not connected. Check that your phone can reach your server.</string>
+  <string name="terminal_fell_behind">The screen could not keep up. Tap Reconnect to try again.</string>
   <string name="terminal_reconnect">Reconnect</string>
   <string name="terminal_key_esc">Esc</string>
   <string name="terminal_key_tab">Tab</string>

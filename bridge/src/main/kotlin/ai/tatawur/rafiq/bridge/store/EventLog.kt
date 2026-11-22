@@ -133,6 +133,22 @@ class EventLog(
         }
     }
 
+    /** Changes a session's project folder, for a tmux session whose agent started in another folder later. */
+    suspend fun updateProject(
+        sessionId: String,
+        projectPath: String,
+    ) {
+        onDispatcher {
+            transaction {
+                connection.prepareStatement("UPDATE sessions SET project_path = ? WHERE id = ?").use {
+                    it.setString(1, projectPath)
+                    it.setString(2, sessionId)
+                    it.executeUpdate()
+                }
+            }
+        }
+    }
+
     /** Records the handle the agent gave a resumed session, which can differ from the one it had before. */
     suspend fun updateAgentSessionRef(
         sessionId: String,
@@ -182,6 +198,22 @@ class EventLog(
                     it.setLong(2, afterSeq)
                     it.setInt(3, limit)
                     it.executeQuery().use { rows -> rows.collect(::readEvent) }
+                }
+        }
+
+    /** The session's newest [limit] events, oldest first. */
+    suspend fun latest(
+        sessionId: String,
+        limit: Int,
+    ): List<Event> =
+        onDispatcher {
+            connection
+                .prepareStatement(
+                    "SELECT session_id, seq, ts_ms, payload FROM events WHERE session_id = ? ORDER BY seq DESC LIMIT ?",
+                ).use {
+                    it.setString(1, sessionId)
+                    it.setInt(2, limit)
+                    it.executeQuery().use { rows -> rows.collect(::readEvent) }.reversed()
                 }
         }
 

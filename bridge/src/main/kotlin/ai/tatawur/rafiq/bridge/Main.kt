@@ -126,7 +126,7 @@ private fun readerFor(
         dataDir,
         connections,
         devices = { devices.devices().filter { it.revokedAtMs == null }.map { it.id } },
-        hooksInstalled = { project -> hooks?.preview(project)?.installed ?: true },
+        hooksInstalled = hooksInstalledBy(hooks),
     )
 
 /** The hook installer, or null with a warning when the hook program is not where an installed bridge has it. */

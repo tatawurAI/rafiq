@@ -45,7 +45,7 @@ class ClaudeReplayTest {
             val record = dir.resolve("record.jsonl")
             Files.write(record, resource("record-sample.jsonl"))
             val log = FakeReaderLog()
-            val reader = reader(log)
+            val reader = reader(log, projectsDir = dir)
             val permissions = mutableListOf<Deferred<HookReply?>>()
             var previousMs = 0L
             for (line in resource("hooks-sample.jsonl")) {

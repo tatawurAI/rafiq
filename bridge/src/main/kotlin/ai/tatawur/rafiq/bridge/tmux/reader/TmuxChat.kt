@@ -9,7 +9,8 @@ interface TmuxChat {
     /**
      * Types [text] into the session's Claude pane, or holds it until Claude is idle. Returns once it was typed
      * or queued. What happens next comes as [ai.tatawur.rafiq.protocol.EventPayload.PromptDelivery] events with
-     * [clientId].
+     * [clientId]. [deviceId] is the phone that sent it: a prompt waiting in the queue is dropped when that device
+     * is revoked.
      *
      * @throws ai.tatawur.rafiq.bridge.sessions.SessionException.Conflict with a
      *   [ai.tatawur.rafiq.protocol.api.SendRefusal] code when the bridge will not type it.
@@ -18,6 +19,7 @@ interface TmuxChat {
         sessionId: String,
         text: String,
         clientId: String?,
+        deviceId: String? = null,
     )
 
     /** True when [approvalId] is a pending approval of a tmux session. */

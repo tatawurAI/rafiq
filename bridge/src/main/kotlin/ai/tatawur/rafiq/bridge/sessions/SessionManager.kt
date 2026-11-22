@@ -189,10 +189,11 @@ class SessionManager(
         threadId: String?,
         text: String,
         clientId: String? = null,
+        deviceId: String? = null,
     ) {
         if (text.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
         if (isTmuxSessionId(sessionId)) {
-            promptTmux(sessionId, threadId, text, clientId)
+            promptTmux(sessionId, threadId, text, clientId, deviceId)
             return
         }
         // One prompt at a time per session, from the checks to the adapter call, so two racing prompts
@@ -236,10 +237,11 @@ class SessionManager(
         threadId: String?,
         text: String,
         clientId: String?,
+        deviceId: String?,
     ) {
         resolvePromptTarget(sessionId, threadId)
         val chat = tmuxChat ?: throw SessionException.Conflict(CHAT_UNAVAILABLE, CHAT_UNAVAILABLE_MESSAGE)
-        chat.prompt(sessionId, text, clientId)
+        chat.prompt(sessionId, text, clientId, deviceId)
     }
 
     /**

@@ -52,6 +52,12 @@ object SendRefusal {
     /** Three messages are already waiting for the agent to be free. */
     const val QUEUE_FULL = "queue_full"
 
+    /** The phone that sent it was revoked before the agent was free, so the waiting prompt was dropped. */
+    const val DEVICE_REVOKED = "device_revoked"
+
+    /** The prompt waited ten minutes for the agent to be free and was dropped. */
+    const val QUEUE_EXPIRED = "queue_expired"
+
     /** The text was sent but no sign that it landed came back in time. */
     const val NOT_CONFIRMED = "not_confirmed"
 }

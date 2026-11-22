@@ -32,6 +32,16 @@ data class Refusal(
                 SendRefusal.HOOKS_NOT_INSTALLED,
                 "This project has no Rafiq hooks, so Chat cannot see what Claude does. Set them up, or use Terminal.",
             )
+        val REVOKED =
+            Refusal(
+                SendRefusal.DEVICE_REVOKED,
+                "This phone was removed from your server, so its waiting message was not sent.",
+            )
+        val EXPIRED =
+            Refusal(
+                SendRefusal.QUEUE_EXPIRED,
+                "The message waited 10 minutes for Claude to be free, so it was not sent.",
+            )
         val NOT_CONFIRMED =
             Refusal(
                 SendRefusal.NOT_CONFIRMED,
@@ -76,6 +86,8 @@ internal fun readInputBox(screen: String): InputBox {
     if (rules.size < 2) return InputBox.ABSENT
     val inside = lines.subList(rules[rules.size - 2] + 1, rules.last()).filter { stripEscapes(it).isNotBlank() }
     val first = inside.firstOrNull() ?: return InputBox.ABSENT
+    // In shell mode the box starts with `!` in place of the prompt mark: a line is in it, to run as a command.
+    if (stripEscapes(first).trimStart().startsWith(SHELL_MARK)) return InputBox.DRAFT
     val mark = first.indexOf(PROMPT_MARK)
     if (mark < 0 || stripEscapes(first.substring(0, mark)).isNotBlank()) return InputBox.ABSENT
     val typed = listOf(first.substring(mark + PROMPT_MARK.length)) + inside.drop(1)
@@ -123,6 +135,7 @@ private fun dimAfter(
 }
 
 private const val PROMPT_MARK = "❯"
+private const val SHELL_MARK = "!"
 private val RULE = "─".repeat(20)
 
 /** The pane a prompt goes to and the agent process that must still run in it. */
@@ -172,24 +185,36 @@ internal class SendGuard(
     }
 
     /**
-     * Types [text] and presses Enter once, in its own key event. Right before Enter it checks again that the
-     * agent is idle and still runs in the pane, because if it had exited the Enter would run the text in a
-     * shell. Null when Enter was pressed.
+     * Types [text] and presses Enter once, in its own key event. The agent must run in the pane right before the
+     * paste. Right before Enter the bridge checks again: the agent is idle and still runs in the pane (if it had
+     * exited, Enter would run the text in a shell), no phone approval for the pane is open ([approvalOpen]), and
+     * the input box holds the pasted text (a dialog that opened meanwhile would take Enter as its answer). Null
+     * when Enter was pressed.
      */
     suspend fun type(
         target: PaneTarget,
         text: String,
+        approvalOpen: () -> Boolean = { false },
         beforeEnter: suspend () -> Unit = {},
     ): Refusal? {
-        if (!io.paste(target.paneId, text)) return Refusal.UNKNOWN
+        val notTyped =
+            when {
+                !io.runsAgent(target.paneId, target.agentPid) -> Refusal.NOT_RUNNING
+                !io.paste(target.paneId, text) -> Refusal.UNKNOWN
+                else -> null
+            }
+        if (notTyped != null) return notTyped
         delay(settle)
         val stillRuns = io.runsAgent(target.paneId, target.agentPid)
         val status = if (stillRuns) statusOf(target)?.status else null
+        val box = if (status == AgentStatus.IDLE) io.capture(target.paneId)?.let(::readInputBox) else null
         val refusal =
             when {
                 !stillRuns -> Refusal.NOT_RUNNING
-                status == AgentStatus.WAITING -> Refusal.WAITING
+                status == AgentStatus.WAITING || approvalOpen() -> Refusal.WAITING
                 status != AgentStatus.IDLE -> Refusal.UNKNOWN
+                box == InputBox.ABSENT -> Refusal.WAITING
+                box != InputBox.DRAFT -> Refusal.UNKNOWN
                 else -> enter(target, beforeEnter)
             }
         return refusal?.let(Refusal::leftInBox)

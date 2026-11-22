@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge.tmux.reader
 
 import ai.tatawur.rafiq.bridge.hook.HookEnvelope
 import ai.tatawur.rafiq.bridge.hook.HookReply
+import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
 import ai.tatawur.rafiq.bridge.sessions.SessionException
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.AgentThread
@@ -33,6 +34,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** The waits of the reader and the send guard, in one place so tests can name them. */
@@ -51,6 +53,8 @@ data class ReaderTiming(
     val boxPoll: Duration = 300.milliseconds,
     /** How long a phone may take to answer an approval. The installed hook waits 900 s, so this ends first. */
     val phoneDeadline: Duration = 600.seconds,
+    /** How long a prompt may wait for a busy agent before it is given up as not delivered. */
+    val queueMaxAge: Duration = 10.minutes,
 )
 
 /** What every session's Chat shares: the reader's collaborators and its waits. */
@@ -66,6 +70,10 @@ internal class ReaderContext(
     val nowMs: () -> Long,
     val ioDispatcher: CoroutineDispatcher,
     val timing: ReaderTiming,
+    /** Claude Code's folder of session records. A record path outside it is never read. Null reads none. */
+    val recordRoot: Path?,
+    /** Where a queued prompt registers with its device, so revoking the device drops it. */
+    val registry: ConnectionRegistry?,
 )
 
 /** A Claude pane the tmux scan found, with what `claude agents --json` said about its process. */
@@ -75,6 +83,8 @@ data class FoundPane(
     val isCurrent: Boolean,
     val claudeSessionId: String?,
     val recordPath: Path?,
+    /** Every `claude` process under the pane. The hook's own pid wins when it is one of them. */
+    val candidates: List<Long> = listOf(agentPid),
 )
 
 /**
@@ -102,6 +112,8 @@ internal class TmuxChatSession(
     private val nowMs = context.nowMs
     private val ioDispatcher = context.ioDispatcher
     private val timing = context.timing
+    private val recordRoot = context.recordRoot
+    private val registry = context.registry
 
     private sealed interface Input {
         class Hook(
@@ -160,7 +172,11 @@ internal class TmuxChatSession(
     private class QueuedPrompt(
         val text: String,
         val clientId: String,
-    )
+        val queuedAtMs: Long,
+    ) {
+        /** Its registration with the device that sent it, closed when it leaves the queue. */
+        @Volatile var registration: AutoCloseable? = null
+    }
 
     private val inbox = Channel<Input>(Channel.UNLIMITED)
     private val panes = LinkedHashMap<String, PaneConversation>()
@@ -226,7 +242,8 @@ internal class TmuxChatSession(
         try {
             withTimeoutOrNull(timing.phoneDeadline) { approval.reply.await() }
             if (!approval.reply.isCompleted) approvals.settle(approval.id, ApprovalOutcome.ASK_AT_DESK)
-            return approval.reply.getCompleted()
+            // Whoever settled it completes the reply right after, so wait for it rather than read it.
+            return approval.reply.await()
         } catch (cancelled: CancellationException) {
             // The hook disconnected: release the approval at once.
             withContext(NonCancellable) { approvals.settle(approval.id, ApprovalOutcome.ASK_AT_DESK) }
@@ -245,10 +262,11 @@ internal class TmuxChatSession(
     suspend fun prompt(
         text: String,
         clientId: String?,
+        deviceId: String? = null,
     ) {
         val clean = sanitizePrompt(text)
         if (clean.isBlank()) throw SessionException.Invalid("empty_prompt", "The prompt text is empty.")
-        val refusal = sendLock.withLock { send(clean, clientId ?: ("c-" + UUID.randomUUID())) }
+        val refusal = sendLock.withLock { send(clean, clientId ?: ("c-" + UUID.randomUUID()), deviceId) }
         if (refusal != null) throw SessionException.Conflict(refusal.code, refusal.message)
     }
 
@@ -256,10 +274,11 @@ internal class TmuxChatSession(
     private suspend fun send(
         text: String,
         clientId: String,
+        deviceId: String?,
     ): Refusal? {
         val target = mainTarget ?: return Refusal.NOT_RUNNING
         val project = log.session(sessionId)?.projectPath
-        val hooksMissing = project != null && !hooksInstalled(project)
+        val hooksMissing = project != null && !hooksPresent(project)
         val ready = if (hooksMissing) null else guard.readiness(target, approvals.hasPendingFor(target.paneId))
         return when (ready) {
             null -> {
@@ -271,26 +290,48 @@ internal class TmuxChatSession(
             }
 
             Readiness.Busy -> {
-                enqueue(text, clientId)
+                enqueue(text, clientId, deviceId)
                 null
             }
 
+            // Prompts go in the order you sent them: one already waiting goes first.
             Readiness.Ready -> {
-                val expectation = ExpectedPrompt(target.paneId, text, clientId)
-                typeIt(target, expectation) {}.also { refused ->
-                    if (refused == null) scope.launch { confirm(expectation, clientId) }
+                if (queue.isNotEmpty()) {
+                    enqueue(text, clientId, deviceId)
+                    null
+                } else {
+                    val expectation = ExpectedPrompt(target.paneId, text, clientId)
+                    typeIt(target, expectation) {}.also { refused ->
+                        if (refused == null) scope.launch { confirm(expectation, clientId) }
+                    }
                 }
             }
         }
     }
 
-    /** Stops the session's loop. Pending approvals go back to the desk and waiting prompts are not delivered. */
+    /** A project the installer cannot read, for example one that is not a folder, has no hooks either. */
+    private suspend fun hooksPresent(project: String): Boolean =
+        try {
+            hooksInstalled(project)
+        } catch (_: SessionException) {
+            false
+        }
+
+    /**
+     * Stops the session's loop. Pending approvals go back to the desk, a request still in the inbox is answered
+     * "ask at the desk", and waiting prompts are not delivered.
+     */
     suspend fun close() {
         loop.cancel()
         inbox.close()
+        while (true) {
+            val input = inbox.tryReceive().getOrNull() ?: break
+            if (input is Input.Permission) input.raised.complete(null)
+        }
         for (paneId in panes.keys.toList()) approvals.withdrawForPane(paneId, ApprovalOutcome.ASK_AT_DESK)
         while (true) {
             val next = queue.poll() ?: break
+            next.registration?.close()
             delivery(next.clientId, DeliveryState.NOT_DELIVERED, Refusal.NOT_RUNNING)
         }
     }
@@ -316,7 +357,10 @@ internal class TmuxChatSession(
         val name = event.str("hook_event_name") ?: return
         val pane = paneFor(envelope.pane)
         pane.lastHookAtMs = envelope.receivedAtMs
-        envelope.agentPid?.let { pane.agentPid = it }
+        envelope.agentPid?.let {
+            pane.agentPid = it
+            pane.hookPid = it
+        }
         bindRecord(pane, event.str("session_id"), event.str("transcript_path"), event.str("source"), name)
         event.str("permission_mode")?.let { updatePermissionMode(pane, it) }
         updateMainTarget()
@@ -509,15 +553,15 @@ internal class TmuxChatSession(
         val entries = readRecord(pane)
         val last = check.lastAssistantMessage
         val recordTexts = entries.filterIsInstance<RecordEntry.AssistantText>()
-        if (pane.replyMatches(last)) {
+        if (pane.replyMatches(last, check.startedHere)) {
             val recordLast = recordTexts.lastOrNull()?.text
             if (recordLast != null && PaneConversation.normalize(recordLast) != PaneConversation.normalize(last)) {
                 logger.warn("The session record of {} disagrees with the hooks. Backfill may miss text.", sessionId)
             }
             return
         }
-        recordTexts.forEach { pane.fillReply(it.text) }
-        if (!pane.replyMatches(last)) {
+        recordTexts.forEach { pane.fillReply(it.text, it.key) }
+        if (!pane.replyMatches(last, check.startedHere)) {
             pane.fillReply(last)
             log.append(sessionId, EventPayload.ChatIncomplete(pane.threadId, REPLY_MISMATCH))
         }
@@ -535,7 +579,7 @@ internal class TmuxChatSession(
         val toolCallId = pane.matchOpenTool(name, input)
         val approval =
             if (approvals.hasRoomFor(sessionId)) {
-                approvals.build(sessionId, pane.paneId, name, input, toolCallId, event.arr("permission_suggestions"))
+                approvals.build(sessionId, pane.paneId, name, input, toolCallId)
             } else {
                 null
             }
@@ -646,7 +690,7 @@ internal class TmuxChatSession(
         val byId = found.associateBy(FoundPane::paneId)
         for (pane in found) {
             val conversation = paneFor(pane.paneId)
-            conversation.agentPid = pane.agentPid
+            conversation.agentPid = conversation.hookPid?.takeIf { it in pane.candidates } ?: pane.agentPid
             if (pane.claudeSessionId != null) {
                 bindRecord(conversation, pane.claudeSessionId, pane.recordPath?.toString(), null, null)
             }
@@ -681,6 +725,7 @@ internal class TmuxChatSession(
         val main = panes.values.none { it.threadId == MAIN_THREAD }
         val threadId = if (main) MAIN_THREAD else "pane-" + nextWorker++
         val pane = PaneConversation(paneId, threadId) { log.append(sessionId, it) }
+        pane.seed(log.recentAgentTexts(sessionId))
         panes[paneId] = pane
         if (!main) {
             log.append(
@@ -716,7 +761,7 @@ internal class TmuxChatSession(
         if (claudeSessionId == null || claudeSessionId == pane.claudeSessionId) return
         if (pane.inTurn && eventName == ClaudeHook.SESSION_START) pane.endTurn(null)
         pane.claudeSessionId = claudeSessionId
-        val path = recordPath?.let { runCatching { Path.of(it) }.getOrNull() } ?: return
+        val path = recordPath?.let { SessionRecord.safePath(it, recordRoot) } ?: return
         pane.recordPath = path
         val fresh = eventName == ClaudeHook.SESSION_START && source in NEW_RECORD_SOURCES
         val offset = withContext(ioDispatcher) { startOffset(path, fresh) }
@@ -758,6 +803,7 @@ internal class TmuxChatSession(
     private suspend fun enqueue(
         text: String,
         clientId: String,
+        deviceId: String?,
     ) {
         if (queue.size >= MAX_QUEUED) {
             throw SessionException.Conflict(
@@ -765,9 +811,23 @@ internal class TmuxChatSession(
                 "Three messages are already waiting. Try again when the agent is free.",
             )
         }
-        queue.add(QueuedPrompt(text, clientId))
+        val queued = QueuedPrompt(text, clientId, nowMs())
+        queue.add(queued)
+        if (deviceId != null && registry != null) {
+            queued.registration = registry.register(deviceId, QUEUED_KIND) { drop(queued, Refusal.REVOKED) }
+        }
         delivery(clientId, DeliveryState.QUEUED)
         inbox.trySend(Input.Tick)
+    }
+
+    /** Takes [queued] out of the queue as not delivered, unless it already left it. */
+    private suspend fun drop(
+        queued: QueuedPrompt,
+        refusal: Refusal,
+    ) {
+        if (!queue.remove(queued)) return
+        queued.registration?.close()
+        delivery(queued.clientId, DeliveryState.NOT_DELIVERED, refusal)
     }
 
     /** Types the waiting prompts, oldest first, once the agent is idle. Runs on its own, one drain at a time. */
@@ -791,11 +851,12 @@ internal class TmuxChatSession(
     private suspend fun deliverNext(): Boolean {
         val next = queue.peek() ?: return false
         val target = mainTarget
+        val expired = nowMs() - next.queuedAtMs > timing.queueMaxAge.inWholeMilliseconds
         val ready =
-            if (target == null) {
-                Readiness.Refused(Refusal.NOT_RUNNING)
-            } else {
-                guard.readiness(target, approvals.hasPendingFor(target.paneId))
+            when {
+                expired -> Readiness.Refused(Refusal.EXPIRED)
+                target == null -> Readiness.Refused(Refusal.NOT_RUNNING)
+                else -> guard.readiness(target, approvals.hasPendingFor(target.paneId))
             }
         return when {
             ready == Readiness.Busy -> {
@@ -808,22 +869,29 @@ internal class TmuxChatSession(
             }
 
             ready is Readiness.Refused -> {
-                queue.poll()
-                delivery(next.clientId, DeliveryState.NOT_DELIVERED, ready.reason)
+                drop(next, ready.reason)
                 true
             }
 
             else -> {
-                queue.poll()
-                val expectation = ExpectedPrompt(checkNotNull(target).paneId, next.text, next.clientId)
-                val refusal = typeIt(target, expectation) {}
-                if (refusal != null) {
-                    delivery(next.clientId, DeliveryState.NOT_DELIVERED, refusal)
-                } else {
-                    confirm(expectation, next.clientId)
-                }
+                // A revoke may have taken it out of the queue a moment ago.
+                if (queue.remove(next)) typeQueued(next, checkNotNull(target))
                 true
             }
+        }
+    }
+
+    private suspend fun typeQueued(
+        next: QueuedPrompt,
+        target: PaneTarget,
+    ) {
+        next.registration?.close()
+        val expectation = ExpectedPrompt(target.paneId, next.text, next.clientId)
+        val refusal = typeIt(target, expectation) {}
+        if (refusal != null) {
+            delivery(next.clientId, DeliveryState.NOT_DELIVERED, refusal)
+        } else {
+            confirm(expectation, next.clientId)
         }
     }
 
@@ -833,7 +901,7 @@ internal class TmuxChatSession(
         beforeEnter: suspend () -> Unit,
     ): Refusal? {
         val refusal =
-            guard.type(target, expectation.text) {
+            guard.type(target, expectation.text, { approvals.hasPendingFor(target.paneId) }) {
                 expected.set(expectation)
                 beforeEnter()
             }
@@ -910,6 +978,7 @@ internal class TmuxChatSession(
     companion object {
         const val MAIN_THREAD = "main"
         const val MAX_QUEUED = 3
+        private const val QUEUED_KIND = "queued-prompt"
 
         private const val MAX_RECENT = 5
         private const val RECENT_MS = 60_000L

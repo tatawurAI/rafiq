@@ -97,6 +97,54 @@ class AuditTest {
         }
 
     @Test
+    fun a_refused_prompt_leaves_a_line_with_its_code_and_an_oversized_one_is_turned_away() =
+        testApplication {
+            val fixture = BridgeFixture(dir.resolve("data")).also(opened::add)
+            application {
+                bridgeModule(
+                    "test",
+                    fixture.log,
+                    fixture.sessions,
+                    testSecurity(),
+                    audit = LoggingAuditLog(lines::add),
+                    deviceOf = { "dev_phone1" },
+                )
+            }
+            val http = createClient { defaultRequest { header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN") } }
+            val project = Files.createDirectory(dir.resolve("weather-app"))
+            val created = http.postJson("/sessions", """{"agent":"fake","project_path":"$project"}""")
+            val sessionId =
+                Json
+                    .parseToJsonElement(created.bodyAsText())
+                    .jsonObject
+                    .getValue("id")
+                    .jsonPrimitive.content
+
+            val refused = http.postJson("/sessions/$sessionId/prompt", """{"text":"hi","thread_id":"no-such-thread"}""")
+            val huge =
+                http.postJson(
+                    "/sessions/$sessionId/prompt",
+                    """{"text":"${"x".repeat(MAX_PROMPT_BYTES + 1)}"}""",
+                )
+            val longId =
+                http.postJson(
+                    "/sessions/$sessionId/prompt",
+                    """{"text":"hi","client_id":"${"c".repeat(65)}"}""",
+                )
+
+            assertEquals(HttpStatusCode.NotFound, refused.status)
+            assertEquals(HttpStatusCode.PayloadTooLarge, huge.status)
+            assertEquals(HttpStatusCode.BadRequest, longId.status)
+            assertEquals(
+                listOf(
+                    "Chat prompt refused: device=dev_phone1 session=$sessionId code=thread_not_found " +
+                        "sha256=${LoggingAuditLog.sha256Hex("hi")}",
+                ),
+                lines,
+            )
+        }
+
+    @Test
     fun a_field_cannot_add_a_line_or_fake_another_field() {
         val audit = LoggingAuditLog(lines::add)
 

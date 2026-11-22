@@ -26,11 +26,11 @@ class SessionRecordTest {
         append(half.take(10))
 
         val first = SessionRecord.read(record, 0)!!
-        assertEquals(listOf(RecordEntry.AssistantText("First.")), first.entries)
+        assertEquals(listOf("First."), first.entries.map { (it as RecordEntry.AssistantText).text })
 
         append(half.drop(10))
         val second = SessionRecord.read(record, first.nextOffset)!!
-        assertEquals(listOf(RecordEntry.AssistantText("Second.")), second.entries)
+        assertEquals(listOf("Second."), second.entries.map { (it as RecordEntry.AssistantText).text })
         assertEquals(Files.size(record), second.nextOffset)
     }
 
@@ -62,6 +62,6 @@ class SessionRecordTest {
         assertTrue(Files.size(record) - offset <= SessionRecord.FIRST_ATTACH_TAIL_BYTES)
         assertEquals(0, offset % line.toByteArray().size, "the offset is at the start of a line")
         val entries = SessionRecord.read(record, offset)!!.entries
-        assertTrue(entries.isNotEmpty() && entries.all { it == RecordEntry.AssistantText("x".repeat(1_000)) })
+        assertTrue(entries.isNotEmpty() && entries.all { (it as RecordEntry.AssistantText).text == "x".repeat(1_000) })
     }
 }

@@ -34,6 +34,7 @@ class TmuxChatRoutingTest {
             sessionId: String,
             text: String,
             clientId: String?,
+            deviceId: String?,
         ) {
             prompts += Triple(sessionId, text, clientId)
         }

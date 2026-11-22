@@ -69,6 +69,7 @@ class HookProgramTest {
                 .also {
                     it.environment()["TMUX_PANE"] = "%3"
                     it.environment()["CLAUDE_PID"] = "4242"
+                    it.environment()["TMUX"] = "/tmp/tmux-1000/default,123,0"
                 }.start()
         process.outputStream.use { it.write(event.toByteArray()) }
         val out = process.inputStream.readBytes().toString(Charsets.UTF_8)
@@ -156,6 +157,7 @@ class HookProgramTest {
             assertEquals(Json.parseToJsonElement(expected), Json.parseToJsonElement(run.out))
             assertEquals("%3", seen.getCompleted().pane)
             assertEquals(4242L, seen.getCompleted().agentPid)
+            assertEquals("/tmp/tmux-1000/default", seen.getCompleted().tmuxSocket)
         }
     }
 

@@ -1,0 +1,1 @@
+A message from your phone to a tmux session is no longer typed when a dialog or an approval opened at the desk while it was being typed, waits behind earlier waiting messages, and is dropped after 10 minutes or when its phone is revoked.

@@ -20,6 +20,16 @@ class LoggingAuditLog(
         textSha256: String,
     ) = write("Chat prompt: device=${clean(deviceId)} session=${clean(sessionId)} sha256=${clean(textSha256)}")
 
+    override fun chatPromptRefused(
+        deviceId: String,
+        sessionId: String,
+        code: String,
+        textSha256: String,
+    ) = write(
+        "Chat prompt refused: device=${clean(deviceId)} session=${clean(sessionId)} code=${clean(code)} " +
+            "sha256=${clean(textSha256)}",
+    )
+
     override fun approvalAnswer(
         deviceId: String,
         sessionId: String,

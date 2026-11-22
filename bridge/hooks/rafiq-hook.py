@@ -157,6 +157,10 @@ def run(argv):
         "agent_pid": agent_pid(),
         "event": event,
     }
+    # $TMUX is "<socket path>,<server pid>,<session>". The socket tells the bridge which tmux server the pane is on.
+    socket_path = os.environ.get("TMUX", "").split(",")[0]
+    if socket_path:
+        request["tmux_socket"] = socket_path
     line = (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:

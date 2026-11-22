@@ -53,6 +53,20 @@ class DeviceServiceTest {
         }
 
     @Test
+    fun a_failing_pairing_listener_does_not_undo_the_pairing() =
+        runBlocking<Unit> {
+            val store = DeviceStore.open(dir, Dispatchers.IO.limitedParallelism(1))
+            try {
+                val service = DeviceService(store, InMemoryConnectionRegistry(), onPaired = { error("listener broke") })
+                val code = service.issueCode("phone").code
+
+                assertIs<RedeemResult.Paired>(service.redeem(code))
+            } finally {
+                store.close()
+            }
+        }
+
+    @Test
     fun a_pairing_code_works_once_and_not_after_it_expires() =
         runBlocking {
             val devices = fixture()

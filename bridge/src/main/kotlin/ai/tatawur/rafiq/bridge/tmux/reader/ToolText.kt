@@ -119,9 +119,18 @@ internal fun approvalDetail(
 ): ApprovalDetail {
     val whole =
         when (tool) {
-            "Bash", "PowerShell" -> input.str("command") ?: prettyJson.encodeToString(JsonObject.serializer(), input)
-            ASK_USER_QUESTION -> questionText(input)
-            else -> prettyJson.encodeToString(JsonObject.serializer(), input)
+            "Bash", "PowerShell" -> {
+                input.str("command")?.let { it + commandOptions(input) }
+                    ?: prettyJson.encodeToString(JsonObject.serializer(), input)
+            }
+
+            ASK_USER_QUESTION -> {
+                questionText(input)
+            }
+
+            else -> {
+                prettyJson.encodeToString(JsonObject.serializer(), input)
+            }
         }
     val truncated = whole.length > APPROVAL_TEXT_CHARS
     return ApprovalDetail(
@@ -132,35 +141,40 @@ internal fun approvalDetail(
     )
 }
 
-/** The plain description of an approval request, for an app that does not read [ApprovalDetail]. */
+/**
+ * The settings of a command that change what running it means, as one more line under it, so the card does not
+ * hide them: running outside the sandbox, in the background, or with a time limit. Empty when all are default.
+ */
+private fun commandOptions(input: JsonObject): String {
+    val options =
+        listOfNotNull(
+            "dangerouslyDisableSandbox".takeIf { input.bool(it) == true }?.let { "$it=true" },
+            "run_in_background".takeIf { input.bool(it) == true }?.let { "$it=true" },
+            input.long("timeout")?.let { "timeout=$it" },
+        )
+    return if (options.isEmpty()) "" else "\n\nOptions: " + options.joinToString(", ")
+}
+
+/**
+ * The plain description of an approval request, for an app that does not read [ApprovalDetail]. It says when
+ * the text has more lines than its first, or was cut, so an older app never shows a multi-line command as one line.
+ */
 internal fun approvalDescription(
     tool: String,
     input: JsonObject,
-): String = if (tool == ASK_USER_QUESTION) summarise(tool, input).removePrefix("$tool: ") else summarise(tool, input)
-
-/**
- * The rule that "allow for this session" adds, in Claude Code's rule syntax, or null when the tool gets no
- * such option. An `addRules` suggestion from the agent wins. Otherwise a command is allowed exactly as written,
- * never by prefix, and another tool by name. Questions get none.
- */
-internal fun sessionRuleFor(
-    tool: String,
-    input: JsonObject,
-    suggestions: JsonArray?,
-): String? {
-    if (tool == ASK_USER_QUESTION) return null
-    val suggested =
-        suggestions
-            ?.mapNotNull { it as? JsonObject }
-            ?.firstOrNull { it.str("type") == "addRules" && it.str("behavior") == "allow" }
-            ?.arr("rules")
-            ?.firstNotNullOfOrNull { it as? JsonObject }
-            ?.let { rule ->
-                val name = rule.str("toolName") ?: return@let null
-                rule.str("ruleContent")?.let { "$name($it)" } ?: name
-            }
-    val command = input.str("command")?.takeIf { tool == "Bash" && '\n' !in it && ')' !in it }
-    return suggested ?: command?.let { "Bash($it)" } ?: tool.takeIf { tool != "Bash" && tool != "PowerShell" }
+    detail: ApprovalDetail,
+): String {
+    val summary =
+        if (tool ==
+            ASK_USER_QUESTION
+        ) {
+            summarise(tool, input).removePrefix("$tool: ")
+        } else {
+            summarise(tool, input)
+        }
+    val lines = if (detail.lineCount > 1) " (${detail.lineCount} lines)" else ""
+    val cut = if (detail.truncated) " (cut)" else ""
+    return summary + lines + cut
 }
 
 /** The single question of an `AskUserQuestion` call, or null when it asks none or several. */

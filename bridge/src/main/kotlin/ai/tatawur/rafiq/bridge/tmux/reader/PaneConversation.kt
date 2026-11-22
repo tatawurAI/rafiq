@@ -30,6 +30,9 @@ internal class PaneConversation(
 ) {
     var claudeSessionId: String? = null
     var agentPid: Long? = null
+
+    /** The agent pid the hooks last reported. The scan may see other `claude` processes in the pane. */
+    var hookPid: Long? = null
     var recordPath: Path? = null
 
     /** The byte offset in [recordPath] up to which the record has been read. Null before the first read. */
@@ -55,6 +58,15 @@ internal class PaneConversation(
     private val openTools = LinkedHashMap<String, OpenTool>()
     private val held = LinkedHashSet<String>()
     private val shownTexts = ArrayDeque<String>()
+
+    /** The replies shown in the current turn, for the drift check, which is per turn. */
+    private val turnTexts = mutableSetOf<String>()
+
+    /** Ids of replies filled from the record or the `Stop` event, so the same block is never filled twice. */
+    private val filledIds = ArrayDeque<String>()
+
+    /** Replies an earlier run of the bridge already put in the log. A backfill after a restart skips them. */
+    private val seededTexts = mutableSetOf<String>()
     private val shownTools = ArrayDeque<String>()
     private val shownPrompts = ArrayDeque<String>()
     private var lastProgress: EventPayload.TurnProgress? = null
@@ -70,7 +82,11 @@ internal class PaneConversation(
     class StopCheck(
         val lastAssistantMessage: String,
         val generation: Int,
+        /** False when the turn began before this run of the bridge, so part of its reply is from the earlier run. */
+        val startedHere: Boolean = true,
     )
+
+    private var startedHere = false
 
     private var stopGeneration = 0
 
@@ -78,6 +94,8 @@ internal class PaneConversation(
         if (inTurn) return
         turnStartedAtMs = atMs
         lastFinalText = null
+        turnTexts.clear()
+        startedHere = true
         lastWriteAtMs = null
     }
 
@@ -136,6 +154,7 @@ internal class PaneConversation(
     ) {
         lastFinalText = text
         remember(shownTexts, normalize(text))
+        turnTexts += normalize(text)
         out(agentMessage(id, text, isStreaming = false))
     }
 
@@ -235,23 +254,40 @@ internal class PaneConversation(
         }
         streaming.clear()
         turnStartedAtMs = null
+        val here = startedHere
+        startedHere = false
         if (lastAssistantMessage.isNullOrBlank()) return null
-        stopCheck = StopCheck(lastAssistantMessage, ++stopGeneration)
+        stopCheck = StopCheck(lastAssistantMessage, ++stopGeneration, here)
         return stopGeneration
     }
 
     /** Whether the last reply shown matches the agent's own final text. */
-    fun replyMatches(lastAssistantMessage: String): Boolean =
+    fun replyMatches(
+        lastAssistantMessage: String,
+        startedHere: Boolean = true,
+    ): Boolean =
         normalize(lastFinalText.orEmpty()) == normalize(lastAssistantMessage) ||
-            normalize(lastAssistantMessage) in shownTexts
+            normalize(lastAssistantMessage) in turnTexts ||
+            (!startedHere && normalize(lastAssistantMessage) in seededTexts)
 
-    /** Whether this text was already shown, so a backfill does not repeat it. */
-    fun wasShown(text: String): Boolean = normalize(text) in shownTexts
+    /** Replies already in the log from an earlier run of the bridge. See [ReaderLog.recentAgentTexts]. */
+    fun seed(texts: List<String>) {
+        texts.mapTo(seededTexts, ::normalize)
+    }
 
-    /** Writes a reply taken from somewhere other than the live batches: the record, or the `Stop` event. */
-    suspend fun fillReply(text: String) {
-        if (wasShown(text)) return
-        finishMessage("claude:fill:" + UUID.randomUUID(), text)
+    /**
+     * Writes a reply taken from somewhere other than the live batches: the record, or the `Stop` event. Skipped
+     * when this turn already showed it, or the same record block was filled before.
+     * [key] is the record block's stable key, which also makes the message id stable.
+     */
+    suspend fun fillReply(
+        text: String,
+        key: String? = null,
+    ) {
+        val id = "claude:fill:" + (key ?: UUID.randomUUID().toString())
+        if (normalize(text) in turnTexts || id in filledIds) return
+        remember(filledIds, id)
+        finishMessage(id, text)
     }
 
     /**
@@ -272,7 +308,8 @@ internal class PaneConversation(
                 }
 
                 is RecordEntry.AssistantText -> {
-                    fillReply(entry.text)
+                    // A reply an earlier run of the bridge showed live is in the record too, under another id.
+                    if (normalize(entry.text) !in seededTexts) fillReply(entry.text, entry.key)
                 }
 
                 is RecordEntry.ToolUse -> {

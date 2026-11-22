@@ -4,6 +4,7 @@ import ai.tatawur.rafiq.client.ApprovalCard
 import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.ConnectionState
 import ai.tatawur.rafiq.client.EchoState
+import ai.tatawur.rafiq.client.PRESUMED_LOST
 import ai.tatawur.rafiq.client.SessionListItem
 import ai.tatawur.rafiq.client.SessionRepository
 import ai.tatawur.rafiq.client.SessionScreenState
@@ -66,7 +67,8 @@ class SessionViewModelTest {
         val prompts = mutableListOf<String>()
         val clientIds = mutableListOf<String?>()
 
-        override val connection: StateFlow<ConnectionState> = MutableStateFlow(ConnectionState.Live)
+        val link = MutableStateFlow<ConnectionState>(ConnectionState.Live)
+        override val connection: StateFlow<ConnectionState> = link
 
         override fun sessions(): Flow<List<SessionListItem>> =
             screen.map { state -> listOfNotNull(state.session?.let { SessionListItem(it, null, state.openApprovals) }) }
@@ -309,6 +311,37 @@ class SessionViewModelTest {
             viewModel.send()
 
             assertTrue(viewModel.state.value.offerHooks)
+        }
+
+    @Test
+    fun a_prompt_still_queued_when_the_socket_reconnects_shows_as_maybe_lost_until_it_is_delivered() =
+        runTest(dispatcher) {
+            // Your server holds its queue in memory, so a restart would leave "Queued" forever.
+            val repository = FakeRepository(screen(inTmux = true))
+            val viewModel = SessionViewModel(repository, "s-1") { "c-1" }
+            backgroundScope.launch { viewModel.state.collect {} }
+            viewModel.updateDraft("Then update the README")
+            viewModel.send()
+            repository.screen.update { it.copy(deliveries = mapOf("c-1" to delivery(DeliveryState.QUEUED))) }
+
+            repository.link.value = ConnectionState.Offline(retryAtMs = null)
+            assertEquals(
+                EchoState.QUEUED,
+                viewModel.state.value.echoes
+                    .single()
+                    .state,
+            )
+            repository.link.value = ConnectionState.Live
+
+            val echo =
+                viewModel.state.value.echoes
+                    .single()
+            assertEquals(EchoState.NOT_DELIVERED, echo.state)
+            assertEquals(PRESUMED_LOST, echo.code)
+
+            // Your server kept it after all: the later state wins.
+            repository.screen.update { it.copy(deliveries = mapOf("c-1" to delivery(DeliveryState.DELIVERED))) }
+            assertEquals(emptyList(), viewModel.state.value.echoes)
         }
 
     private fun delivery(state: DeliveryState) = EventPayload.PromptDelivery("c-1", "t-main", state)

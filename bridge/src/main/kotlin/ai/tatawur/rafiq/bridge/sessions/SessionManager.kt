@@ -126,7 +126,7 @@ class SessionManager(
         val adapter =
             adaptersById[agent]
                 ?: throw SessionException.Invalid("unknown_agent", "No agent named '$agent' is configured.")
-        val directory = existingDirectory(projectPath)
+        val directory = existingDirectory(projectPath, ioDispatcher)
         val sessionId = "ses_" + UUID.randomUUID().toString().replace("-", "")
         val agentSession = unavailableAsConflict { adapter.start(sessionId, directory) }
         // Collection starts now, because the agent's updates are hot: anything it reports while the
@@ -179,6 +179,8 @@ class SessionManager(
                     title = session.title,
                     status = AgentState.DONE,
                 )
+            // No row for a session that cannot go live, so a refused create leaves nothing to resume.
+            if (stopping) throw bridgeStopping()
             log.createSession(session, agentSession.agentSessionRef, mainThread)
             onStored(sessionId)
             publish(sessionId, liveSession)
@@ -442,7 +444,10 @@ class SessionManager(
     suspend fun shutdown() {
         stopping = true
         // Setting-up sessions are read first: one that is published meanwhile is then in [live] below.
-        val sessions = settingUp.entries.map { it.key to it.value } + live.entries.map { it.key to it.value }
+        val sessions =
+            (settingUp.entries.map { it.key to it.value } + live.entries.map { it.key to it.value })
+                // A session being published can be in both for a moment. It is stopped and reported once.
+                .distinctBy { it.first }
         settingUp.clear()
         live.clear()
         approvals.clear()
@@ -778,16 +783,24 @@ class SessionManager(
      * Makes the session reachable by other requests and starts logging it. Called only once the session is
      * fully set up, its mode included, so a second request can never reach an agent still in its own mode.
      */
-    private fun publish(
+    private suspend fun publish(
         sessionId: String,
         liveSession: LiveSession,
     ) {
-        if (stopping) throw SessionException.Conflict("bridge_stopping", "The bridge is shutting down.")
+        if (stopping) {
+            // The row is already written. It says it was interrupted, so it is not left as a clean session.
+            log.session(sessionId)?.let {
+                record(sessionId, null, EventPayload.StatusChanged(null, AgentState.ERROR, SHUTDOWN_WHILE_STARTING))
+            }
+            throw bridgeStopping()
+        }
         // Into [live] before out of [settingUp], so shutdown never misses it in between.
         live[sessionId] = liveSession
         settingUp.remove(sessionId, liveSession)
         liveSession.job.start()
     }
+
+    private fun bridgeStopping() = SessionException.Conflict("bridge_stopping", "The bridge is shutting down.")
 
     /** Runs [block], and if it fails ends the attached session so no process or buffer is left behind. */
     @Suppress("TooGenericExceptionCaught") // Rethrown after the half-started session is cleaned up.
@@ -850,32 +863,9 @@ class SessionManager(
             )
         }
 
-    private suspend fun existingDirectory(raw: String): Path {
-        val path =
-            try {
-                Path.of(raw)
-            } catch (invalid: InvalidPathException) {
-                throw SessionException.Invalid("invalid_project_path", "project_path is not a valid path.", invalid)
-            }
-        val real =
-            withContext(ioDispatcher) {
-                if (path.isAbsolute &&
-                    Files.isDirectory(path)
-                ) {
-                    path.toRealPath()
-                } else {
-                    null
-                }
-            }
-        return real
-            ?: throw SessionException.Invalid(
-                "invalid_project_path",
-                "project_path must be an absolute path to an existing folder.",
-            )
-    }
-
     private companion object {
         val SHUTDOWN_BUDGET = 10.seconds
+        const val SHUTDOWN_WHILE_STARTING = "Interrupted by a bridge shutdown while it was starting."
         const val MAX_RESOLVED_APPROVALS = 1000
         const val CHAT_UNAVAILABLE = "chat_unavailable"
         const val CHAT_UNAVAILABLE_MESSAGE = "Chat is not available for tmux sessions on this bridge. Use Terminal."
@@ -892,3 +882,31 @@ const val TMUX_SESSION_PREFIX = "tmux-"
 
 /** True when [sessionId] names a tmux session, which the bridge shows but does not run an agent for. */
 fun isTmuxSessionId(sessionId: String): Boolean = sessionId.startsWith(TMUX_SESSION_PREFIX)
+
+/** The real path of [raw], an absolute path to an existing folder, checked on [ioDispatcher]. */
+private suspend fun existingDirectory(
+    raw: String,
+    ioDispatcher: CoroutineDispatcher,
+): Path {
+    val path =
+        try {
+            Path.of(raw)
+        } catch (invalid: InvalidPathException) {
+            throw SessionException.Invalid("invalid_project_path", "project_path is not a valid path.", invalid)
+        }
+    val real =
+        withContext(ioDispatcher) {
+            if (path.isAbsolute &&
+                Files.isDirectory(path)
+            ) {
+                path.toRealPath()
+            } else {
+                null
+            }
+        }
+    return real
+        ?: throw SessionException.Invalid(
+            "invalid_project_path",
+            "project_path must be an absolute path to an existing folder.",
+        )
+}

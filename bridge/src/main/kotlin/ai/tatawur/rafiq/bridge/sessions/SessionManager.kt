@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.bridge.sessions
 
 import ai.tatawur.rafiq.bridge.agent.AgentAdapter
+import ai.tatawur.rafiq.bridge.agent.AgentModes
 import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.agent.AgentUnavailableException
 import ai.tatawur.rafiq.bridge.agent.TurnInProgressException
@@ -13,6 +14,7 @@ import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
+import ai.tatawur.rafiq.protocol.SessionMode
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.api.SessionSummary
 import kotlinx.coroutines.CoroutineDispatcher
@@ -58,6 +60,8 @@ import kotlin.time.Duration.Companion.seconds
  * @param scope owns the work that collects each live session's updates. Cancel it to stop them.
  * @param ioDispatcher runs the file system checks on project folders.
  * @param tmuxChat Chat for tmux sessions, or null when the bridge has no tmux reader.
+ * @param defaultModes the permission mode, by agent id, that a session starts in when the request names none.
+ *   From `RAFIQ_DEFAULT_MODES`. An agent with no entry starts in whatever mode the agent itself picks.
  */
 @Suppress("TooManyFunctions") // One operation per route plus the helpers they share; splitting would scatter one flow.
 class SessionManager(
@@ -69,6 +73,7 @@ class SessionManager(
     private val visibility: (sessionId: String) -> Boolean = { !isTmuxSessionId(it) },
     private val tmuxChat: TmuxChat? = null,
     private val present: (Session) -> Session = { it },
+    private val defaultModes: Map<String, String> = emptyMap(),
 ) {
     private val adaptersById = adapters.associateBy(AgentAdapter::agentId)
     private val live = ConcurrentHashMap<String, LiveSession>()
@@ -96,13 +101,19 @@ class SessionManager(
     /**
      * Starts a session for [agent] in [projectPath] and returns it.
      *
-     * @throws SessionException.Invalid when the agent is not configured or the folder does not exist.
-     * @throws SessionException.Conflict when the agent cannot start.
+     * The session starts in [modeId], or with none named in the agent's entry of [defaultModes]. The mode is
+     * set before the session is logged, so the agent never runs a turn in the mode it picked itself.
+     *
+     * @throws SessionException.Invalid when the agent is not configured, the folder does not exist, or the
+     *   agent does not offer [modeId] (`unknown_mode`).
+     * @throws SessionException.Conflict when the agent cannot start, or does not offer the configured default
+     *   mode (`default_mode_unavailable`). The agent is stopped again in both cases.
      */
     suspend fun create(
         agent: String,
         projectPath: String,
         title: String?,
+        modeId: String? = null,
     ): Session {
         val adapter =
             adaptersById[agent]
@@ -113,30 +124,120 @@ class SessionManager(
         // Collection starts now, because the agent's updates are hot: anything it reports while the
         // rows below are written waits in the buffer and is logged after them.
         val liveSession = attach(sessionId, agentSession)
-        val now = clock.millis()
-        val session =
-            Session(
-                id = sessionId,
-                agent = agent,
-                projectPath = directory.toString(),
-                title = title?.takeIf { it.isNotBlank() } ?: directory.fileName?.toString() ?: "Session",
-                status = AgentState.DONE,
-                createdAtMs = now,
-                updatedAtMs = now,
-            )
-        val mainThread =
-            AgentThread(
-                id = agentSession.mainThreadId,
-                sessionId = sessionId,
-                kind = ThreadKind.MAIN,
-                title = session.title,
-                status = AgentState.DONE,
-            )
         guardingTheAttachedSession(sessionId, liveSession) {
+            startingMode(agent, modeId, agentSession.modes.value)?.let { mode ->
+                unavailableAsConflict { agentSession.setMode(mode) }
+            }
+            val now = clock.millis()
+            val modes = agentSession.modes.value
+            val session =
+                Session(
+                    id = sessionId,
+                    agent = agent,
+                    projectPath = directory.toString(),
+                    title = title?.takeIf { it.isNotBlank() } ?: directory.fileName?.toString() ?: "Session",
+                    status = AgentState.DONE,
+                    createdAtMs = now,
+                    updatedAtMs = now,
+                    permissionMode = modes.currentModeId,
+                    availableModes = modes.available,
+                )
+            val mainThread =
+                AgentThread(
+                    id = agentSession.mainThreadId,
+                    sessionId = sessionId,
+                    kind = ThreadKind.MAIN,
+                    title = session.title,
+                    status = AgentState.DONE,
+                )
             log.createSession(session, agentSession.agentSessionRef, mainThread)
             liveSession.job.start()
         }
-        return session
+        return log.session(sessionId)?.session ?: error("Session $sessionId was not stored.")
+    }
+
+    /**
+     * The mode a new session must be switched to, or null when it may stay as the agent opened it.
+     *
+     * @throws SessionException.Invalid when the agent does not offer [requested].
+     * @throws SessionException.Conflict when the agent does not offer the configured default.
+     */
+    private fun startingMode(
+        agent: String,
+        requested: String?,
+        offered: AgentModes,
+    ): String? {
+        val wanted = requested ?: defaultModes[agent]
+        return when {
+            wanted == null -> {
+                null
+            }
+
+            offered.offers(wanted) -> {
+                wanted.takeIf { it != offered.currentModeId }
+            }
+
+            requested != null -> {
+                throw unknownMode(requested)
+            }
+
+            // Failing closed: starting anyway could run the agent in a mode that never asks.
+            else -> {
+                throw SessionException.Conflict(
+                    DEFAULT_MODE_UNAVAILABLE,
+                    "RAFIQ_DEFAULT_MODES names the mode '$wanted' for $agent, which the agent does not offer.",
+                )
+            }
+        }
+    }
+
+    /**
+     * Switches the session's permission mode to [modeId]. A session that is not live is resumed first. The
+     * change is logged as a [EventPayload.SessionUpdated] before this returns.
+     *
+     * @throws SessionException.NotFound when there is no such session.
+     * @throws SessionException.Invalid when the session does not offer [modeId] (`unknown_mode`).
+     * @throws SessionException.Conflict for a tmux session (`mode_not_supported`), or when the agent cannot
+     *   resume or refuses the change.
+     */
+    suspend fun setMode(
+        sessionId: String,
+        modeId: String,
+    ) {
+        val stored = requireSession(sessionId)
+        requireOffered(sessionId, stored.session.availableModes, modeId)
+        val agentSession = liveSession(sessionId).agentSession
+        // The modes can differ after a resume, so the live agent has the final say.
+        requireOffered(sessionId, agentSession.modes.value.available, modeId)
+        unavailableAsConflict { agentSession.setMode(modeId) }
+        recordModes(sessionId, agentSession.modes.value)
+    }
+
+    private fun requireOffered(
+        sessionId: String,
+        offered: List<SessionMode>,
+        modeId: String,
+    ) {
+        if (isTmuxSessionId(sessionId)) {
+            throw SessionException.Conflict(
+                MODE_NOT_SUPPORTED,
+                "The mode of a tmux session is set in the agent itself. Use Terminal.",
+            )
+        }
+        if (offered.none { it.id == modeId }) throw unknownMode(modeId)
+    }
+
+    private fun unknownMode(modeId: String) =
+        SessionException.Invalid(UNKNOWN_MODE, "The agent does not offer the mode '$modeId' for this session.")
+
+    /** Logs a mode change, once: the stored session is compared first, so a repeat of the same modes logs nothing. */
+    private suspend fun recordModes(
+        sessionId: String,
+        modes: AgentModes,
+    ) {
+        log.updateSession(sessionId) {
+            it.copy(permissionMode = modes.currentModeId, availableModes = modes.available)
+        }
     }
 
     /**
@@ -410,8 +511,11 @@ class SessionManager(
         val liveSession = LiveSession(agentSession, collector, buffer)
         liveSession.job =
             scope.launch(start = CoroutineStart.LAZY) {
+                // A mode the agent switches to on its own, such as leaving a planning mode, is logged as it comes.
+                val modeWatcher = launch { agentSession.modes.collect { recordModes(sessionId, it) } }
                 try {
                     val failure = drain(sessionId, liveSession, buffer)
+                    modeWatcher.cancel()
                     if (live.remove(sessionId, liveSession)) {
                         forget(sessionId)
                         // The adapter reports the exit itself, with the code. The bridge only has to
@@ -630,6 +734,7 @@ class SessionManager(
             if (agentSession.agentSessionRef != agentSessionRef) {
                 log.updateAgentSessionRef(session.id, agentSession.agentSessionRef)
             }
+            restoreMode(session, agentSession)
             val mainThread = log.threads(session.id).firstOrNull { it.kind == ThreadKind.MAIN }
             record(
                 session.id,
@@ -639,6 +744,20 @@ class SessionManager(
             liveSession.job.start()
         }
         return liveSession
+    }
+
+    /**
+     * A resumed agent can come back in the mode it picks itself, which may never ask. The mode the session had
+     * is set again when the agent still offers it, before any prompt reaches the agent.
+     */
+    private suspend fun restoreMode(
+        session: Session,
+        agentSession: AgentSession,
+    ) {
+        val wanted = session.permissionMode ?: return
+        val modes = agentSession.modes.value
+        if (modes.currentModeId == wanted || !modes.offers(wanted)) return
+        unavailableAsConflict { agentSession.setMode(wanted) }
     }
 
     /** Runs [block], and if it fails ends the attached session so no process or buffer is left behind. */
@@ -729,6 +848,9 @@ class SessionManager(
         val SHUTDOWN_BUDGET = 10.seconds
         const val MAX_RESOLVED_APPROVALS = 1000
         const val CHAT_UNAVAILABLE = "chat_unavailable"
+        const val UNKNOWN_MODE = "unknown_mode"
+        const val MODE_NOT_SUPPORTED = "mode_not_supported"
+        const val DEFAULT_MODE_UNAVAILABLE = "default_mode_unavailable"
         const val CHAT_UNAVAILABLE_MESSAGE = "Chat is not available for tmux sessions on this bridge. Use Terminal."
         val WORKING_ONLY = setOf(AgentState.WORKING)
         val RUNNING_STATES = setOf(AgentState.WORKING, AgentState.WAITING_ON_YOU)

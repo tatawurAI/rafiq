@@ -4,6 +4,7 @@ import ai.tatawur.rafiq.bridge.hook.HookChannel
 import ai.tatawur.rafiq.bridge.hook.HookSettings
 import ai.tatawur.rafiq.bridge.hook.HookSetup
 import ai.tatawur.rafiq.bridge.hook.NoopHookSink
+import ai.tatawur.rafiq.bridge.projects.FolderCatalog
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.DeviceAdminServer
 import ai.tatawur.rafiq.bridge.server.DeviceService
@@ -34,6 +35,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
 /** Starts the bridge with settings from the environment and serves until the process is stopped. */
+@Suppress("LongMethod") // Start-up wiring reads top to bottom, one block per feature, in the order it must run.
 fun main(args: Array<String>) {
     // `rafiq-bridge pair`, `devices` and `revoke` talk to the running bridge and exit.
     if (args.firstOrNull() in DeviceCli.COMMANDS) {
@@ -73,7 +75,10 @@ fun main(args: Array<String>) {
                 terminal?.source?.let { source -> { id: String -> source.isVisible(id) } } ?: { !isTmuxSessionId(it) },
             tmuxChat = claude,
             present = terminal?.source?.let { source -> source::present } ?: { it },
+            defaultModes = config.defaultModes,
         )
+    // Project picker (#35): recent folders come from the sessions you can see, browsing from RAFIQ_PROJECT_ROOTS.
+    val projects = FolderCatalog(config.projectRoots, recentPaths = { sessions.sessions().map { it.projectPath } })
     runBlocking {
         sessions.recoverAfterRestart()
         terminal?.prepare()
@@ -84,7 +89,18 @@ fun main(args: Array<String>) {
     try {
         embeddedServer(CIO, host = config.bindAddress, port = config.port) {
             log.info("Rafiq bridge {} starting with {}", version, config)
-            bridgeModule(version, eventLog, sessions, security, config.devPage, terminal, connections, devices, hooks)
+            bridgeModule(
+                version,
+                eventLog,
+                sessions,
+                security,
+                config.devPage,
+                terminal,
+                connections,
+                devices,
+                hooks,
+                projects = projects,
+            )
             // After the token check, so a request with no token still gets 401 first.
             installIdentityCheck(config.tailscaleLogin)
         }.start(wait = true)

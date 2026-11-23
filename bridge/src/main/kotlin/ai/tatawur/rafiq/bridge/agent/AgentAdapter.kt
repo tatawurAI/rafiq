@@ -3,7 +3,11 @@
 package ai.tatawur.rafiq.bridge.agent
 
 import ai.tatawur.rafiq.protocol.EventPayload
+import ai.tatawur.rafiq.protocol.SessionMode
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.nio.file.Path
 
 /**
@@ -88,9 +92,44 @@ interface AgentSession {
         optionId: String,
     )
 
+    /**
+     * The permission modes the agent offers for this session and the one it is in, as the agent advertised
+     * them. It changes when [setMode] succeeds and when the agent switches mode on its own, for example
+     * when it leaves a planning mode. An agent that offers no modes stays at [AgentModes.NONE].
+     */
+    val modes: StateFlow<AgentModes> get() = NO_MODES
+
+    /**
+     * Switches the session to [modeId], one of [modes]. Returns once the agent has accepted it.
+     *
+     * @throws IllegalArgumentException when [modeId] is not one the agent offers.
+     * @throws AgentUnavailableException when the agent refuses or has gone away.
+     */
+    suspend fun setMode(modeId: String): Unit = throw IllegalArgumentException("This agent offers no modes.")
+
     /** Ends the session and stops the agent process. Safe to call more than once. */
     suspend fun close()
 }
+
+/**
+ * An agent session's permission modes.
+ *
+ * @property currentModeId the mode the session is in, or null when the agent did not say.
+ * @property available every mode the agent offers, in the agent's order. Empty when it offers none.
+ */
+data class AgentModes(
+    val currentModeId: String?,
+    val available: List<SessionMode>,
+) {
+    /** True when [modeId] is one of [available]. */
+    fun offers(modeId: String): Boolean = available.any { it.id == modeId }
+
+    companion object {
+        val NONE = AgentModes(currentModeId = null, available = emptyList())
+    }
+}
+
+private val NO_MODES: StateFlow<AgentModes> = MutableStateFlow(AgentModes.NONE).asStateFlow()
 
 /** The agent cannot start or resume a session, for example because its adapter is not installed. */
 class AgentUnavailableException(

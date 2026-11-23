@@ -6,12 +6,14 @@ import ai.tatawur.rafiq.protocol.AgentThread
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.Session
+import ai.tatawur.rafiq.protocol.SessionMode
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.api.SessionSummary
 import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
@@ -66,7 +68,8 @@ class EventLog(
 
     /**
      * Brings a database written by an older bridge up to date. `user_version` counts the steps
-     * applied: step 1 added the summary tables, which are rebuilt from the events once.
+     * applied: step 1 added the summary tables, which are rebuilt from the events once. Step 2 added each
+     * session's permission modes, which older sessions do not have.
      */
     private fun migrate() {
         val version =
@@ -75,8 +78,25 @@ class EventLog(
             }
         if (version >= SCHEMA_VERSION) return
         transaction {
-            SummaryProjection.rebuild(connection)
+            if (version < 1) SummaryProjection.rebuild(connection)
+            addMissingSessionColumns()
             connection.createStatement().use { it.execute("PRAGMA user_version = $SCHEMA_VERSION") }
+        }
+    }
+
+    /** A table made by an older bridge lacks the newer columns. A new one already has them from [SCHEMA]. */
+    private fun addMissingSessionColumns() {
+        val existing =
+            connection.createStatement().use { statement ->
+                statement.executeQuery("PRAGMA table_info(sessions)").use { rows -> rows.collect { it.getString(2) } }
+            }
+        val added =
+            mapOf(
+                "permission_mode" to "TEXT",
+                "available_modes" to "TEXT NOT NULL DEFAULT '[]'",
+            ).filterKeys { it !in existing }
+        connection.createStatement().use { statement ->
+            added.forEach { (column, type) -> statement.execute("ALTER TABLE sessions ADD COLUMN $column $type") }
         }
     }
 
@@ -96,7 +116,8 @@ class EventLog(
                     connection
                         .prepareStatement(
                             "INSERT INTO sessions(id, agent, project_path, title, status, agent_session_ref, " +
-                                "created_at_ms, updated_at_ms, last_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                                "created_at_ms, updated_at_ms, permission_mode, available_modes, last_seq) " +
+                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                         ).use {
                             it.setString(1, session.id)
                             it.setString(2, session.agent)
@@ -106,6 +127,8 @@ class EventLog(
                             it.setString(6, agentSessionRef)
                             it.setLong(7, session.createdAtMs)
                             it.setLong(8, session.updatedAtMs)
+                            it.setString(9, session.permissionMode)
+                            it.setString(10, encodeModes(session.availableModes))
                             it.executeUpdate()
                         }
                     listOf(
@@ -116,6 +139,36 @@ class EventLog(
             events.forEach(::publish)
         }
     }
+
+    /**
+     * Logs a [EventPayload.SessionUpdated] with [change] applied to the stored session, reading and writing in
+     * one transaction, so a status that changes in between is never overwritten with an old one. Logs nothing
+     * when [change] leaves the session as it was.
+     *
+     * @return the event logged, or null when nothing changed or there is no such session.
+     */
+    suspend fun updateSession(
+        sessionId: String,
+        change: (Session) -> Session,
+    ): Event? =
+        onDispatcher {
+            val event =
+                transaction {
+                    val stored =
+                        connection.prepareStatement("SELECT $SESSION_COLUMNS FROM sessions WHERE id = ?").use {
+                            it.setString(1, sessionId)
+                            it.executeQuery().use { rows -> rows.collect(::readSession).firstOrNull() }
+                        }
+                    val before = stored?.session
+                    val after = before?.let(change)
+                    if (before == null || after == null || after == before) {
+                        null
+                    } else {
+                        insertEvent(sessionId, EventPayload.SessionUpdated(after.copy(updatedAtMs = clock.millis())))
+                    }
+                }
+            event?.also(::publish)
+        }
 
     /** Changes which agent a session shows as, for a tmux session where an agent started or stopped later. */
     suspend fun updateAgent(
@@ -293,7 +346,7 @@ class EventLog(
                             val session = readSession(row).session
                             SessionSummary(
                                 session = session,
-                                lastSeq = row.getLong(9),
+                                lastSeq = row.getLong(11),
                                 lastLine = previews[session.id],
                                 openApprovals = approvals[session.id].orEmpty(),
                             )
@@ -374,7 +427,7 @@ class EventLog(
         payload: EventPayload,
     ) {
         when (payload) {
-            is EventPayload.SessionUpdated -> setSessionFields(sessionId, payload.session.title, payload.session.status)
+            is EventPayload.SessionUpdated -> setSessionFields(sessionId, payload.session)
             is EventPayload.ThreadUpdated -> upsertThread(sessionId, payload.thread)
             is EventPayload.StatusChanged -> setStatus(sessionId, payload.threadId, payload.state)
             else -> Unit
@@ -383,15 +436,19 @@ class EventLog(
 
     private fun setSessionFields(
         sessionId: String,
-        title: String,
-        status: AgentState,
+        session: Session,
     ) {
-        connection.prepareStatement("UPDATE sessions SET title = ?, status = ? WHERE id = ?").use {
-            it.setString(1, title)
-            it.setString(2, wireName(status))
-            it.setString(3, sessionId)
-            it.executeUpdate()
-        }
+        connection
+            .prepareStatement(
+                "UPDATE sessions SET title = ?, status = ?, permission_mode = ?, available_modes = ? WHERE id = ?",
+            ).use {
+                it.setString(1, session.title)
+                it.setString(2, wireName(session.status))
+                it.setString(3, session.permissionMode)
+                it.setString(4, encodeModes(session.availableModes))
+                it.setString(5, sessionId)
+                it.executeUpdate()
+            }
     }
 
     private fun setStatus(
@@ -481,6 +538,8 @@ class EventLog(
                     createdAtMs = rows.getLong(7),
                     updatedAtMs = rows.getLong(8),
                     terminal = isTmuxSessionId(rows.getString(1)),
+                    permissionMode = rows.getString(9),
+                    availableModes = decodeModes(rows.getString(10)),
                 ),
             agentSessionRef = rows.getString(6),
         )
@@ -497,10 +556,11 @@ class EventLog(
 
     companion object {
         /** The schema steps this build applies, see [migrate]. */
-        private const val SCHEMA_VERSION = 1
+        private const val SCHEMA_VERSION = 2
 
         private const val SESSION_COLUMNS =
-            "id, agent, project_path, title, status, agent_session_ref, created_at_ms, updated_at_ms"
+            "id, agent, project_path, title, status, agent_session_ref, created_at_ms, updated_at_ms, " +
+                "permission_mode, available_modes"
 
         private val SCHEMA =
             listOf(
@@ -513,7 +573,9 @@ class EventLog(
                     agent_session_ref TEXT NOT NULL,
                     created_at_ms INTEGER NOT NULL,
                     updated_at_ms INTEGER NOT NULL,
-                    last_seq INTEGER NOT NULL
+                    last_seq INTEGER NOT NULL,
+                    permission_mode TEXT,
+                    available_modes TEXT NOT NULL DEFAULT '[]'
                 )""",
                 """CREATE TABLE IF NOT EXISTS threads (
                     session_id TEXT NOT NULL REFERENCES sessions(id),
@@ -580,6 +642,13 @@ private fun <T> ResultSet.collect(read: (ResultSet) -> T): List<T> {
     while (next()) rows += read(this)
     return rows
 }
+
+private val modesSerializer = ListSerializer(SessionMode.serializer())
+
+private fun encodeModes(modes: List<SessionMode>): String = protocolJson.encodeToString(modesSerializer, modes)
+
+private fun decodeModes(raw: String?): List<SessionMode> =
+    raw?.let { protocolJson.decodeFromString(modesSerializer, it) }.orEmpty()
 
 /** The wire name of an enum value, so stored text never depends on the Kotlin constant's name. */
 private inline fun <reified T : Enum<T>> wireName(value: T): String = protocolJson.encodeToString(value).trim('"')

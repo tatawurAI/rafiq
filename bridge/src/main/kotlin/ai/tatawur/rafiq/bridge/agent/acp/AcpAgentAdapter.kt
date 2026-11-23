@@ -99,6 +99,7 @@ class AcpAgentAdapter(
             val acpSessionId =
                 (response as? JsonObject)?.string("sessionId")
                     ?: throw AgentUnavailableException("$agentId opened a session without an id.")
+            session.acpModes.advertised(response)
             session.openedRoot(acpSessionId, replay = false)
         }
 
@@ -115,14 +116,16 @@ class AcpAgentAdapter(
                 agent.canResume -> {
                     session.openedRoot(agentSessionRef, replay = false)
                     val request = ResumeSessionRequest(sessionId = id, cwd = cwd)
-                    send(protocol, AcpMethod.AgentMethods.V1.SessionResume.methodName, encode(request))
+                    val answer = send(protocol, AcpMethod.AgentMethods.V1.SessionResume.methodName, encode(request))
+                    session.acpModes.advertised(answer)
                 }
 
                 agent.canLoad -> {
                     session.openedRoot(agentSessionRef, replay = true)
                     val request = LoadSessionRequest(sessionId = id, cwd = cwd, mcpServers = emptyList())
                     // The session's consumer ends the replay at the answer, in wire order.
-                    send(protocol, AcpMethod.AgentMethods.V1.SessionLoad.methodName, encode(request))
+                    val answer = send(protocol, AcpMethod.AgentMethods.V1.SessionLoad.methodName, encode(request))
+                    session.acpModes.advertised(answer)
                 }
 
                 else -> {

@@ -19,3 +19,4 @@ Written by hand, for traffic the recordings do not contain:
 - `garbage-and-long-lines.jsonl`: a line that is not JSON and a line longer than the test's limit, then normal output.
 - `resume.jsonl`: an agent that offers `session/resume` reattaches to an existing session.
 - `approval-turn-cancel.jsonl`: an approval is open on the main thread when you cancel the turn, or close the session.
+- `modes.jsonl`: a new session advertises its permission modes, both as session modes and as a `mode` config option, as `claude-agent-acp` does. The agent then switches mode on its own, and the bridge switches it with `session/set_mode`.

@@ -126,6 +126,32 @@ class EventLogTest {
         }
 
     @Test
+    fun a_log_from_before_permission_modes_opens_and_then_keeps_a_mode_change() =
+        runBlocking {
+            val old = open()
+            old.seed()
+            old.close()
+            opened.remove(old)
+            // What a bridge without permission modes left behind.
+            DriverManager.getConnection("jdbc:sqlite:${dir.resolve("data/rafiq.db")}").use { db ->
+                db.createStatement().use {
+                    it.execute("ALTER TABLE sessions DROP COLUMN permission_mode")
+                    it.execute("ALTER TABLE sessions DROP COLUMN available_modes")
+                    it.execute("PRAGMA user_version = 1")
+                }
+            }
+
+            val log = open()
+            assertEquals(null, log.sessions().single().permissionMode)
+            val event = log.updateSession("ses_1") { it.copy(permissionMode = "default") }
+
+            assertEquals(3, event?.seq)
+            assertEquals("default", log.sessions().single().permissionMode)
+            // The same change again logs nothing.
+            assertEquals(null, log.updateSession("ses_1") { it.copy(permissionMode = "default") })
+        }
+
+    @Test
     fun the_data_folder_and_database_are_private_to_the_bridge_user() {
         val log = open()
         if ("posix" !in dir.fileSystem.supportedFileAttributeViews()) return

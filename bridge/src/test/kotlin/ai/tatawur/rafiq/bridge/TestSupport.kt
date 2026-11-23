@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.bridge
 
 import ai.tatawur.rafiq.bridge.agent.AgentAdapter
+import ai.tatawur.rafiq.bridge.agent.AgentModes
 import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
@@ -12,6 +13,7 @@ import ai.tatawur.rafiq.protocol.ApprovalOutcome
 import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.Session
+import ai.tatawur.rafiq.protocol.SessionMode
 import ai.tatawur.rafiq.protocol.ThreadKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,13 +21,20 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** An agent that does only what a test scripts: the test pushes payloads, and prompts are recorded. */
+/**
+ * An agent that does only what a test scripts: the test pushes payloads, and prompts are recorded.
+ *
+ * @param modes the permission modes each session it starts or resumes opens with.
+ */
 class FakeAdapter(
     override val agentId: String = "fake",
+    private val modes: AgentModes = AgentModes.NONE,
 ) : AgentAdapter {
     val started = CopyOnWriteArrayList<FakeAgentSession>()
     val resumedRefs = CopyOnWriteArrayList<String>()
@@ -33,7 +42,7 @@ class FakeAdapter(
     override suspend fun start(
         sessionId: String,
         projectPath: Path,
-    ): AgentSession = FakeAgentSession(sessionId, "ref-$sessionId").also(started::add)
+    ): AgentSession = FakeAgentSession(sessionId, "ref-$sessionId", modes).also(started::add)
 
     override suspend fun resume(
         sessionId: String,
@@ -41,16 +50,23 @@ class FakeAdapter(
         agentSessionRef: String,
     ): AgentSession {
         resumedRefs += agentSessionRef
-        return FakeAgentSession(sessionId, agentSessionRef).also(started::add)
+        return FakeAgentSession(sessionId, agentSessionRef, modes).also(started::add)
     }
 }
 
 class FakeAgentSession(
     override val sessionId: String,
     override val agentSessionRef: String,
+    modes: AgentModes = AgentModes.NONE,
 ) : AgentSession {
     private val outbox = Channel<EventPayload>(Channel.UNLIMITED)
+    private val modeState = MutableStateFlow(modes)
     val prompts = CopyOnWriteArrayList<Pair<String, String>>()
+
+    /** Every mode the bridge switched to, in order. */
+    val modeChanges = CopyOnWriteArrayList<String>()
+
+    @Volatile var closed = false
     val cancels = CopyOnWriteArrayList<String>()
     val approvals = CopyOnWriteArrayList<Pair<String, String>>()
 
@@ -100,8 +116,37 @@ class FakeAgentSession(
         emit(status(AgentState.WORKING, mainThreadId))
     }
 
-    override suspend fun close() = Unit
+    override val modes: StateFlow<AgentModes> = modeState
+
+    override suspend fun setMode(modeId: String) {
+        failure?.let { throw it }
+        require(modeState.value.offers(modeId)) { "No mode $modeId." }
+        modeChanges += modeId
+        modeState.value = modeState.value.copy(currentModeId = modeId)
+    }
+
+    /** The agent switches mode on its own, as one leaving a planning mode does. */
+    fun switchModeItself(modeId: String) {
+        modeState.value = modeState.value.copy(currentModeId = modeId)
+    }
+
+    override suspend fun close() {
+        closed = true
+    }
 }
+
+/** The modes a Claude Code session advertises over ACP, starting in [current]. */
+fun claudeLikeModes(current: String = "auto") =
+    AgentModes(
+        currentModeId = current,
+        available =
+            listOf(
+                SessionMode("default", "Manual", "Always ask before making changes"),
+                SessionMode("acceptEdits", "Accept edits", "Automatically accept all file edits"),
+                SessionMode("plan", "Plan", "Create a plan before making changes"),
+                SessionMode("auto", "Auto", "Claude handles permission decisions"),
+            ),
+    )
 
 /** A real SQLite file in [dir], a session manager over it, and the fake adapter it drives. */
 class BridgeFixture(
@@ -109,10 +154,19 @@ class BridgeFixture(
     val adapter: FakeAdapter = FakeAdapter(),
     visibility: (String) -> Boolean = { !isTmuxSessionId(it) },
     present: (Session) -> Session = { it },
+    defaultModes: Map<String, String> = emptyMap(),
 ) : AutoCloseable {
     val log: EventLog = EventLog.open(dir, Dispatchers.IO.limitedParallelism(1))
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    val sessions = SessionManager(log, listOf(adapter), scope, visibility = visibility, present = present)
+    val sessions =
+        SessionManager(
+            log,
+            listOf(adapter),
+            scope,
+            visibility = visibility,
+            present = present,
+            defaultModes = defaultModes,
+        )
 
     override fun close() {
         scope.cancel()

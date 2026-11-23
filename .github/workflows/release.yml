@@ -7,12 +7,14 @@
 #            starts each one with no JDK on PATH before it counts.
 #   release  Writes SHA256SUMS and creates the GitHub Release with everything attached.
 #
-# Secrets used, all in the apk job only:
+# Secrets used, all in the apk job only, and stored as secrets of the GitHub environment named release
+# (see packaging/README.md), not as repository secrets:
 #   RAFIQ_RELEASE_KEYSTORE_BASE64    the keystore file, base64 encoded
 #   RAFIQ_RELEASE_KEYSTORE_PASSWORD  its store password
 #   RAFIQ_RELEASE_KEY_ALIAS          the key's alias
 #   RAFIQ_RELEASE_KEY_PASSWORD       the key's password
-# The keystore is decoded into the runner's temp folder and deleted when the job ends, pass or fail.
+# Gradle builds the APK unsigned and with no secrets. A later step signs it with apksigner alone. The
+# keystore is decoded into the runner's temp folder and deleted when the job ends, pass or fail.
 # Nothing here prints a secret. No Docker image is built.
 name: Release
 
@@ -39,10 +41,24 @@ jobs:
       version_code: ${{ steps.version.outputs.version_code }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
+      # Full history, so the check below can tell whether the tagged commit is on main.
       - name: Check out the tagged commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      # A release comes from a commit that is on main. A tag on a side branch stops here, before any job
+      # that holds a secret runs. This is a safeguard against mistakes. The environment's protection rules
+      # are the control against someone who can push tags (see packaging/README.md).
+      - name: Require the tagged commit to be on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
+            echo "::error::The tagged commit is not on main. Merge it first, then tag main."
+            exit 1
+          fi
 
       # The tag goes through an environment variable, never straight into the script.
       - name: Check the tag against gradle.properties
@@ -110,6 +126,9 @@ jobs:
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # Holds the signing secrets. Create this environment with required reviewers before the first tag, so
+    # a person approves every release that signs. It does nothing harmful until then.
+    environment: release
     steps:
       - name: Check out the tagged commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,38 +154,46 @@ jobs:
           set -euo pipefail
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0"
 
-      # No `set -x` and no echo of the value. The secret is masked in logs, and it only reaches this step.
-      - name: Decode the keystore
+      # Gradle runs with no secrets in its environment, so nothing in the build, a plugin or a dependency
+      # can read the signing key. The output is the unsigned APK.
+      - name: Build the unsigned release APK
         env:
-          KEYSTORE_BASE64: ${{ secrets.RAFIQ_RELEASE_KEYSTORE_BASE64 }}
-        run: |
-          set -euo pipefail
-          if [ -z "${KEYSTORE_BASE64}" ]; then
-            echo "::error::The secret RAFIQ_RELEASE_KEYSTORE_BASE64 is not set."
-            exit 1
-          fi
-          umask 077
-          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/rafiq-release.jks"
-          echo "RAFIQ_RELEASE_KEYSTORE_PATH=${RUNNER_TEMP}/rafiq-release.jks" >> "${GITHUB_ENV}"
-
-      - name: Build the signed release APK
-        env:
-          RAFIQ_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RAFIQ_RELEASE_KEYSTORE_PASSWORD }}
-          RAFIQ_RELEASE_KEY_ALIAS: ${{ secrets.RAFIQ_RELEASE_KEY_ALIAS }}
-          RAFIQ_RELEASE_KEY_PASSWORD: ${{ secrets.RAFIQ_RELEASE_KEY_PASSWORD }}
           RAFIQ_VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
         run: ./gradlew --console=plain --no-daemon :android:assembleRelease
 
-      # A build with the key unset is unsigned, so check that this one is signed before it is published.
-      - name: Check the signature
+      # Signing needs only apksigner and the keystore. No `set -x` and no echo of a value. Each secret is
+      # masked in logs and reaches this step alone. The passwords go to apksigner by environment variable
+      # name, so they never appear in a process listing.
+      - name: Sign the APK
         env:
+          KEYSTORE_BASE64: ${{ secrets.RAFIQ_RELEASE_KEYSTORE_BASE64 }}
+          RAFIQ_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RAFIQ_RELEASE_KEYSTORE_PASSWORD }}
+          RAFIQ_RELEASE_KEY_ALIAS: ${{ secrets.RAFIQ_RELEASE_KEY_ALIAS }}
+          RAFIQ_RELEASE_KEY_PASSWORD: ${{ secrets.RAFIQ_RELEASE_KEY_PASSWORD }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          apk=android/build/outputs/apk/release/android-release.apk
-          "${ANDROID_HOME}/build-tools/37.0.0/apksigner" verify "${apk}"
+          for name in KEYSTORE_BASE64 RAFIQ_RELEASE_KEYSTORE_PASSWORD RAFIQ_RELEASE_KEY_ALIAS RAFIQ_RELEASE_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::The secret for ${name} is not set in the release environment."
+              exit 1
+            fi
+          done
+          umask 077
+          keystore="${RUNNER_TEMP}/rafiq-release.jks"
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
+          unsigned=$(ls android/build/outputs/apk/release/*.apk)
+          tools="${ANDROID_HOME}/build-tools/37.0.0"
           mkdir dist
-          cp "${apk}" "dist/rafiq-${VERSION}.apk"
+          "${tools}/apksigner" sign \
+            --ks "${keystore}" \
+            --ks-key-alias "${RAFIQ_RELEASE_KEY_ALIAS}" \
+            --ks-pass env:RAFIQ_RELEASE_KEYSTORE_PASSWORD \
+            --key-pass env:RAFIQ_RELEASE_KEY_PASSWORD \
+            --out "dist/rafiq-${VERSION}.apk" \
+            "${unsigned}"
+          # A build that skipped signing would still produce an APK, so check this one is signed.
+          "${tools}/apksigner" verify "dist/rafiq-${VERSION}.apk"
 
       - name: Delete the keystore
         if: always()

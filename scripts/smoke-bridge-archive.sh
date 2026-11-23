@@ -21,6 +21,9 @@ tar -xzf "$archive" -C "$work"
 home=$(find "$work" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 mkdir "$work/data" "$work/home"
 
+# Push needs HTTPS and EC crypto, so check the bundled runtime for them before starting the bridge.
+"$(dirname "$0")/check-jlink-runtime.sh" "$home/runtime"
+
 # A port from 20000 to 59999. If it is taken, the bridge fails to start and the check fails loudly.
 port=$(awk 'BEGIN { srand(); print 20000 + int(rand() * 40000) }')
 

@@ -41,23 +41,8 @@ android {
         compose = true
     }
 
-    // Release signing (release workflow). Everything comes from environment variables, so no key or password
-    // is in the repository. With RAFIQ_RELEASE_KEYSTORE_PATH unset, as on a laptop or in CI for a pull
-    // request, `release` builds unsigned. RAFIQ_VERSION_CODE lets the release raise versionCode above 1.
-    val releaseKeystorePath = providers.environmentVariable("RAFIQ_RELEASE_KEYSTORE_PATH")
-    if (releaseKeystorePath.isPresent) {
-        signingConfigs {
-            create("release") {
-                storeFile = file(releaseKeystorePath.get())
-                storePassword = providers.environmentVariable("RAFIQ_RELEASE_KEYSTORE_PASSWORD").get()
-                keyAlias = providers.environmentVariable("RAFIQ_RELEASE_KEY_ALIAS").get()
-                keyPassword = providers.environmentVariable("RAFIQ_RELEASE_KEY_PASSWORD").get()
-            }
-        }
-        buildTypes {
-            getByName("release") { signingConfig = signingConfigs.getByName("release") }
-        }
-    }
+    // The release APK is built unsigned and signed afterwards by the release workflow, so no signing key is
+    // ever in the Gradle process. RAFIQ_VERSION_CODE lets the release raise versionCode above 1.
     providers.environmentVariable("RAFIQ_VERSION_CODE").orNull?.let { code ->
         defaultConfig.versionCode = code.toInt()
     }

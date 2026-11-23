@@ -1,16 +1,30 @@
 package ai.tatawur.rafiq.bridge.tmux
 
+import ai.tatawur.rafiq.bridge.server.AuditLog
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
+import ai.tatawur.rafiq.bridge.sessions.SessionException
 import ai.tatawur.rafiq.bridge.sessions.TMUX_SESSION_PREFIX
+import ai.tatawur.rafiq.protocol.api.ApiError
+import ai.tatawur.rafiq.protocol.api.ApiErrorDetail
+import ai.tatawur.rafiq.protocol.api.MAX_HISTORY_LINES
 import ai.tatawur.rafiq.protocol.api.TerminalEnded
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
+import ai.tatawur.rafiq.protocol.api.TerminalListWindows
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
+import ai.tatawur.rafiq.protocol.api.TerminalNotice
 import ai.tatawur.rafiq.protocol.api.TerminalResize
+import ai.tatawur.rafiq.protocol.api.TerminalSelectWindow
 import ai.tatawur.rafiq.protocol.api.TerminalSize
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
 import ai.tatawur.rafiq.protocol.api.terminalJson
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.origin
+import io.ktor.server.response.header
+import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.get
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.DefaultWebSocketSession
@@ -43,11 +57,21 @@ import kotlin.time.TimeSource
 private val log = LoggerFactory.getLogger("ai.tatawur.rafiq.bridge.tmux.Terminal")
 
 private val CLAIM_INTERVAL = 1.seconds
+
+/** How often an open view checks that its session may still be opened. */
+private val ACCESS_CHECK_INTERVAL = 1.seconds
+
+/**
+ * Checks in a row the session must fail before the view ends, so one bad scan never ends a live view. It is
+ * longer than one 3 s scan interval: a single scan where agent detection flapped holds for a whole interval.
+ */
+private const val ACCESS_MISSES_TO_END = 5
 private val FIRST_RESIZE_WAIT = 2.seconds
 private val TRY_AGAIN = CloseReason.Codes.TRY_AGAIN_LATER
 private val END_SEND_WAIT = 1.seconds
 private val RESIZE_RETRY = 100.milliseconds
 private val ESCAPE_WAIT = 60.milliseconds
+private const val HISTORY_RETRY_SECONDS = 1
 private const val DEFAULT_COLS = 80
 private const val DEFAULT_ROWS = 24
 
@@ -59,7 +83,12 @@ private val ENTER_ALTERNATE_SCREEN = "\u001b[?1049h\u001b[2J\u001b[H".toByteArra
  *
  * Binary frames carry terminal bytes, text frames carry [TerminalMessage] JSON. The phone's first `resize`
  * sets the attach size, so the desk is never resized to a guess (it waits 2 s, then uses 80x24). A snapshot
- * and then the live stream follow. Closing the socket detaches, which hands the window size back to the desk.
+ * and then the live stream follow. Closing the socket detaches, which hands the window size back to the desk,
+ * or, with no other client showing the window, puts back the size it had before the phone took it.
+ *
+ * The phone may ask for the session's windows (`list_windows`) and show another one (`select_window`). Only the
+ * phone's own view session changes window. When the shown window closes, the view moves to the session's
+ * current window and the phone is told with a `notice` and a fresh snapshot.
  *
  * Nothing here runs unless the gate allows the session, and the order is: gate, device limit, then tmux.
  *
@@ -72,11 +101,7 @@ fun Route.terminalRoute(
     deviceOf: (ApplicationCall) -> String,
 ) {
     webSocket("/terminal") {
-        val name =
-            call.request.queryParameters["session"]
-                ?.takeIf { it.startsWith(TMUX_SESSION_PREFIX) }
-                ?.removePrefix(TMUX_SESSION_PREFIX)
-                ?.takeIf(gate.settings::allows)
+        val name = gate.allowedName(call.request.queryParameters["session"])
         if (name == null) {
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "no such session"))
             return@webSocket
@@ -109,6 +134,54 @@ fun Route.terminalRoute(
     }
 }
 
+/**
+ * `GET /terminal/history?session=<id>&window=<index>&lines=<n>`: read-only scrollback of the pane the phone
+ * shows, as [TerminalHistory]. `lines` is capped at [MAX_HISTORY_LINES], and is that cap when left out. Without
+ * `window`, the session's current window. Reading never changes the window, its size or what the desk sees.
+ *
+ * It sits behind the device token like every route, and reaches only an allowed session, by the same rule as
+ * `WS /terminal`. Anything else is `404 session_not_found`, so the answer does not say which tmux sessions
+ * exist. A device that reads too often, or a read while the bridge runs all it may at once, gets `429
+ * too_many_requests` with `Retry-After` ([HistoryLimits]). Each read is written to the audit log.
+ */
+fun Route.terminalHistoryRoute(
+    gate: TerminalGate,
+    deviceOf: (ApplicationCall) -> String,
+    audit: AuditLog,
+) {
+    get("/terminal/history") {
+        val query = call.request.queryParameters
+        val window = query["window"]?.let { it.toIntOrNull()?.takeIf { index -> index >= 0 } ?: invalidQuery() }
+        val asked = query["lines"]?.let { it.toIntOrNull()?.takeIf { n -> n > 0 } ?: invalidQuery() }
+        val lines = (asked ?: MAX_HISTORY_LINES).coerceAtMost(MAX_HISTORY_LINES)
+        val name = gate.allowedName(query["session"]) ?: sessionNotFound()
+        val device = deviceOf(call)
+        val permit = gate.historyLimits.tryStart(device)
+        if (permit == null) {
+            call.response.header(HttpHeaders.RetryAfter, HISTORY_RETRY_SECONDS.toString())
+            call.respond(
+                HttpStatusCode.TooManyRequests,
+                ApiError(ApiErrorDetail("too_many_requests", "Too many scrollback reads. Wait a moment.")),
+            )
+            return@get
+        }
+        permit.use {
+            if (runCatching { gate.server.session(name) }.getOrNull() == null) sessionNotFound()
+            val history =
+                gate.server.history(name, window, lines)
+                    ?: throw SessionException.NotFound("no_such_window", "That window is not in this session.")
+            audit.terminalHistory(device, TMUX_SESSION_PREFIX + name, window, lines)
+            val lineCount = if (history.text.isEmpty()) 0 else history.text.count { it == '\n' } + 1
+            call.respond(TerminalHistory(history.text, lineCount, history.cols, history.alternateScreen))
+        }
+    }
+}
+
+private fun sessionNotFound(): Nothing = throw SessionException.NotFound("session_not_found", "No such tmux session.")
+
+private fun invalidQuery(): Nothing =
+    throw SessionException.Invalid("invalid_query", "window and lines are whole numbers.")
+
 /** One open terminal socket, from attach to detach. */
 @Suppress("TooManyFunctions") // One function for each thing a terminal socket does.
 private class TerminalConnection(
@@ -130,6 +203,7 @@ private class TerminalConnection(
     private val ended = AtomicBoolean(false)
     private val resizeBucket = TokenBucket(limits.resizeBurst, limits.resizesPerSecond)
     private val abuseBucket = TokenBucket(limits.abuseResizes, limits.abuseResizes / ABUSE_WINDOW_SECONDS)
+    private val windowBucket = TokenBucket(WINDOW_REQUEST_BURST, WINDOW_REQUESTS_PER_SECOND)
     private val keyLock = Mutex()
     private val resizeLock = Mutex()
 
@@ -166,6 +240,7 @@ private class TerminalConnection(
                 session.id,
                 gate.viewPrefix + UUID.randomUUID().toString().take(VIEW_ID_LENGTH),
                 limits,
+                gate.sessionSizes,
                 queue::offer,
             )
         log.info("Terminal opened: device={} session={} remote={}", device, sessionName, remote)
@@ -236,6 +311,7 @@ private class TerminalConnection(
                 }
             }
         val watchdog = launch { closeWhenIdle() }
+        val access = launch { closeWhenNoLongerAllowed() }
         try {
             early.forEach { handle(it, client) }
             for (frame in socket.incoming) {
@@ -244,6 +320,7 @@ private class TerminalConnection(
         } finally {
             downstream.cancel()
             watchdog.cancel()
+            access.cancel()
         }
     }
 
@@ -262,7 +339,10 @@ private class TerminalConnection(
             }
 
             is TermItem.Screen -> {
-                true.also { sendScreen(item) }
+                true.also {
+                    failedScreens = 0
+                    sendScreen(item)
+                }
             }
 
             TermItem.LayoutChanged -> {
@@ -277,11 +357,11 @@ private class TerminalConnection(
             }
 
             TermItem.MaybeGone -> {
-                stillThere(client.paneExists(), "pane")
+                client.paneExists() || follow(client)
             }
 
             TermItem.ScreenFailed -> {
-                stillThere(false, "pane")
+                onScreenFailed(client)
             }
 
             is TermItem.Ended -> {
@@ -289,21 +369,67 @@ private class TerminalConnection(
             }
         }
 
+    /** Snapshots that failed in a row while the pane was still there. */
+    private var failedScreens = 0
+
+    /**
+     * A failed snapshot is never sent as a short screen. While the pane is there, a fresh one is asked for, a
+     * few times at most, so a pane that keeps breaking its reply cannot keep the bridge busy.
+     */
+    private suspend fun onScreenFailed(client: TmuxControlClient): Boolean =
+        when {
+            !client.paneExists() -> {
+                follow(client)
+            }
+
+            ++failedScreens <= MAX_FAILED_SCREENS -> {
+                true.also { client.requestSnapshot() }
+            }
+
+            else -> {
+                false.also { end("The screen of the tmux pane could not be read.") }
+            }
+        }
+
+    /**
+     * The mirrored pane went away. A pane that closed in a window that is still there gives way to that window's
+     * active pane. A window that closed gives way to the session's current window, and the phone is told. Only
+     * a session that is gone ends the view.
+     */
+    private suspend fun follow(client: TmuxControlClient): Boolean {
+        val followed = withContext(Dispatchers.IO) { client.followAfterLoss() }
+        if (followed == TmuxControlClient.Followed.SESSION_WINDOW) {
+            send(
+                TerminalNotice(
+                    WINDOW_CLOSED,
+                    "The window you were watching closed. This is the session's current window.",
+                ),
+            )
+        }
+        if (followed == TmuxControlClient.Followed.NOTHING) return stillThere(false, "session")
+        client.requestSnapshot()
+        return true
+    }
+
     private suspend fun sendScreen(item: TermItem.Screen) {
         lastSize = item.snapshot.cols to item.snapshot.rows
-        send(item.snapshot)
-        sendBytes((if (item.alternate) ENTER_ALTERNATE_SCREEN else ByteArray(0)) + item.text)
+        // The screen's bytes must be the very next frame after its snapshot, whatever else is being sent.
+        sendLock.withLock {
+            sendFrame(item.snapshot)
+            sendBytesFrame((if (item.alternate) ENTER_ALTERNATE_SCREEN else ByteArray(0)) + item.text)
+        }
     }
 
     /** The desk may have taken the size back. The phone learns the new size and gets a screen laid out for it. */
     private suspend fun onLayoutChange(client: TmuxControlClient): Boolean {
-        val size = runCatching { client.paneSize() }.getOrNull()
-        if (size != null && size != lastSize) {
+        // A pane that closed in a split window changes the layout too, and then has no size to read.
+        val size = runCatching { client.paneSize() }.getOrNull() ?: return follow(client)
+        if (size != lastSize) {
             lastSize = size
             send(TerminalSize(size.first, size.second))
             client.requestSnapshot()
         }
-        return stillThere(size != null, "pane")
+        return true
     }
 
     /** Ends the view with a reason when [exists] is false. Returns [exists]. */
@@ -341,6 +467,7 @@ private class TerminalConnection(
         lastActivity.set(System.nanoTime())
         if (!budget.allows(text.length)) return refuse("too much input")
         val message = runCatching { terminalJson.decodeFromString(TerminalMessage.serializer(), text) }.getOrNull()
+        if (message is TerminalListWindows || message is TerminalSelectWindow) return onWindowRequest(message, client)
         if (message !is TerminalResize || message.cols <= 0 || message.rows <= 0) return true
         val size = message.cols to message.rows
         if (size == requestedSize) return true
@@ -359,6 +486,38 @@ private class TerminalConnection(
                 ) {
                     resizeApplier = scope?.launch(Dispatchers.IO) { applyWhenAllowed(client) }
                 }
+            }
+        }
+        return true
+    }
+
+    /**
+     * `list_windows` answers with the session's windows. `select_window` shows one of them in the phone's view
+     * session only, and answers with a fresh snapshot, or a `notice` when the session has no such window. Each
+     * starts tmux commands, so a phone that sends them far faster than a person picks windows is closed.
+     */
+    private suspend fun onWindowRequest(
+        message: TerminalMessage,
+        client: TmuxControlClient,
+    ): Boolean {
+        if (!windowBucket.tryTake()) return refuse("too many window requests")
+        when (message) {
+            is TerminalListWindows -> {
+                send(withContext(Dispatchers.IO) { client.windows() })
+            }
+
+            is TerminalSelectWindow -> {
+                if (withContext(Dispatchers.IO) { client.selectWindow(message.index) }) {
+                    resizes.incrementAndGet()
+                    lastClaim.set(System.nanoTime())
+                    client.requestSnapshot()
+                } else {
+                    send(TerminalNotice(NO_SUCH_WINDOW, "That window is not in this session."))
+                }
+            }
+
+            else -> {
+                Unit
             }
         }
         return true
@@ -434,6 +593,24 @@ private class TerminalConnection(
         }
     }
 
+    /**
+     * The gate is checked at connect, and again here while the view is open: a scan can drop the session, for
+     * example when its agent exits and the session is not named as a shell. The view ends and detaches only after
+     * [ACCESS_MISSES_TO_END] checks in a row find it dropped, because one failed tmux poll or one scan where agent
+     * detection flapped must not end every open view.
+     */
+    private suspend fun closeWhenNoLongerAllowed() {
+        var misses = 0
+        while (socket.isActive) {
+            delay(ACCESS_CHECK_INTERVAL)
+            misses = if (gate.allowedName(TMUX_SESSION_PREFIX + sessionName) == null) misses + 1 else 0
+            if (misses >= ACCESS_MISSES_TO_END) {
+                end("Terminal is no longer allowed for this session.")
+                return
+            }
+        }
+    }
+
     private suspend fun closeWhenIdle() {
         val idle = limits.idleTimeout
         while (socket.isActive) {
@@ -464,11 +641,18 @@ private class TerminalConnection(
         if (closed == null) socket.cancel()
     }
 
-    private suspend fun send(message: TerminalMessage) {
+    /** Frames go out from the stream and from answers to the phone's requests, one at a time. */
+    private val sendLock = Mutex()
+
+    private suspend fun send(message: TerminalMessage) = sendLock.withLock { sendFrame(message) }
+
+    private suspend fun sendBytes(bytes: ByteArray) = sendLock.withLock { sendBytesFrame(bytes) }
+
+    private suspend fun sendFrame(message: TerminalMessage) {
         socket.send(Frame.Text(terminalJson.encodeToString(TerminalMessage.serializer(), message)))
     }
 
-    private suspend fun sendBytes(bytes: ByteArray) {
+    private suspend fun sendBytesFrame(bytes: ByteArray) {
         bytesDown.addAndGet(bytes.size.toLong())
         socket.send(Frame.Binary(true, bytes))
     }
@@ -478,6 +662,11 @@ private class TerminalConnection(
         const val IDLE_CHECKS = 4
         const val ABUSE_WINDOW_SECONDS = 10.0
         const val CLOSE_REASON_MAX = 100
+        const val MAX_FAILED_SCREENS = 3
+        const val WINDOW_REQUEST_BURST = 20
+        const val WINDOW_REQUESTS_PER_SECOND = 2.0
+        const val WINDOW_CLOSED = "window_closed"
+        const val NO_SUCH_WINDOW = "no_such_window"
         val MIN_IDLE_CHECK = 50.milliseconds
         val MAX_IDLE_CHECK = 5.seconds
     }

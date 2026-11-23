@@ -1,7 +1,9 @@
 package ai.tatawur.rafiq.bridge.server
 
+import ai.tatawur.rafiq.bridge.hook.HookSetup
 import ai.tatawur.rafiq.bridge.sessions.SessionException
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
+import ai.tatawur.rafiq.bridge.sessions.isTmuxSessionId
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.bridge.store.SlowConsumerException
 import ai.tatawur.rafiq.protocol.Event
@@ -11,6 +13,7 @@ import ai.tatawur.rafiq.protocol.api.ApiError
 import ai.tatawur.rafiq.protocol.api.ApiErrorDetail
 import ai.tatawur.rafiq.protocol.api.ApprovalAnswer
 import ai.tatawur.rafiq.protocol.api.CreateSessionRequest
+import ai.tatawur.rafiq.protocol.api.HookSetupRequest
 import ai.tatawur.rafiq.protocol.api.PromptRequest
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.http.ContentType
@@ -27,6 +30,7 @@ import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.websocket.webSocket
@@ -98,11 +102,32 @@ private suspend fun ApplicationCall.respondInvalidBody() {
     )
 }
 
+/** The most prompt text the bridge takes, in UTF-8 bytes. A longer prompt is answered 413. */
+const val MAX_PROMPT_BYTES = 64 * 1024
+
+/** The longest `client_id` the bridge takes. A longer one is answered 400. */
+const val MAX_CLIENT_ID_CHARS = 64
+
+/** A prompt is typed into a pane and kept in the log, so its size is bounded well below the body limit. */
+private fun checkPromptSize(request: PromptRequest) {
+    if (request.text.toByteArray(Charsets.UTF_8).size > MAX_PROMPT_BYTES) {
+        throw PayloadTooLargeException(MAX_PROMPT_BYTES.toLong())
+    }
+    if ((request.clientId?.length ?: 0) > MAX_CLIENT_ID_CHARS) {
+        throw SessionException.Invalid("invalid_client_id", "client_id is longer than $MAX_CLIENT_ID_CHARS characters.")
+    }
+}
+
 /**
  * The session and agent routes. They stay thin: parsing here, the work in [SessionManager]. Every route
- * needs the device token (see [BridgeSecurity]).
+ * needs the device token (see [BridgeSecurity]). Each accepted prompt and approval answer gets an [audit] line
+ * with the device it came from, which [deviceOf] names.
  */
-internal fun Route.sessionRoutes(sessions: SessionManager) {
+internal fun Route.sessionRoutes(
+    sessions: SessionManager,
+    audit: AuditLog = LoggingAuditLog(),
+    deviceOf: (ApplicationCall) -> String = { "unknown" },
+) {
     post("/sessions") {
         val request = call.receive<CreateSessionRequest>()
         call.respond(
@@ -125,7 +150,17 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
     // Prompts go to the main thread. A thread_id naming a helper thread is rejected with invalid_thread.
     post("/sessions/{id}/prompt") {
         val request = call.receive<PromptRequest>()
-        sessions.prompt(call.parameters.getOrFail("id"), request.threadId, request.text)
+        val sessionId = call.parameters.getOrFail("id")
+        checkPromptSize(request)
+        val device = deviceOf(call)
+        val hash = LoggingAuditLog.sha256Hex(request.text)
+        try {
+            sessions.prompt(sessionId, request.threadId, request.text, request.clientId, device)
+        } catch (refused: SessionException) {
+            audit.chatPromptRefused(device, sessionId, refused.code, hash)
+            throw refused
+        }
+        audit.chatPrompt(device, sessionId, hash)
         call.respond(HttpStatusCode.Accepted, Accepted())
     }
     post("/sessions/{id}/threads/{threadId}/cancel") {
@@ -134,8 +169,50 @@ internal fun Route.sessionRoutes(sessions: SessionManager) {
     }
     post("/approvals/{id}") {
         val answer = call.receive<ApprovalAnswer>()
-        sessions.respondToApproval(call.parameters.getOrFail("id"), answer.optionId)
+        val approvalId = call.parameters.getOrFail("id")
+        val sessionId = sessions.respondToApproval(approvalId, answer.optionId)
+        audit.approvalAnswer(deviceOf(call), sessionId, approvalId, answer.optionId)
         call.respond(HttpStatusCode.Accepted, Accepted())
+    }
+}
+
+/**
+ * `GET`, `POST` and `DELETE /sessions/{id}/hooks`: preview, install and remove the reader's hooks in the
+ * session's project (issue #44). Only for sessions in tmux, whose agent runs in a project folder on your server.
+ * The work is in [HookSetup]. Install and remove need the hash of the preview you agreed to, and each leaves an
+ * [audit] line with the device, the project and the hash of the file written.
+ */
+internal fun Route.hookRoutes(
+    hooks: HookSetup,
+    sessions: SessionManager,
+    deviceOf: (ApplicationCall) -> String,
+    audit: AuditLog = LoggingAuditLog(),
+) {
+    suspend fun projectOf(call: ApplicationCall): String {
+        val id = call.parameters.getOrFail("id")
+        val session =
+            sessions.sessions().firstOrNull { it.id == id }
+                ?: throw SessionException.NotFound("session_not_found", "No session '$id'.")
+        if (!isTmuxSessionId(id)) {
+            throw SessionException.Conflict("hooks_unavailable", "Hooks are only for sessions in tmux.")
+        }
+        return session.projectPath
+    }
+    get("/sessions/{id}/hooks") {
+        call.respond(hooks.preview(projectOf(call)))
+    }
+    post("/sessions/{id}/hooks") {
+        val request = call.receive<HookSetupRequest>()
+        val device = deviceOf(call)
+        val change = hooks.install(projectOf(call), request, device)
+        audit.hooksInstalled(device, change.preview.projectPath, change.writtenSha256 ?: "")
+        call.respond(change.preview)
+    }
+    delete("/sessions/{id}/hooks") {
+        val request = call.receive<HookSetupRequest>()
+        val change = hooks.remove(projectOf(call), request)
+        audit.hooksRemoved(deviceOf(call), change.preview.projectPath, change.writtenSha256)
+        call.respond(change.preview)
     }
 }
 

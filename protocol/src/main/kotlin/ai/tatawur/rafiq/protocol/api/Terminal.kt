@@ -75,6 +75,48 @@ data class TerminalResize(
     @SerialName("rows") val rows: Int,
 ) : TerminalMessage
 
+/** Up. Ask for the session's windows. The bridge answers with [TerminalWindows]. */
+@Serializable
+@SerialName("list_windows")
+data object TerminalListWindows : TerminalMessage
+
+/**
+ * Down. The session's windows, in index order.
+ *
+ * @property shown the index of the window the phone is showing.
+ */
+@Serializable
+@SerialName("windows")
+data class TerminalWindows(
+    @SerialName("windows") val windows: List<TerminalWindow>,
+    @SerialName("shown") val shown: Int,
+) : TerminalMessage
+
+/**
+ * Up. Show this window on the phone. Only the phone's own view session changes; the desk stays where it is.
+ * The bridge answers with a fresh [TerminalSnapshot] for the new window, or a [TerminalNotice] if there is no
+ * such window.
+ */
+@Serializable
+@SerialName("select_window")
+data class TerminalSelectWindow(
+    @SerialName("index") val index: Int,
+) : TerminalMessage
+
+/**
+ * Down. Something the user should be told, for example that the window being shown closed and the phone moved
+ * to the session's current window. A [TerminalSnapshot] follows when the screen changed.
+ *
+ * @property code a stable name, such as `window_closed` or `no_such_window`.
+ * @property message the same in plain words.
+ */
+@Serializable
+@SerialName("notice")
+data class TerminalNotice(
+    @SerialName("code") val code: String,
+    @SerialName("message") val message: String,
+) : TerminalMessage
+
 /** A message type this build does not know. Ignore it. */
 @Serializable
 @SerialName("unknown")

@@ -3,6 +3,8 @@ package ai.tatawur.rafiq.sessions
 import ai.tatawur.rafiq.client.ApprovalCard
 import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.ConnectionState
+import ai.tatawur.rafiq.client.EchoState
+import ai.tatawur.rafiq.client.PRESUMED_LOST
 import ai.tatawur.rafiq.client.SessionListItem
 import ai.tatawur.rafiq.client.SessionRepository
 import ai.tatawur.rafiq.client.SessionScreenState
@@ -10,8 +12,13 @@ import ai.tatawur.rafiq.client.ThreadTab
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.ApprovalOption
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
+import ai.tatawur.rafiq.protocol.DeliveryState
+import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
+import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.SendRefusal
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -58,8 +65,10 @@ class SessionViewModelTest {
         var promptResult: CommandResult<Unit> = CommandResult.Ok(Unit)
         var approveResult: CommandResult<Unit> = CommandResult.Ok(Unit)
         val prompts = mutableListOf<String>()
+        val clientIds = mutableListOf<String?>()
 
-        override val connection: StateFlow<ConnectionState> = MutableStateFlow(ConnectionState.Live)
+        val link = MutableStateFlow<ConnectionState>(ConnectionState.Live)
+        override val connection: StateFlow<ConnectionState> = link
 
         override fun sessions(): Flow<List<SessionListItem>> =
             screen.map { state -> listOfNotNull(state.session?.let { SessionListItem(it, null, state.openApprovals) }) }
@@ -77,8 +86,10 @@ class SessionViewModelTest {
         override suspend fun prompt(
             sessionId: String,
             text: String,
+            clientId: String?,
         ): CommandResult<Unit> {
             prompts += text
+            clientIds += clientId
             return promptResult
         }
 
@@ -91,14 +102,35 @@ class SessionViewModelTest {
             approvalId: String,
             optionId: String,
         ): CommandResult<Unit> = approveResult
+
+        override suspend fun hookSetup(sessionId: String): CommandResult<HookSetupPreview> = CommandResult.NotFound
+
+        override suspend fun installHooks(
+            sessionId: String,
+            previewHash: String,
+            addGitExclude: Boolean,
+        ): CommandResult<Unit> = CommandResult.NotFound
+
+        override suspend fun removeHooks(
+            sessionId: String,
+            previewHash: String,
+        ): CommandResult<Unit> = CommandResult.NotFound
+
+        override suspend fun terminalHistory(
+            sessionId: String,
+            window: Int?,
+            lines: Int,
+        ): CommandResult<TerminalHistory> = CommandResult.NotFound
     }
 
     private fun screen(
         mainStatus: AgentState = AgentState.DONE,
         approvals: List<ApprovalCard> = emptyList(),
+        inTmux: Boolean = false,
     ) = SessionScreenState(
         sessionId = "s-1",
-        session = Session("s-1", "claude-code", "/srv/weather-app", "weather-app", mainStatus, 0, 0),
+        session =
+            Session("s-1", "claude-code", "/srv/weather-app", "weather-app", mainStatus, 0, 0, terminal = inTmux),
         threads =
             listOf(
                 ThreadTab("t-main", null, ThreadKind.MAIN, "Main", mainStatus, approvals.size),
@@ -213,4 +245,137 @@ class SessionViewModelTest {
                     ?.id,
             )
         }
+
+    @Test
+    fun a_prompt_to_a_session_in_tmux_goes_exactly_as_typed_and_shows_until_the_agent_has_it() =
+        runTest(dispatcher) {
+            // The agent is busy: in tmux your server queues the prompt instead of refusing it.
+            val repository = FakeRepository(screen(mainStatus = AgentState.WORKING, inTmux = true))
+            val viewModel = SessionViewModel(repository, "s-1", newClientId = { "c-1" })
+            backgroundScope.launch { viewModel.state.collect {} }
+
+            viewModel.updateDraft(" !ls -la ")
+            viewModel.send()
+
+            assertEquals(listOf(" !ls -la "), repository.prompts)
+            assertEquals(listOf<String?>("c-1"), repository.clientIds)
+            assertEquals(
+                listOf(EchoState.SENT),
+                viewModel.state.value.echoes
+                    .map { it.state },
+            )
+
+            repository.screen.update { it.copy(deliveries = mapOf("c-1" to delivery(DeliveryState.QUEUED))) }
+            assertEquals(
+                listOf(EchoState.QUEUED),
+                viewModel.state.value.echoes
+                    .map { it.state },
+            )
+
+            repository.screen.update { it.copy(deliveries = mapOf("c-1" to delivery(DeliveryState.DELIVERED))) }
+            assertEquals(emptyList(), viewModel.state.value.echoes)
+        }
+
+    @Test
+    fun a_refused_send_keeps_your_draft_and_says_why_in_the_composer() =
+        runTest(dispatcher) {
+            val repository =
+                FakeRepository(screen(inTmux = true)).apply {
+                    promptResult = CommandResult.Failed(SendRefusal.INPUT_NOT_EMPTY, "Half-typed text.")
+                }
+            val viewModel = SessionViewModel(repository, "s-1")
+            backgroundScope.launch { viewModel.state.collect {} }
+
+            viewModel.updateDraft("/compact")
+            viewModel.send()
+
+            val state = viewModel.state.value
+            assertEquals("/compact", state.draft)
+            assertEquals(ComposerRefusal(SendRefusal.INPUT_NOT_EMPTY, "Half-typed text."), state.refusal)
+            assertEquals(null, state.feedback)
+            assertEquals(emptyList(), state.echoes)
+            assertEquals(false, state.offerHooks)
+        }
+
+    @Test
+    fun a_send_refused_for_missing_hooks_offers_the_hook_setup() =
+        runTest(dispatcher) {
+            val repository =
+                FakeRepository(screen(inTmux = true)).apply {
+                    promptResult = CommandResult.Failed(SendRefusal.HOOKS_NOT_INSTALLED, "No hooks.")
+                }
+            val viewModel = SessionViewModel(repository, "s-1")
+            backgroundScope.launch { viewModel.state.collect {} }
+
+            viewModel.updateDraft("Run the tests")
+            viewModel.send()
+
+            assertTrue(viewModel.state.value.offerHooks)
+        }
+
+    @Test
+    fun a_prompt_still_queued_when_the_socket_reconnects_shows_as_maybe_lost_until_it_is_delivered() =
+        runTest(dispatcher) {
+            // Your server holds its queue in memory, so a restart would leave "Queued" forever.
+            val repository = FakeRepository(screen(inTmux = true))
+            val viewModel = SessionViewModel(repository, "s-1", newClientId = { "c-1" })
+            backgroundScope.launch { viewModel.state.collect {} }
+            viewModel.updateDraft("Then update the README")
+            viewModel.send()
+            repository.screen.update { it.copy(deliveries = mapOf("c-1" to delivery(DeliveryState.QUEUED))) }
+
+            repository.link.value = ConnectionState.Offline(retryAtMs = null)
+            assertEquals(
+                EchoState.QUEUED,
+                viewModel.state.value.echoes
+                    .single()
+                    .state,
+            )
+            repository.link.value = ConnectionState.Live
+
+            val echo =
+                viewModel.state.value.echoes
+                    .single()
+            assertEquals(EchoState.NOT_DELIVERED, echo.state)
+            assertEquals(PRESUMED_LOST, echo.code)
+
+            // Your server kept it after all: the later state wins.
+            repository.screen.update { it.copy(deliveries = mapOf("c-1" to delivery(DeliveryState.DELIVERED))) }
+            assertEquals(emptyList(), viewModel.state.value.echoes)
+        }
+
+    @Test
+    fun a_prompt_sent_long_ago_with_no_word_since_shows_as_maybe_lost_at_a_reconnect() =
+        runTest(dispatcher) {
+            var now = 0L
+            val repository = FakeRepository(screen(inTmux = true))
+            val viewModel = SessionViewModel(repository, "s-1", { "c-${now / 1_000}" }, { now })
+            backgroundScope.launch { viewModel.state.collect {} }
+            viewModel.updateDraft("First")
+            viewModel.send()
+            now = 9_000
+            viewModel.updateDraft("Second")
+            viewModel.send()
+
+            now = 11_000
+            repository.link.value = ConnectionState.Offline(retryAtMs = null)
+            repository.link.value = ConnectionState.Live
+
+            // Only the one older than ten seconds is presumed lost; the recent one may still land.
+            assertEquals(
+                listOf(EchoState.NOT_DELIVERED, EchoState.SENT),
+                viewModel.state.value.echoes
+                    .map { it.state },
+            )
+            repository.screen.update {
+                it.copy(deliveries = mapOf("c-0" to delivery(DeliveryState.DELIVERED).copy(clientId = "c-0")))
+            }
+            assertEquals(
+                listOf("c-9"),
+                viewModel.state.value.echoes
+                    .map { it.clientId },
+            )
+        }
+
+    private fun delivery(state: DeliveryState) = EventPayload.PromptDelivery("c-1", "t-main", state)
 }

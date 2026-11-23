@@ -87,15 +87,19 @@ internal fun Timeline(
 ) {
     val spacing = RafiqTheme.spacing
     val items = state.timeline
-    val listState = scroll.listState(items.lastIndex)
-    val lastIndex by rememberUpdatedState(items.lastIndex)
+    val progress = state.progress
+    val echoes = state.echoes
+    // The progress line and your unsent prompts follow the items, and the list ends with them.
+    val trailing = (if (progress != null) 1 else 0) + echoes.size
+    val listState = scroll.listState(items.lastIndex + trailing)
+    val lastIndex by rememberUpdatedState(items.lastIndex + trailing)
     FollowWhileAtBottom(listState, scroll::userSettled)
     ReportPinnedCard(listState, items, state.pinned?.id, onPinnedCardOnScreen)
 
     // Runs each time Chat is shown again, for example after Terminal or another screen.
     LaunchedEffect(Unit) { scroll.returned() }
-    LaunchedEffect(items.size, items.lastOrNull()) {
-        if (state.scrollToKey == null) scroll.contentChanged(items.lastOrNull()?.key)
+    LaunchedEffect(items.size, items.lastOrNull(), echoes, progress != null) {
+        if (state.scrollToKey == null) scroll.contentChanged(echoes.lastOrNull()?.clientId ?: items.lastOrNull()?.key)
     }
     LaunchedEffect(scroll.pendingScrollToEnd) {
         if (scroll.pendingScrollToEnd) {
@@ -129,8 +133,10 @@ internal fun Timeline(
         ) {
             items(items, key = { it.key }, contentType = { it::class }) { item ->
                 val answerBelow = answersBelow(pinnedAnsweredBelow, item, state.pinned?.id)
-                TimelineEntry(item, state.answering, actions.onApprove, answerBelow)
+                TimelineEntry(item, state.answering, actions.onApprove, answerBelow, actions.openTerminal())
             }
+            items(echoes, key = { "echo:${it.clientId}" }) { echo -> PromptEchoItem(echo) }
+            if (progress != null) item(key = "progress") { ProgressLine(progress) }
         }
         val rule = scroll.rule
         val toBottom = Modifier.align(Alignment.BottomCenter)
@@ -147,6 +153,7 @@ private fun TimelineEntry(
     answering: Set<String>,
     onApprove: (approvalId: String, optionId: String) -> Unit,
     answerBelow: Boolean,
+    onOpenTerminal: (() -> Unit)?,
 ) {
     when (item) {
         is TimelineItem.Message -> {
@@ -166,7 +173,7 @@ private fun TimelineEntry(
         }
 
         is TimelineItem.Notice -> {
-            NoticeLine(item)
+            NoticeLine(item, onOpenTerminal = onOpenTerminal)
         }
     }
 }
@@ -307,3 +314,6 @@ internal fun answersBelow(
     item: TimelineItem,
     pinnedId: String?,
 ): Boolean = pinnedAnsweredBelow && pinnedId != null && (item as? TimelineItem.Tool)?.approval?.id == pinnedId
+
+/** Switches the session to Terminal, or null when this screen offers no Terminal. */
+private fun SessionActions.openTerminal(): (() -> Unit)? = viewToggle?.let { toggle -> { toggle.onSelect(true) } }

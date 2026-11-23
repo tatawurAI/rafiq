@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.bridge.tmux
 
 import kotlinx.coroutines.channels.Channel
+import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -58,6 +59,73 @@ internal class TermQueue(
 
     fun close() {
         channel.close()
+    }
+}
+
+/**
+ * The size a session's windows had before the first view of this bridge took them, so the last view to leave
+ * can give it back. Shared by every view, because two phones may show one session: the size to give back is the
+ * one from before the first of them.
+ */
+class SessionSizes {
+    private class Held(
+        val size: Pair<Int, Int>,
+        val views: Int,
+    )
+
+    private val held = mutableMapOf<String, Held>()
+
+    /** A view of [sessionId] opened, whose window had [size] just before. Only the first view's size is kept. */
+    @Synchronized
+    fun claim(
+        sessionId: String,
+        size: Pair<Int, Int>,
+    ) {
+        val now = held[sessionId]
+        held[sessionId] = if (now == null) Held(size, 1) else Held(now.size, now.views + 1)
+    }
+
+    /** A view of [sessionId] closed. The earlier size when it was the last view, otherwise null. */
+    @Synchronized
+    fun release(sessionId: String): Pair<Int, Int>? {
+        val now = held.remove(sessionId) ?: return null
+        if (now.views > 1) held[sessionId] = Held(now.size, now.views - 1)
+        return now.size.takeIf { now.views == 1 }
+    }
+}
+
+/**
+ * Limits reads of `GET /terminal/history`. Each read runs tmux and can return megabytes, so a device gets a
+ * burst of [burst] reads and then one every 1 / [perSecond] seconds, and the bridge runs at most [maxAtOnce]
+ * reads at a time. A refusal costs nothing: no tmux command runs.
+ */
+class HistoryLimits(
+    private val burst: Int = HISTORY_BURST,
+    private val perSecond: Double = HISTORY_PER_SECOND,
+    maxAtOnce: Int = HISTORY_AT_ONCE,
+    private val nowNanos: () -> Long = System::nanoTime,
+) {
+    private val buckets = mutableMapOf<String, TokenBucket>()
+    private val running = Semaphore(maxAtOnce)
+
+    /**
+     * A permit for one read by [deviceId], to close when the read is done, or null when the device has read too
+     * often or the bridge is already running all the reads it may.
+     */
+    fun tryStart(deviceId: String): AutoCloseable? {
+        val allowed = synchronized(buckets) { buckets.getOrPut(deviceId) { TokenBucket(burst, perSecond, nowNanos) } }
+        if (!allowed.tryTake() || !running.tryAcquire()) return null
+        var released = false
+        return AutoCloseable {
+            if (!released) running.release()
+            released = true
+        }
+    }
+
+    private companion object {
+        const val HISTORY_BURST = 10
+        const val HISTORY_PER_SECOND = 2.0
+        const val HISTORY_AT_ONCE = 2
     }
 }
 

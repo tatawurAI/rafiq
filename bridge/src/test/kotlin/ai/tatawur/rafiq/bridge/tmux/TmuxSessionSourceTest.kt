@@ -1,8 +1,10 @@
 package ai.tatawur.rafiq.bridge.tmux
 
 import ai.tatawur.rafiq.bridge.FakeAdapter
+import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.EventPayload
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -125,7 +127,7 @@ class TmuxSessionSourceTest {
     }
 
     @Test
-    fun a_tmux_session_does_not_take_a_chat_prompt_and_starts_no_agent() {
+    fun a_tmux_session_without_a_reader_refuses_a_chat_prompt_and_starts_no_agent() {
         tmux.newSession("weather-app")
         // An agent named like the session's own, so an unguarded prompt would start it through the adapter.
         val adapter = FakeAdapter("terminal")
@@ -141,7 +143,7 @@ class TmuxSessionSourceTest {
         val answer = bridge.post("/sessions/tmux-weather-app/prompt")
 
         assertEquals(409, answer.statusCode())
-        assertTrue("terminal_only" in answer.body(), answer.body())
+        assertTrue("chat_unavailable" in answer.body(), answer.body())
         assertTrue(adapter.started.isEmpty(), "an agent was started for a tmux session")
     }
 
@@ -178,6 +180,82 @@ class TmuxSessionSourceTest {
         val hung = AgentDetector(claudeCommand = hanging.toString(), timeoutSeconds = 1)
         val found = runBlocking { hung.detect(panes, table) }
         assertEquals("claude-code", found.getValue("weather-app").agent)
+    }
+
+    @Test
+    fun a_session_listed_as_a_shell_takes_claudes_folder_once_claude_runs_in_it() {
+        val home = Files.createDirectory(dir.resolve("home"))
+        val project = Files.createDirectory(dir.resolve("weather-app")).toRealPath()
+        tmux.tmux("new-session", "-d", "-s", "weather-app", "-c", home.toString(), "-x", "120", "-y", "40", "cat")
+        val bin = Files.createDirectory(dir.resolve("bin"))
+        Files.createSymbolicLink(bin.resolve("claude"), Path.of("/bin/sleep"))
+        val pidFile = dir.resolve("claude.pid")
+        val list = bin.resolve("claude-list")
+        Files.writeString(
+            list,
+            "#!/bin/sh\nprintf '[{\"pid\": %s, \"cwd\": \"%s\"}]' \"\$(cat '$pidFile')\" '$project'\n",
+        )
+        list.toFile().setExecutable(true)
+        val bridge = open("weather-app", agents = AgentDetector(claudeCommand = list.toString()))
+        bridge.tmuxSource!!.permissionModeOf = { "plan" }
+        bridge.refresh()
+        val stored = {
+            runBlocking {
+                bridge.fixture.log
+                    .session("tmux-weather-app")!!
+                    .session
+            }
+        }
+        assertEquals(home.toRealPath().toString(), Path.of(stored().projectPath).toRealPath().toString())
+
+        tmux.tmux("respawn-pane", "-k", "-t", "=weather-app:", "${bin.resolve("claude")} 1000")
+        val panePid = tmux.tmux("display-message", "-p", "-t", "=weather-app:", "#{pane_pid}").trim()
+        Files.writeString(pidFile, panePid)
+        val table = runBlocking { AgentDetector.processTable() }
+        assumeTrue(AgentDetector.claudeProcessesUnder(panePid.toInt(), table).isNotEmpty(), "no process named claude")
+        bridge.refresh()
+
+        assertEquals("claude-code", stored().agent)
+        assertEquals(project.toString(), stored().projectPath)
+        // The update keeps the fields the log does not store: the permission mode and the Terminal flag.
+        val update =
+            runBlocking { bridge.fixture.log.latest("tmux-weather-app", 20) }
+                .mapNotNull { it.payload as? EventPayload.SessionUpdated }
+                .last()
+                .session
+        assertEquals("plan", update.permissionMode)
+        assertEquals(bridge.tmuxSource!!.present(stored()).terminalAllowed, update.terminalAllowed)
+    }
+
+    @Test
+    fun a_failed_poll_after_a_good_one_keeps_which_sessions_terminal_may_open() {
+        val failing = dir.resolve("tmux-fails")
+        val tmuxStandIn = dir.resolve("tmux")
+        Files.writeString(
+            tmuxStandIn,
+            "#!/bin/sh\n[ -e '$failing' ] && { echo boom >&2; exit 1; }\n" +
+                "case \"$1\" in\n" +
+                "  list-sessions) printf '\$1\\t0\\tweather-app\\n' ;;\n" +
+                "  list-panes) printf 'weather-app\\t%%1\\t999999\\t1\\t1\\t/tmp\\n' ;;\n" +
+                "esac\n",
+        )
+        tmuxStandIn.toFile().setExecutable(true)
+        val settings =
+            TerminalSettings(true, setOf("weather-app"), terminal = true, shellSessions = setOf("weather-app"))
+        val gate = TerminalGate(settings, TmuxServer(binary = tmuxStandIn.toString()))
+        val log = EventLog.open(null, Dispatchers.IO.limitedParallelism(1))
+        val source = TmuxSessionSource(gate, log, AgentDetector(claudeCommand = "rafiq-no-such-claude"))
+        try {
+            runBlocking { source.poll() }
+            assertTrue(gate.canOpen("weather-app"), "the good poll opens the session")
+
+            Files.createFile(failing)
+            runBlocking { source.poll() }
+
+            assertTrue(gate.canOpen("weather-app"), "one failed poll took Terminal away")
+        } finally {
+            log.close()
+        }
     }
 
     @Test

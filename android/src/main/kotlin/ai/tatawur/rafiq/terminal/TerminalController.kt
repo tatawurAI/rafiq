@@ -1,23 +1,29 @@
 package ai.tatawur.rafiq.terminal
 
+import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.terminal.CellSize
 import ai.tatawur.rafiq.client.terminal.MAX_PASTE_BYTES
 import ai.tatawur.rafiq.client.terminal.MirroredWindow
+import ai.tatawur.rafiq.client.terminal.Scrollback
+import ai.tatawur.rafiq.client.terminal.ScrollbackState
 import ai.tatawur.rafiq.client.terminal.TerminalEvent
 import ai.tatawur.rafiq.client.terminal.TerminalLink
 import ai.tatawur.rafiq.client.terminal.TerminalPort
 import ai.tatawur.rafiq.client.terminal.TerminalStatus
 import ai.tatawur.rafiq.client.terminal.httpsLinkTarget
 import ai.tatawur.rafiq.client.terminal.preparePaste
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.connectbot.terminal.InlineImages
 import org.connectbot.terminal.ModifierManager
@@ -53,9 +59,23 @@ class StickyModifiers : ModifierManager {
 }
 
 /**
+ * The window picker while it is open.
+ *
+ * @property windows the session's windows, or null until your server has listed them.
+ * @property shown the index of the window the phone shows, or null until listed.
+ */
+data class WindowPicker(
+    val windows: List<MirroredWindow>? = null,
+    val shown: Int? = null,
+)
+
+/**
  * One Terminal view: the emulator and its [TerminalLink]. The emulator always has the pane's real
  * size: snapshots and size messages set it, and the viewport the phone would like goes up as a
  * resize the bridge may or may not follow.
+ *
+ * It also holds the [Scrollback] overlay, which reads history through [history] and never resizes
+ * anything, and the window picker, which changes only the phone's own view of the session.
  *
  * The emulator gets an explicit callback for everything the pane could ask of the phone, so the
  * library's defaults never matter. Clipboard writes are ignored. The title is never read. Inline
@@ -64,14 +84,25 @@ class StickyModifiers : ModifierManager {
  *
  * Call [close] when the view is gone for good, to free the emulator's native session.
  */
+@Suppress("LongParameterList", "TooManyFunctions") // The emulator's colours and every pane callback, one each.
 class TerminalController(
     port: TerminalPort,
     sessionId: String,
     foreground: Color,
     background: Color,
+    private val scope: CoroutineScope,
+    history: suspend (window: Int?) -> CommandResult<TerminalHistory>,
     onBell: () -> Unit,
 ) : AutoCloseable {
     private val link = TerminalLink(port, sessionId)
+    private val currentPicker = MutableStateFlow<WindowPicker?>(null)
+    private val currentNotice = MutableStateFlow<String?>(null)
+
+    /** The window picker while it is open, or null. */
+    val picker: StateFlow<WindowPicker?> = currentPicker.asStateFlow()
+
+    /** Something your server told you, such as the window you watched closing, until you dismiss it. */
+    val notice: StateFlow<String?> = currentNotice.asStateFlow()
     private val currentPane = MutableStateFlow<CellSize?>(null)
     private val currentLink = MutableStateFlow<String?>(null)
     private val currentWindow = MutableStateFlow<MirroredWindow?>(null)
@@ -94,13 +125,16 @@ class TerminalController(
 
     val modifiers = StickyModifiers()
 
+    /** Scrollback for the window being shown. Scroll keys go through the same allow-list as typing. */
+    val scrollback = Scrollback(scope, { history(currentWindow.value?.index) }, link::sendKeys)
+
     val emulator: TerminalEmulator =
         TerminalEmulatorFactory.create(
             initialRows = INITIAL_ROWS,
             initialCols = INITIAL_COLS,
             defaultForeground = foreground,
             defaultBackground = background,
-            onKeyboardInput = link::sendKeys,
+            onKeyboardInput = ::typed,
             onBell = bell::run,
             // OSC 52 never reaches the emulator (see PaneFilter). This is the second wall.
             onClipboardCopy = { _ -> },
@@ -111,6 +145,37 @@ class TerminalController(
 
     /** The viewport in cells that fits the phone's layout. */
     fun onViewport(size: CellSize) = link.setViewport(size)
+
+    /** Opens the window picker and asks your server for the session's windows. */
+    fun openWindowPicker() {
+        currentPicker.value = WindowPicker()
+        link.listWindows()
+    }
+
+    /** Shows window [index] on the phone. The desk stays on its own window. */
+    fun selectWindow(index: Int) {
+        currentPicker.value = null
+        link.selectWindow(index)
+    }
+
+    fun closeWindowPicker() {
+        currentPicker.value = null
+    }
+
+    fun dismissNotice() {
+        currentNotice.value = null
+    }
+
+    /** What the emulator wrote for your keys. Typing returns from the history overlay to the live screen. */
+    private fun typed(bytes: ByteArray) {
+        leaveHistory()
+        link.sendKeys(bytes)
+    }
+
+    /** Back to live, on the main thread where the gestures drive [scrollback]. Typing does this. */
+    private fun leaveHistory() {
+        if (scrollback.state.value != ScrollbackState.Live) scope.launch { scrollback.backToLive() }
+    }
 
     /** Sends one key from the key row, with the armed modifiers. */
     fun key(vtermKey: Int) {
@@ -163,10 +228,22 @@ class TerminalController(
                 emulator.writeInput(event.vt)
                 currentPane.value = event.size
                 currentWindow.value = event.window
+                scope.launch { scrollback.onSnapshot(event.mouse) }
             }
 
             is TerminalEvent.Output -> {
                 emulator.writeInput(event.bytes)
+                // The history stays open: a spinner would otherwise close it at once.
+                if (scrollback.state.value is ScrollbackState.Showing) scope.launch { scrollback.onOutput() }
+            }
+
+            is TerminalEvent.Windows -> {
+                // Only while the picker is open: a late answer must not reopen it.
+                if (currentPicker.value != null) currentPicker.value = WindowPicker(event.windows, event.shown)
+            }
+
+            is TerminalEvent.Notice -> {
+                currentNotice.value = event.message
             }
 
             is TerminalEvent.Size -> {

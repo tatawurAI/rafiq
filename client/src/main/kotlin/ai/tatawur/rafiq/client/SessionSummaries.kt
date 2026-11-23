@@ -30,4 +30,5 @@ internal fun EventPayload.ApprovalRequest.toCard(
         description = description,
         options = ApprovalCard.ordered(options),
         expiresAtMs = expiresAtMs,
+        detail = detail,
     )

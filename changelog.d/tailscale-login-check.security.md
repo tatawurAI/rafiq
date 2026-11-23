@@ -1,0 +1,1 @@
+Your server can now also check the Tailscale login of every request. Set `RAFIQ_TAILSCALE_LOGIN` to your login, and a request from any other login, or with no login header from `tailscale serve`, is refused with `403 identity_mismatch` even when its device token is valid.

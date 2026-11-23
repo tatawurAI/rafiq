@@ -6,30 +6,52 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
 /**
- * The Terminal gate: whether the bridge shows tmux sessions and lets the phone open them, and which ones.
+ * The tmux gate: whether the bridge shows tmux sessions, whether the phone may open them in Terminal, and which.
  *
- * Terminal is a remote shell on your server, so everything here defaults to off and to the narrowest choice.
+ * Listing a session lets the phone chat with the agent in it. Terminal is a remote shell on your server, so it
+ * is a separate switch, and a session with no agent in it opens only when it is named a second time. Everything
+ * here defaults to off and to the narrowest choice.
  *
- * @property enabled from `RAFIQ_TERMINAL=1`. While false the bridge lists no tmux session, closes
- *   `WS /terminal` as "no such session" and never starts tmux.
- * @property sessions from `RAFIQ_TMUX_SESSIONS`: the exact names of the tmux sessions the phone may see and
- *   open. A grant covers every window and pane in the session.
+ * @property enabled whether tmux sessions are listed at all, from `RAFIQ_TMUX=1` or `RAFIQ_TERMINAL=1`. While
+ *   false the bridge lists no tmux session, closes `WS /terminal` as "no such session" and never starts tmux.
+ * @property sessions from `RAFIQ_TMUX_SESSIONS`: the exact names of the tmux sessions the phone may see. A grant
+ *   covers every window and pane in the session.
  * @property socket from `RAFIQ_TMUX_SOCKET`: the tmux socket name (`tmux -L`), or null for the default server.
+ * @property terminal from `RAFIQ_TERMINAL=1`: whether a listed session may be opened in Terminal.
+ * @property shellSessions from `RAFIQ_TERMINAL_SHELLS`: listed sessions that open in Terminal even when no agent
+ *   is detected in them. A session with an agent needs no entry here.
  */
 data class TerminalSettings(
     val enabled: Boolean = false,
     val sessions: Set<String> = emptySet(),
     val socket: String? = null,
     val limits: TerminalLimits = TerminalLimits(),
+    val terminal: Boolean = false,
+    val shellSessions: Set<String> = emptySet(),
 ) {
-    /** True when the phone may see and open the tmux session called [name]. Exact match only. */
+    /** True when the phone may see the tmux session called [name]. Exact match only. */
     fun allows(name: String): Boolean = enabled && name in sessions && !name.startsWith(TmuxServer.VIEW_PREFIX)
+
+    /**
+     * What the phone may do with the tmux session called [name], given whether an agent was detected in it.
+     * The session list sets `Session.terminalAllowed` from [TmuxAccess.terminal], and `WS /terminal` refuses
+     * a session for which it is false before it runs any tmux command.
+     */
+    fun access(
+        name: String,
+        agentDetected: Boolean,
+    ): TmuxAccess {
+        val listed = allows(name)
+        return TmuxAccess(listed = listed, terminal = listed && terminal && (agentDetected || name in shellSessions))
+    }
 
     companion object {
         val OFF = TerminalSettings()
 
+        const val LISTING = "RAFIQ_TMUX"
         const val SWITCH = "RAFIQ_TERMINAL"
         const val SESSIONS = "RAFIQ_TMUX_SESSIONS"
+        const val SHELLS = "RAFIQ_TERMINAL_SHELLS"
         const val SOCKET = "RAFIQ_TMUX_SOCKET"
         const val ALLOW_REMOTE_BIND = "RAFIQ_TERMINAL_ALLOW_NON_LOOPBACK"
 
@@ -38,40 +60,57 @@ data class TerminalSettings(
 
         /**
          * Reads the gate from [read], which returns a variable's trimmed value or null when unset or blank.
+         * `RAFIQ_TERMINAL=1` implies `RAFIQ_TMUX=1`.
          *
          * @throws IllegalArgumentException with the variable's name when a value is bad, so a typo fails at
-         *   start-up instead of quietly widening or narrowing what the phone can reach. Also when Terminal is
-         *   on and the bridge is bound to an address other than loopback, unless the override is set.
+         *   start-up instead of quietly widening or narrowing what the phone can reach. Also when tmux sessions
+         *   are on and the bridge is bound to an address other than loopback, unless the override is set.
          */
         fun fromEnvironment(
             read: (String) -> String?,
             bindAddress: String,
         ): TerminalSettings {
-            val enabled = flag(SWITCH, read(SWITCH))
-            val sessions = read(SESSIONS)?.let(::parseSessions).orEmpty()
+            val terminal = flag(SWITCH, read(SWITCH))
+            val listing = flag(LISTING, read(LISTING)) || terminal
+            val sessions = read(SESSIONS)?.let { parseNames(SESSIONS, it) }.orEmpty()
+            val shells = read(SHELLS)?.let { parseNames(SHELLS, it) }.orEmpty()
             val socket = read(SOCKET)
             require(socket == null || NAME.matches(socket)) {
                 "$SOCKET must be a tmux socket name of letters, digits, '.', '_' and '-', got '$socket'."
             }
-            if (!enabled) return OFF.copy(sessions = sessions, socket = socket)
+            val stray = shells - sessions
+            require(stray.isEmpty()) {
+                "$SHELLS names '${stray.first()}', which is not in $SESSIONS. A session must be listed to open."
+            }
+            if (!listing) return OFF.copy(sessions = sessions, socket = socket, shellSessions = shells)
+            val switch = if (terminal) SWITCH else LISTING
             require(sessions.isNotEmpty()) {
-                "$SWITCH is on, so $SESSIONS must name the tmux sessions the phone may open. Terminal has no wildcard."
+                "$switch is on, so $SESSIONS must name the tmux sessions the phone may see. There is no wildcard."
             }
             require(isLoopback(bindAddress) || flag(ALLOW_REMOTE_BIND, read(ALLOW_REMOTE_BIND))) {
-                "$SWITCH is on, so RAFIQ_BIND_ADDRESS must be a loopback address, got '$bindAddress'. " +
+                "$switch is on, so RAFIQ_BIND_ADDRESS must be a loopback address, got '$bindAddress'. " +
                     "Publish the bridge with tailscale serve. To bind elsewhere on purpose, set $ALLOW_REMOTE_BIND=1."
             }
-            return TerminalSettings(enabled = true, sessions = sessions, socket = socket)
+            return TerminalSettings(
+                enabled = true,
+                sessions = sessions,
+                socket = socket,
+                terminal = terminal,
+                shellSessions = shells,
+            )
         }
 
-        private fun parseSessions(raw: String): Set<String> =
+        private fun parseNames(
+            variable: String,
+            raw: String,
+        ): Set<String> =
             raw
                 .split(',')
                 .map(String::trim)
                 .filter(String::isNotEmpty)
                 .onEach { name ->
                     require(NAME.matches(name)) {
-                        "$SESSIONS entries must be exact tmux session names of letters, digits, '.', '_' and '-', " +
+                        "$variable entries must be exact tmux session names of letters, digits, '.', '_' and '-', " +
                             "got '$name'. A wildcard is not allowed."
                     }
                 }.toSet()
@@ -95,6 +134,17 @@ data class TerminalSettings(
         }
     }
 }
+
+/**
+ * What the phone may do with one tmux session.
+ *
+ * @property listed the session shows in the session list, and the phone may chat with its agent.
+ * @property terminal the phone may also open it in Terminal. Never true when [listed] is false.
+ */
+data class TmuxAccess(
+    val listed: Boolean,
+    val terminal: Boolean,
+)
 
 /**
  * The limits on terminal sockets. Fixed in code on purpose: a setting that raises them is a setting someone

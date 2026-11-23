@@ -1,7 +1,9 @@
 package ai.tatawur.rafiq.client.sync
 
 import ai.tatawur.rafiq.protocol.Event
+import ai.tatawur.rafiq.protocol.api.ApiError
 import ai.tatawur.rafiq.protocol.api.SessionSummary
+import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.IOException
@@ -41,7 +43,7 @@ interface EventStore {
 }
 
 /** The HTTP verbs the bridge's routes use. */
-enum class HttpMethod { GET, POST }
+enum class HttpMethod { GET, POST, DELETE }
 
 /**
  * One call to the bridge.
@@ -59,10 +61,15 @@ data class HttpRequest(
     override fun toString(): String = "HttpRequest($method $url)"
 }
 
-/** Whatever the bridge answered, success or not. */
+/**
+ * Whatever the bridge answered, success or not.
+ *
+ * @property retryAfterSeconds the `Retry-After` header as a number of seconds, or null when absent or a date.
+ */
 data class HttpResponse(
     val status: Int,
     val body: String,
+    val retryAfterSeconds: Long? = null,
 )
 
 /** Sends HTTP requests. */
@@ -101,10 +108,22 @@ fun interface EventSource {
     ): Flow<SocketFrame>
 }
 
-/** The bridge refused a socket handshake with HTTP [status], for example 401 for a wrong token. */
+/**
+ * The bridge refused a socket handshake with HTTP [status], for example 401 for a wrong token. [code] is the
+ * error code from the answer's body, such as [ai.tatawur.rafiq.protocol.api.AuthErrorCodes.IDENTITY_MISMATCH], or null.
+ */
 class HandshakeRejectedException(
     val status: Int,
+    val code: String? = null,
 ) : IOException("The bridge refused the socket with HTTP $status.")
+
+/** The error code in a bridge error body, or null when the body is not one. For a refused socket handshake. */
+fun apiErrorCode(body: String): String? =
+    try {
+        protocolJson.decodeFromString(ApiError.serializer(), body).error.code
+    } catch (_: IllegalArgumentException) {
+        null
+    }
 
 /** What the app's process is doing, which decides whether it may hold a socket open. */
 interface AppConditions {

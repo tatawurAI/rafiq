@@ -7,11 +7,13 @@ import ai.tatawur.rafiq.bridge.store.RevokeOutcome
 import ai.tatawur.rafiq.protocol.api.PairResponse
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Clock
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -72,6 +74,9 @@ class IssuedCode(
  * - Attempts are serialised by one lock held across the database check, so parallel guesses cannot
  *   exceed the limit.
  * - A device token is 256 random bits. Only its digest is stored.
+ *
+ * @param onPaired runs with the new device's id after each successful pairing, outside the attempt lock. The
+ *   Claude reader uses it so a device paired while approvals wait can release them when it is revoked.
  */
 class DeviceService(
     private val store: DeviceStore,
@@ -81,6 +86,7 @@ class DeviceService(
     private val codeLifetime: Duration = 10.minutes,
     private val maxFailures: Int = MAX_FAILURES,
     private val failureWindow: Duration = 5.minutes,
+    private val onPaired: suspend (deviceId: String) -> Unit = {},
 ) : DeviceVerifier {
     private val attempts = Mutex()
     private val failures = ArrayDeque<Long>()
@@ -102,6 +108,21 @@ class DeviceService(
 
     /** Spends [code] and returns the new device's token. */
     suspend fun redeem(code: String): RedeemResult =
+        redeemLocked(code).also { result -> if (result is RedeemResult.Paired) paired(result.response.deviceId) }
+
+    /** The pairing stands whatever a listener does: a failing one is logged, never turned into a failed pairing. */
+    @Suppress("TooGenericExceptionCaught") // Any listener failure means the same: log it and keep the pairing.
+    private suspend fun paired(deviceId: String) {
+        try {
+            onPaired(deviceId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            logger.warn("A listener failed after a device was paired: {}", failure.toString())
+        }
+    }
+
+    private suspend fun redeemLocked(code: String): RedeemResult =
         attempts.withLock {
             val now = clock.millis()
             while (failures.isNotEmpty() && now - failures.first() >= failureWindow.inWholeMilliseconds) {
@@ -163,6 +184,7 @@ class DeviceService(
 
     companion object {
         const val REVOKED_REASON = "device revoked"
+        private val logger = LoggerFactory.getLogger(DeviceService::class.java)
         private const val CODE_LENGTH = 8
         private const val CODE_GROUP = 4
 

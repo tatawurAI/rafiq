@@ -1,5 +1,7 @@
 package ai.tatawur.rafiq.bridge.store
 
+import ai.tatawur.rafiq.bridge.hook.HookConsent
+import ai.tatawur.rafiq.bridge.hook.HookConsentStore
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
@@ -51,7 +53,8 @@ class DeviceStore(
     jdbcUrl: String,
     private val dispatcher: CoroutineDispatcher,
     busyTimeoutMs: Int = BUSY_TIMEOUT_MS,
-) : AutoCloseable {
+) : AutoCloseable,
+    HookConsentStore {
     private val connection: Connection = DriverManager.getConnection(jdbcUrl)
 
     init {
@@ -227,6 +230,60 @@ class DeviceStore(
             }
         }
 
+    /** Records that hooks were installed in a project, replacing an earlier record for it. */
+    override suspend fun recordHookConsent(consent: HookConsent) =
+        withContext(dispatcher) {
+            connection
+                .prepareStatement(
+                    """INSERT INTO hook_consents (project_path, file_path, written_sha256, device_id, at_ms)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(project_path) DO UPDATE SET file_path = excluded.file_path,
+                         written_sha256 = excluded.written_sha256, device_id = excluded.device_id,
+                         at_ms = excluded.at_ms""",
+                ).use {
+                    it.setString(1, consent.projectPath)
+                    it.setString(2, consent.filePath)
+                    it.setString(3, consent.writtenSha256)
+                    it.setString(4, consent.deviceId)
+                    it.setLong(5, consent.atMs)
+                    it.executeUpdate()
+                }
+            Unit
+        }
+
+    override suspend fun hookConsent(projectPath: String): HookConsent? =
+        withContext(dispatcher) {
+            connection
+                .prepareStatement(
+                    "SELECT project_path, file_path, written_sha256, device_id, at_ms FROM hook_consents " +
+                        "WHERE project_path = ?",
+                ).use { statement ->
+                    statement.setString(1, projectPath)
+                    statement.executeQuery().use { rows ->
+                        if (rows.next()) {
+                            HookConsent(
+                                rows.getString(1),
+                                rows.getString(2),
+                                rows.getString(3),
+                                rows.getString(4),
+                                rows.getLong(5),
+                            )
+                        } else {
+                            null
+                        }
+                    }
+                }
+        }
+
+    override suspend fun forgetHookConsent(projectPath: String) =
+        withContext(dispatcher) {
+            connection.prepareStatement("DELETE FROM hook_consents WHERE project_path = ?").use {
+                it.setString(1, projectPath)
+                it.executeUpdate()
+            }
+            Unit
+        }
+
     override fun close() = connection.close()
 
     @Suppress("TooGenericExceptionCaught") // Roll back on any failure, then rethrow it.
@@ -279,6 +336,13 @@ class DeviceStore(
                      created_at_ms INTEGER NOT NULL,
                      last_seen_ms INTEGER,
                      revoked_at_ms INTEGER
+                   )""",
+                """CREATE TABLE IF NOT EXISTS hook_consents (
+                     project_path TEXT PRIMARY KEY,
+                     file_path TEXT NOT NULL,
+                     written_sha256 TEXT NOT NULL,
+                     device_id TEXT NOT NULL,
+                     at_ms INTEGER NOT NULL
                    )""",
                 """CREATE TABLE IF NOT EXISTS pairing_codes (
                      code_hash BLOB PRIMARY KEY,

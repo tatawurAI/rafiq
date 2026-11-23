@@ -3,6 +3,9 @@ package ai.tatawur.rafiq.ui.navigation
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.ConnectionState
 import ai.tatawur.rafiq.client.SessionRepository
+import ai.tatawur.rafiq.sessions.ApprovalGate
+import ai.tatawur.rafiq.sessions.HookSetupRoute
+import ai.tatawur.rafiq.sessions.HookSetupViewModel
 import ai.tatawur.rafiq.sessions.NewSessionRoute
 import ai.tatawur.rafiq.sessions.NewSessionViewModel
 import ai.tatawur.rafiq.sessions.SessionListRoute
@@ -48,7 +51,9 @@ import androidx.navigation.navArgument
  *   reads as not paired and the app moves to [pairing].
  * @param terminal offers Terminal on sessions your server serves as a terminal, or null for none.
  * @param settings the settings screen. It calls `onBack` to leave.
+ * @param approvals the optional biometric check before answering an approval, or null for none.
  */
+@Suppress("LongMethod") // One destination per screen; splitting them would hide the graph.
 @Composable
 fun RafiqNavHost(
     sessions: SessionRepository,
@@ -58,6 +63,7 @@ fun RafiqNavHost(
     terminal: TerminalAccess? = null,
     settings: @Composable (onBack: () -> Unit) -> Unit = {},
     navController: NavHostController = rememberNavController(),
+    approvals: ApprovalGate? = null,
 ) {
     val connection by sessions.connection.collectAsStateWithLifecycle()
     val start = remember { if (connection == ConnectionState.NotPaired) Routes.PAIRING else Routes.SESSIONS }
@@ -88,6 +94,7 @@ fun RafiqNavHost(
                 onNewSession = { navController.navigate(Routes.NEW_SESSION) },
                 onPairAgain = onPairAgain,
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                approvals = approvals,
             )
         }
         composable(Routes.SETTINGS) {
@@ -114,7 +121,17 @@ fun RafiqNavHost(
                 onBack = { navController.popBackStack() },
                 onPairAgain = onPairAgain,
                 terminal = terminal,
+                approvals = approvals,
+                onOpenHooks = { navController.navigate(Routes.hooks(sessionId)) },
             )
+        }
+        composable(
+            route = Routes.HOOKS,
+            arguments = listOf(navArgument(Routes.SESSION_ID) { type = NavType.StringType }),
+        ) { entry ->
+            val sessionId = entry.arguments?.getString(Routes.SESSION_ID) ?: return@composable
+            val viewModel = viewModel(key = "hooks:$sessionId") { HookSetupViewModel(sessions, sessionId) }
+            HookSetupRoute(viewModel = viewModel, onBack = { navController.popBackStack() })
         }
     }
 }

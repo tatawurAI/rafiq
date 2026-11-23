@@ -107,6 +107,38 @@ class TmuxServer(
         }
     }
 
+    /**
+     * Read-only scrollback of the active pane of window [window] of session [name], or of the session's current
+     * window when [window] is null: up to [lines] lines of history above the screen, then the screen, with
+     * colours. Only `display-message` and `capture-pane` run, so nothing about the window, its size or what a
+     * client sees changes. Null when there is no such session or window.
+     */
+    suspend fun history(
+        name: String,
+        window: Int?,
+        lines: Int,
+    ): History? {
+        val target = "=$name:" + (window?.toString() ?: "")
+        val meta = run("display-message", "-p", "-t", target, "#{alternate_on} #{pane_width}")
+        val fields =
+            meta
+                ?.takeIf { it.exit == 0 }
+                ?.out
+                ?.trim()
+                ?.split(' ') ?: return null
+        val capture = run("capture-pane", "-p", "-e", "-S", "-$lines", "-t", target)?.takeIf { it.exit == 0 }
+        return capture?.let {
+            History(it.out.removeSuffix("\n"), fields[0] == "1", fields.getOrNull(1)?.toIntOrNull() ?: 0)
+        }
+    }
+
+    /** What [history] read: the lines joined with `\n`, whether the pane is on the alternate screen, its width. */
+    class History(
+        val text: String,
+        val alternateScreen: Boolean,
+        val cols: Int,
+    )
+
     /** Runs one tmux command. Null when the program could not be started or was killed for hanging. */
     private suspend fun run(vararg args: String): ProcessResult? =
         withContext(io) { runCapturing(commandLine(*args), EXEC_TIMEOUT_SECONDS) }

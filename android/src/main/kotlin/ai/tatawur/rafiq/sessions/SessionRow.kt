@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.sessions
 
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.ApprovalCard
+import ai.tatawur.rafiq.client.ApprovalText
 import ai.tatawur.rafiq.client.ConnectionState
 import ai.tatawur.rafiq.client.SessionListItem
 import ai.tatawur.rafiq.protocol.AgentState
@@ -134,6 +135,15 @@ private fun RowHeading(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        // Listed, but your server will not open it in Terminal, so the session view has no toggle.
+        if (session.terminal && !session.terminalAllowed) {
+            Text(
+                text = stringResource(R.string.row_terminal_unavailable),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textMuted,
+                maxLines = 1,
+            )
+        }
         AgentTag(session.agent)
     }
     Text(
@@ -156,13 +166,9 @@ private fun RowApproval(
 ) {
     val spacing = RafiqTheme.spacing
     val choices = InlineChoices.of(approval)
-    Text(
-        text = approval.description,
-        style = MaterialTheme.typography.bodyMedium,
-        color = RafiqTheme.colors.text,
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
-    )
+    // A row cannot show a long or multi-line command honestly, so it never answers one.
+    val fullViewFirst = ApprovalText.of(approval, expanded = false).needsFullView
+    ApprovalRequestSummary(approval, maxLines = 3)
     // The status gets its own line so "Waiting on you" is never squeezed by the buttons.
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
         StatusBadge(AgentState.WAITING_ON_YOU)
@@ -186,6 +192,10 @@ private fun RowApproval(
             } else {
                 Modifier.heightIn(min = spacing.minTouchTarget)
             }
+        if (fullViewFirst) {
+            SeeFullOnRow(onClick = { actions.onOpen(sessionId) }, modifier = buttonModifier)
+            return@Row
+        }
         if (!choices.canAnswerInline) {
             TextButton(onClick = { actions.onOpen(sessionId) }, modifier = buttonModifier) {
                 Text(stringResource(R.string.row_review))
@@ -209,4 +219,18 @@ private fun RowApproval(
             ) { Text(stringResource(R.string.row_approve)) }
         }
     }
+}
+
+/** In place of Approve and Deny, for a request a row cannot show in full: opens the session to read it. */
+@Composable
+private fun SeeFullOnRow(
+    onClick: () -> Unit,
+    modifier: Modifier,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier,
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(RafiqTheme.spacing.hairline, RafiqTheme.colors.needsYou),
+    ) { Text(stringResource(R.string.approval_see_full), color = RafiqTheme.colors.text) }
 }

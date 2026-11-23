@@ -87,7 +87,10 @@ import kotlinx.coroutines.launch
 
 /**
  * The session view, wired to its [SessionViewModel]. A session your server serves as a terminal
- * gets the Chat and Terminal toggle, when [terminal] is given.
+ * gets the Chat and Terminal toggle, when [terminal] is given, and a session in tmux gets the hook
+ * setup through [onOpenHooks].
+ *
+ * @param approvals the optional biometric check before answering an approval, or null for none.
  */
 @Composable
 fun SessionRoute(
@@ -96,11 +99,17 @@ fun SessionRoute(
     modifier: Modifier = Modifier,
     onPairAgain: () -> Unit = {},
     terminal: TerminalAccess? = null,
+    approvals: ApprovalGate? = null,
+    onOpenHooks: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dictation = rememberDictation(viewModel::appendDictation)
+    val approve = rememberGatedApprove(approvals, viewModel::approve)
+    // Each time the screen shows, so a hook setup you just finished hides the offer.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.checkHooks() }
+    val inTmux = state.inTmux
     val actions =
-        remember(viewModel, onBack, onPairAgain) {
+        remember(viewModel, onBack, onPairAgain, approve, inTmux, onOpenHooks) {
             SessionActions(
                 onBack = onBack,
                 onSelectThread = viewModel::selectThread,
@@ -108,11 +117,14 @@ fun SessionRoute(
                 onSend = viewModel::send,
                 onQuickReply = viewModel::quickReply,
                 onCancel = viewModel::cancel,
-                onApprove = viewModel::approve,
+                onApprove = approve,
                 onJump = viewModel::jumpTo,
                 onScrolledToKey = viewModel::scrolledToKey,
                 onDismissFeedback = viewModel::dismissFeedback,
                 onPairAgain = onPairAgain,
+                onOpenHooks = if (inTmux) onOpenHooks else null,
+                onDismissHooksOffer = viewModel::dismissHooksOffer,
+                onDismissRefusal = viewModel::dismissRefusal,
             )
         }
     val hinge = LocalHinge.current
@@ -122,8 +134,8 @@ fun SessionRoute(
     }
     SessionOrTerminal(terminal, state, actions) { viewActions, showTerminal ->
         if (showTerminal) {
-            TerminalRoute(terminal.port, state.screen.sessionId, hinge) { window ->
-                SessionHeader(state, viewActions, window?.let { windowLabel(it) })
+            TerminalRoute(terminal.port, state.screen.sessionId, hinge, viewModel::terminalHistory) { window, onPick ->
+                SessionHeader(state, viewActions, window?.let { windowLabel(it) }, onPick)
             }
         } else {
             SessionScreen(state, viewActions, dictation, modifier, hinge = hinge)
@@ -151,7 +163,8 @@ private fun SessionOrTerminal(
     var choice by remember(state.screen.sessionId) { mutableStateOf(TerminalChoice()) }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { choice = choice.leftScreen() }
     LaunchedEffect(cover) { if (cover) choice = choice.leftScreen() }
-    val capable = state.screen.session?.terminal == true
+    // Listed but not allowed in Terminal by your server: no toggle at all.
+    val capable = state.screen.session?.let { it.terminal && it.terminalAllowed } == true
     val showTerminal = choice.shows(capable = capable, cover = cover, lockOn = lockOn)
     val title = stringResource(R.string.terminal_unlock_title)
     val subtitle = stringResource(R.string.terminal_unlock_subtitle)

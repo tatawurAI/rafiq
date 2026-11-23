@@ -1,6 +1,8 @@
 package ai.tatawur.rafiq.client
 
 import ai.tatawur.rafiq.protocol.Session
+import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -10,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * Every flow starts with the cached state, so the screens show the last known state with no connection.
  */
+@Suppress("TooManyFunctions") // The screens' one door to the bridge: each function is one route.
 interface SessionRepository {
     /** The link to the paired bridge. */
     val connection: StateFlow<ConnectionState>
@@ -35,12 +38,43 @@ interface SessionRepository {
 
     /**
      * Sends a prompt to the session's main thread. The bridge logs it as a user message, so the
-     * screen shows it when that event arrives. There is no local echo.
+     * screen shows it when that event arrives. For a session in tmux the bridge also sends
+     * `prompt_delivery` events carrying [clientId], until the agent has the prompt.
      */
     suspend fun prompt(
         sessionId: String,
         text: String,
+        clientId: String? = null,
     ): CommandResult<Unit>
+
+    /** What installing or removing the reader's hooks in the session's project would write. Writes nothing. */
+    suspend fun hookSetup(sessionId: String): CommandResult<HookSetupPreview>
+
+    /**
+     * Installs the reader's hooks in the session's project, exactly as the preview with [previewHash] showed.
+     * Called only after you tap to agree.
+     */
+    suspend fun installHooks(
+        sessionId: String,
+        previewHash: String,
+        addGitExclude: Boolean,
+    ): CommandResult<Unit>
+
+    /** Removes the reader's hooks from the session's project, as the preview with [previewHash] showed. */
+    suspend fun removeHooks(
+        sessionId: String,
+        previewHash: String,
+    ): CommandResult<Unit>
+
+    /**
+     * Read-only scrollback of the pane in tmux window [window] of the session, at most [lines] lines.
+     * Reading it never changes the window, its size or what the desk sees.
+     */
+    suspend fun terminalHistory(
+        sessionId: String,
+        window: Int?,
+        lines: Int,
+    ): CommandResult<TerminalHistory>
 
     /** Stops the current turn on a thread. */
     suspend fun cancel(
@@ -80,6 +114,12 @@ sealed interface ConnectionState {
 
     /** The bridge refused the device token. The user has to pair again. */
     data object Unauthorized : ConnectionState
+
+    /**
+     * Your server accepts only its owner's Tailscale login, and this phone reached it signed in as someone
+     * else. The pairing and token stay: signing the phone in to your own tailnet fixes it.
+     */
+    data object IdentityRefused : ConnectionState
 }
 
 /** The outcome of a call to the bridge. Screens branch on the kind, never on message text. */
@@ -102,9 +142,31 @@ sealed interface CommandResult<out T> {
     /** The bridge refused the device token (401). */
     data object Unauthorized : CommandResult<Nothing>
 
+    /**
+     * Your server is rate limiting this kind of call (429).
+     *
+     * @property retryAfterMs how long your server asked the app to wait, or null when it did not say.
+     */
+    data class RateLimited(
+        val retryAfterMs: Long?,
+    ) : CommandResult<Nothing>
+
     /** Any other error, with the bridge's error code and message. */
     data class Failed(
         val code: String,
         val message: String,
     ) : CommandResult<Nothing>
 }
+
+/** This result without its value, for a caller that keeps only what went wrong. An unexpected Ok becomes Failed. */
+internal fun CommandResult<*>.withoutValue(): CommandResult<Nothing> =
+    when (this) {
+        is CommandResult.Ok -> CommandResult.Failed("unexpected", "Your server answered in an unexpected way.")
+        CommandResult.Busy -> CommandResult.Busy
+        is CommandResult.RateLimited -> this
+        CommandResult.Gone -> CommandResult.Gone
+        CommandResult.NotFound -> CommandResult.NotFound
+        CommandResult.Offline -> CommandResult.Offline
+        CommandResult.Unauthorized -> CommandResult.Unauthorized
+        is CommandResult.Failed -> this
+    }

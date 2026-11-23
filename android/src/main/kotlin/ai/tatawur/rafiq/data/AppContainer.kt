@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.data
 
 import ai.tatawur.rafiq.client.SessionRepository
+import ai.tatawur.rafiq.client.UnlockWindow
 import ai.tatawur.rafiq.client.pairing.DevicePairingApi
 import ai.tatawur.rafiq.client.sync.PairingProbe
 import ai.tatawur.rafiq.client.sync.SyncingSessionRepository
@@ -9,6 +10,7 @@ import ai.tatawur.rafiq.pairing.OkHttpDeviceRevoker
 import ai.tatawur.rafiq.pairing.StoredPairingRepository
 import ai.tatawur.rafiq.pairing.TokenCipher
 import ai.tatawur.rafiq.protocol.Event
+import ai.tatawur.rafiq.sessions.ApprovalGate
 import ai.tatawur.rafiq.settings.SecuritySettings
 import ai.tatawur.rafiq.terminal.OkHttpTerminalPort
 import ai.tatawur.rafiq.terminal.TerminalAccess
@@ -78,6 +80,11 @@ class AppContainer(
     /** Settings that guard what the phone can do on your server. */
     val security = SecuritySettings(application.settingsStore)
 
+    private val conditions = AndroidAppConditions(application)
+
+    /** The optional biometric check before answering an approval. Its window closes in the background. */
+    val approvals = ApprovalGate(security.approvalLock, UnlockWindow())
+
     /** Opens `WS /terminal` with the same host and token as `WS /events`, behind the Terminal lock. */
     val terminal =
         TerminalAccess(
@@ -91,13 +98,17 @@ class AppContainer(
             http = transport,
             source = OkHttpEventSource(BridgeClients.sockets(restClient)),
             store = cache,
-            conditions = AndroidAppConditions(application),
+            conditions = conditions,
             credentials = storedPairing.credentials,
             scope = scope,
             nowMs = System::currentTimeMillis,
             onApplied = if (application.isDebuggable()) { event -> logApplied(event) } else { _ -> },
             onRejected = if (application.isDebuggable()) { status -> logRejected(status) } else { _ -> },
         )
+
+    init {
+        scope.launch { conditions.foreground.collect { visible -> if (!visible) approvals.window.close() } }
+    }
 
     private companion object {
         // The airplane-mode check compares this log with the bridge's: `adb logcat -s RafiqSeq`.

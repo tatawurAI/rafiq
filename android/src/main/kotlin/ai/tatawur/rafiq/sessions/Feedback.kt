@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.sessions
 
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.CommandResult
+import ai.tatawur.rafiq.protocol.api.AuthErrorCodes
 import androidx.annotation.StringRes
 
 /**
@@ -16,6 +17,11 @@ sealed interface Feedback {
     /** A turn is still running, so the bridge did not take the prompt. Informational, not an error. */
     data object StillWorking : Feedback {
         override val textRes = R.string.feedback_still_working
+    }
+
+    /** Your server is rate limiting this kind of call. */
+    data object RateLimited : Feedback {
+        override val textRes = R.string.feedback_rate_limited
     }
 
     data object AlreadyAnswered : Feedback {
@@ -34,6 +40,11 @@ sealed interface Feedback {
         override val textRes = R.string.feedback_unauthorized
     }
 
+    /** Your server accepts only its owner's Tailscale login. Not a token problem: the pairing stays. */
+    data object IdentityRefused : Feedback {
+        override val textRes = R.string.connection_identity_refused
+    }
+
     data class Failed(
         val message: String,
     ) : Feedback {
@@ -44,13 +55,37 @@ sealed interface Feedback {
 /** The feedback for a finished command, or null when it went through. */
 fun CommandResult<*>.feedback(): Feedback? =
     when (this) {
-        is CommandResult.Ok -> null
-        CommandResult.Busy -> Feedback.StillWorking
-        CommandResult.Gone -> Feedback.AlreadyAnswered
-        CommandResult.Offline -> Feedback.Offline
-        CommandResult.NotFound -> Feedback.NotFound
-        CommandResult.Unauthorized -> Feedback.Unauthorized
-        is CommandResult.Failed -> Feedback.Failed(message)
+        is CommandResult.Ok -> {
+            null
+        }
+
+        CommandResult.Busy -> {
+            Feedback.StillWorking
+        }
+
+        is CommandResult.RateLimited -> {
+            Feedback.RateLimited
+        }
+
+        CommandResult.Gone -> {
+            Feedback.AlreadyAnswered
+        }
+
+        CommandResult.Offline -> {
+            Feedback.Offline
+        }
+
+        CommandResult.NotFound -> {
+            Feedback.NotFound
+        }
+
+        CommandResult.Unauthorized -> {
+            Feedback.Unauthorized
+        }
+
+        is CommandResult.Failed -> {
+            if (code == AuthErrorCodes.IDENTITY_MISMATCH) Feedback.IdentityRefused else Feedback.Failed(message)
+        }
     }
 
 /**
@@ -61,5 +96,11 @@ fun CommandResult<*>.feedback(): Feedback? =
 internal fun CommandResult<*>.canRetryAnswer(): Boolean =
     when (this) {
         is CommandResult.Ok, CommandResult.Gone, CommandResult.NotFound -> false
-        CommandResult.Busy, CommandResult.Offline, CommandResult.Unauthorized, is CommandResult.Failed -> true
+
+        CommandResult.Busy,
+        CommandResult.Offline,
+        CommandResult.Unauthorized,
+        is CommandResult.RateLimited,
+        is CommandResult.Failed,
+        -> true
     }

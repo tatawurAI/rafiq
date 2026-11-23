@@ -91,6 +91,77 @@ enum class ApprovalOutcome {
     @SerialName("withdrawn")
     WITHDRAWN,
 
+    /**
+     * Nobody answered from a phone in time, the hook went away, or too many approvals were waiting. The agent
+     * shows its own dialog at the desk instead.
+     */
+    @SerialName("ask_at_desk")
+    ASK_AT_DESK,
+
+    @SerialName("unknown")
+    UNKNOWN,
+}
+
+/**
+ * The full text behind an [EventPayload.ApprovalRequest]. The agent controls this text, so the app never
+ * shortens a multi-line command to its first line.
+ *
+ * @property text the command or input, up to the bridge's cap.
+ * @property lineCount the number of lines in the whole text, before any cut.
+ * @property truncated true when the bridge cut [text] at its cap. The app shows a marker where it was cut.
+ * @property sessionRule the rule that the option of kind [ApprovalOptionKind.ALLOW_ALWAYS] adds, scoped to this
+ *   session only. Null when no such option is offered.
+ */
+@Serializable
+data class ApprovalDetail(
+    @SerialName("text") val text: String,
+    @SerialName("line_count") val lineCount: Int,
+    @SerialName("truncated") val truncated: Boolean = false,
+    @SerialName("session_rule") val sessionRule: String? = null,
+)
+
+/** What a turn is doing right now, for [EventPayload.TurnProgress]. */
+@Serializable
+enum class TurnPhase {
+    /** Busy, with no step in flight and no recent text. */
+    @SerialName("working")
+    WORKING,
+
+    /** Running a tool step. */
+    @SerialName("running_step")
+    RUNNING_STEP,
+
+    /** The agent is writing a reply. */
+    @SerialName("writing")
+    WRITING,
+
+    /** The agent is waiting on you, for example at an approval. */
+    @SerialName("waiting")
+    WAITING,
+
+    /** No turn is running. */
+    @SerialName("idle")
+    IDLE,
+
+    @SerialName("unknown")
+    UNKNOWN,
+}
+
+/** Where a prompt is on its way to the agent, for [EventPayload.PromptDelivery]. */
+@Serializable
+enum class DeliveryState {
+    /** The agent is busy. The bridge holds the prompt and types it when the agent is ready. */
+    @SerialName("queued")
+    QUEUED,
+
+    /** The agent received it. */
+    @SerialName("delivered")
+    DELIVERED,
+
+    /** The bridge did not send it, or could not confirm that it landed. */
+    @SerialName("not_delivered")
+    NOT_DELIVERED,
+
     @SerialName("unknown")
     UNKNOWN,
 }

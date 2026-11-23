@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Chat for sessions in tmux: progress, delivery and refusals. -->
+  <string name="progress_working">Working</string>
+  <string name="progress_writing">Writing a reply</string>
+  <string name="progress_waiting">Waiting on you</string>
+  <string name="progress_step">Running %1$s</string>
+  <string name="progress_with_elapsed">%1$s · %2$s</string>
+  <string name="elapsed_seconds">%1$ds</string>
+  <string name="elapsed_minutes">%1$dm %2$ds</string>
+  <string name="elapsed_hours">%1$dh %2$dm</string>
+  <string name="echo_sent">Sent to your server</string>
+  <string name="echo_queued">Queued. Your server types it when the agent is ready.</string>
+  <string name="echo_not_delivered">Not delivered: %1$s</string>
+  <string name="refusal_agent_waiting">A question or permission dialog is open in the terminal. Answer it first.</string>
+  <string name="refusal_input_not_empty">There is half-typed text in the terminal. Clear it at the desk or in Terminal.</string>
+  <string name="refusal_agent_not_running">The agent is no longer running in this pane.</string>
+  <string name="refusal_state_unknown">Your server cannot tell if it is safe to type right now. Try again in a moment.</string>
+  <string name="refusal_hooks_not_installed">Chat needs Rafiq hooks in this project before you can send.</string>
+  <string name="refusal_not_confirmed">Your server typed it but could not confirm the agent got it. Check Terminal.</string>
+  <string name="refusal_presumed_lost">your server may have restarted. Check Terminal.</string>
+  <string name="refusal_queue_full">Three messages are already waiting. Try again when the agent is free.</string>
+  <string name="refusal_dismiss">Dismiss</string>
+  <string name="notice_ask_at_desk">No answer from your phone in time. Answer at the desk: %1$s</string>
+  <string name="notice_chat_incomplete">Chat may be missing part of this turn. Tap to open Terminal.</string>
+  <string name="notice_chat_incomplete_no_terminal">Chat may be missing part of this turn.</string>
+  <string name="permission_mode">%1$s mode</string>
+
+  <!-- The offer to set up hooks, in Chat. -->
+  <string name="hooks_offer_text">Chat for this session needs Rafiq hooks in the project. Nothing is written until you agree.</string>
+  <string name="hooks_offer_review">Review</string>
+  <string name="hooks_offer_dismiss">Not now</string>
+  <string name="session_menu">More</string>
+  <string name="session_menu_hooks">Chat hooks</string>
+
+  <!-- The hook setup screen. -->
+  <string name="hooks_title">Chat hooks</string>
+  <string name="hooks_intro">Claude Code tells Rafiq what it does through hooks in this project. Here is exactly what would be written.</string>
+  <string name="hooks_target">File</string>
+  <string name="hooks_events">Events</string>
+  <string name="hooks_sends">What the hook sends</string>
+  <string name="hooks_file_text">The file after the change</string>
+  <string name="hooks_file_text_remove">The file after the hooks are removed</string>
+  <string name="hooks_trust">The first time Claude Code opens this folder it shows its own trust dialog. Answer it at the desk. Rafiq never answers it.</string>
+  <string name="hooks_git_exclude">Also add the file to .git/info/exclude</string>
+  <string name="hooks_install">Write these hooks</string>
+  <string name="hooks_remove">Remove Rafiq hooks</string>
+  <string name="hooks_working">Writing</string>
+  <string name="hooks_installed">Hooks written. Chat shows replies from the next thing the agent does.</string>
+  <string name="hooks_removed">Rafiq hooks removed. Other hooks in the file were left alone.</string>
+  <string name="hooks_file_changed">The file changed on your server. Check the new version below.</string>
+  <string name="hooks_unavailable">This session has no hooks to set up.</string>
+  <string name="hooks_loading">Reading the project on your server.</string>
+  <string name="hooks_already">Rafiq hooks are in this file.</string>
+
+  <!-- The approval card. -->
+  <string name="approval_lines">%1$d lines</string>
+  <string name="approval_lines_tap">%1$d lines, tap to see all</string>
+  <string name="approval_more_tap">Tap to see all</string>
+  <string name="approval_see_full">See full command</string>
+  <string name="approval_show_less">Show less</string>
+  <string name="approval_cut">Cut here. Your server sent only the start of this command.</string>
+  <string name="approval_session_rule">Allow for this session adds: %1$s</string>
+  <string name="approval_unlock_title">Answer an approval</string>
+  <string name="approval_unlock_subtitle">Confirm it is you before you answer.</string>
+
+  <!-- Settings. -->
+  <string name="settings_approval_lock">Ask for your fingerprint or face before you answer an approval</string>
+  <string name="settings_approval_lock_detail">An approval lets the agent run a command on your server. With this on, your phone asks again after 30 seconds and whenever the app was in the background.</string>
+
+  <!-- Terminal: scrollback and windows. -->
+  <string name="terminal_history_loading">Loading history</string>
+  <string name="terminal_history_failed">The history could not be read.</string>
+  <string name="terminal_history_not_found">This window or session is gone, so it has no history.</string>
+  <string name="terminal_history_offline">Your phone cannot reach your server, so the history is not available.</string>
+  <string name="terminal_history_bad_request">Your server could not read the history request.</string>
+  <string name="terminal_history_rate_limited">Too many history reads. Try again in a moment.</string>
+  <string name="feedback_rate_limited">Too many requests to your server. Try again in a moment.</string>
+  <string name="terminal_new_output">New output</string>
+  <string name="terminal_history_title">History. Your desk sees no change.</string>
+  <string name="terminal_back_to_live">Back to live</string>
+  <string name="terminal_windows_title">Show a window</string>
+  <string name="terminal_windows_hint">Only your phone changes window. The desk stays where it is.</string>
+  <string name="terminal_windows_pick">Pick a window</string>
+  <string name="terminal_windows_close">Close</string>
+  <string name="terminal_window_shown">%1$s, shown</string>
+  <string name="row_terminal_unavailable">No Terminal</string>
+
+  <!-- Your server checks the Tailscale login (#61). -->
+  <string name="connection_identity_refused">Your server only accepts your own Tailscale login. Sign this phone in to your tailnet.</string>
+</resources>

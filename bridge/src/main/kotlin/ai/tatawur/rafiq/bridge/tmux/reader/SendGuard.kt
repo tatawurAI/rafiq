@@ -1,0 +1,338 @@
+package ai.tatawur.rafiq.bridge.tmux.reader
+
+import ai.tatawur.rafiq.protocol.api.SendRefusal
+import kotlinx.coroutines.delay
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+
+/** Why the bridge did not type, or did not finish typing, a prompt. [code] is one of [SendRefusal]. */
+data class Refusal(
+    val code: String,
+    val message: String,
+) {
+    companion object {
+        val WAITING =
+            Refusal(
+                SendRefusal.AGENT_WAITING,
+                "Claude is waiting on an approval or a question at the desk. Answer it first.",
+            )
+        val NOT_EMPTY =
+            Refusal(
+                SendRefusal.INPUT_NOT_EMPTY,
+                "There is half-typed text in the terminal. Send or clear it at the desk first.",
+            )
+        val NOT_RUNNING = Refusal(SendRefusal.AGENT_NOT_RUNNING, "Claude Code is not running in that pane.")
+        val UNKNOWN =
+            Refusal(
+                SendRefusal.STATE_UNKNOWN,
+                "Rafiq cannot tell whether it is safe to type into the terminal, so it did not.",
+            )
+        val NO_HOOKS =
+            Refusal(
+                SendRefusal.HOOKS_NOT_INSTALLED,
+                "This project has no Rafiq hooks, so Chat cannot see what Claude does. Set them up, or use Terminal.",
+            )
+        val REVOKED =
+            Refusal(
+                SendRefusal.DEVICE_REVOKED,
+                "This phone was removed from your server, so its waiting message was not sent.",
+            )
+        val EXPIRED =
+            Refusal(
+                SendRefusal.QUEUE_EXPIRED,
+                "The message waited 10 minutes for Claude to be free, so it was not sent.",
+            )
+        val NOT_CONFIRMED =
+            Refusal(
+                SendRefusal.NOT_CONFIRMED,
+                "The message was typed, but Claude did not confirm it. Check Terminal.",
+            )
+
+        /** The text is in the input box at the desk, but Enter was not pressed. */
+        fun leftInBox(reason: Refusal) = reason.copy(message = reason.message + " Your text was left in the input box.")
+    }
+}
+
+/**
+ * Drops every control character except tab and newline: tmux would treat them as key presses, and an Escape
+ * or Ctrl-C would act on the agent. A carriage return is dropped too, so `\r\n` becomes a newline.
+ */
+internal fun sanitizePrompt(text: String): String = text.filter { it == '\t' || it == '\n' || !it.isISOControl() }
+
+/** Claude Code's input box, as read from the visible pane text. */
+internal enum class InputBox {
+    /** The box is showing and holds no text. */
+    EMPTY,
+
+    /** The box is showing with text someone typed. */
+    DRAFT,
+
+    /** No box: a dialog, a menu or something else owns the keys. */
+    ABSENT,
+}
+
+/**
+ * Reads the input box from [screen], the visible pane text with its colour escapes (`capture-pane -e`). The box
+ * sits between the last two lines made of box-drawing dashes, and its first line starts with the prompt mark.
+ *
+ * Claude Code shows grey text in an empty box: the `Try "..."` hint, and after a turn a suggested next prompt.
+ * Both are dim (SGR 2). So the box is empty when nothing after the prompt mark is visible, or everything visible is
+ * dim. Text you type is not dim. Anything else counts as a draft, so an unclear screen never reads as empty.
+ */
+@Suppress("ReturnCount") // Each sign that the box is not showing answers ABSENT right away.
+internal fun readInputBox(screen: String): InputBox {
+    val inside = boxLines(screen)
+    val first = inside?.firstOrNull() ?: return InputBox.ABSENT
+    // In shell mode the box starts with `!` in place of the prompt mark: a line is in it, to run as a command.
+    if (stripEscapes(first).trimStart().startsWith(SHELL_MARK)) return InputBox.DRAFT
+    val mark = first.indexOf(PROMPT_MARK)
+    if (mark < 0 || stripEscapes(first.substring(0, mark)).isNotBlank()) return InputBox.ABSENT
+    val typed = listOf(first.substring(mark + PROMPT_MARK.length)) + inside.drop(1)
+    return if (typed.any(::hasUndimmedText)) InputBox.DRAFT else InputBox.EMPTY
+}
+
+/** The lines between the last two rules of the screen that hold something, or null when there is no box. */
+private fun boxLines(screen: String): List<String>? {
+    val lines = screen.lines()
+    val rules = lines.indices.filter { stripEscapes(lines[it]).trimStart().startsWith(RULE) }
+    if (rules.size < 2) return null
+    return lines.subList(rules[rules.size - 2] + 1, rules.last()).filter { stripEscapes(it).isNotBlank() }
+}
+
+/**
+ * Whether the input box on [screen] shows the start of [text], right after the prompt mark or the shell mark.
+ * This is how the bridge knows, before Enter, that the box holds its paste and not a dialog or Claude's own
+ * suggestion. A long paste shows as `[Pasted text #N +M lines]`, which counts too. A `!` line shows without its
+ * `!` once the box is in shell mode.
+ */
+@Suppress("ReturnCount") // One early answer per sign that the paste is not in the box.
+internal fun boxShowsPaste(
+    screen: String,
+    text: String,
+): Boolean {
+    val first = boxLines(screen)?.firstOrNull() ?: return false
+    val shown = stripEscapes(first).replace('\u00a0', ' ').trim()
+    val content =
+        when {
+            shown.startsWith(PROMPT_MARK) -> shown.removePrefix(PROMPT_MARK)
+            shown.startsWith(SHELL_MARK) -> shown.removePrefix(SHELL_MARK)
+            else -> return false
+        }.let(::squash)
+    if (PASTED_PLACEHOLDER.containsMatchIn(content)) return true
+    // A prompt can start with blank lines, for example from dictation. Claude shows its first line with text.
+    val start = squash(text.lineSequence().firstOrNull(String::isNotBlank).orEmpty()).take(PASTE_PREFIX_CHARS)
+    if (start.isEmpty()) return false
+    return content.startsWith(start) || (start.startsWith(SHELL_MARK) && content.startsWith(squash(start.drop(1))))
+}
+
+private fun squash(text: String): String = text.trim().replace(Regex("\\s+"), " ")
+
+private val PASTED_PLACEHOLDER = Regex("^\\[Pasted text #\\d+")
+
+/** How much of the start of a paste must show in the box. A long first line wraps past the box's width. */
+private const val PASTE_PREFIX_CHARS = 20
+
+private val ESCAPE = Regex("\u001b\\[[0-9;?]*[ -/]*[@-~]")
+
+private fun stripEscapes(line: String): String = ESCAPE.replace(line, "")
+
+/**
+ * True when [line] shows a character that is not dim. Each line starts not dim, as tmux writes the escapes again
+ * at the start of every captured line. See [dimAfter] for how an SGR changes it. An escape in a form the reader does
+ * not parse, such as colour with colons, counts as text, so the box counts as not empty.
+ */
+private fun hasUndimmedText(line: String): Boolean {
+    var dim = false
+    var index = 0
+    while (index < line.length) {
+        val escape = ESCAPE.matchAt(line, index)
+        if (escape != null) {
+            if (escape.value.endsWith("m")) dim = dimAfter(escape.value, dim)
+            index = escape.range.last + 1
+        } else {
+            val char = line[index]
+            // An escape the reader cannot parse might end dim, so the box counts as holding text.
+            val unparsed = char == '\u001b'
+            val shown = !dim && !char.isWhitespace() && char != '\u00a0'
+            if (unparsed || shown) return true
+            index++
+        }
+    }
+    return false
+}
+
+/**
+ * Whether text is dim after the SGR [sgr], given it was [dim] before. Read so that unclear always means not dim:
+ * - 2 turns dim on, and 0, 22 or an empty parameter turn it off;
+ * - after 38, 48 or 58 the colour's own numbers are skipped (`5;n` or `2;r;g;b`), so a 2 among them is not dim;
+ * - a colour set without a 2 in the same SGR ends dim, since text typed after Claude's grey text is coloured;
+ * - a parameter the reader cannot read ends dim.
+ */
+@Suppress("CyclomaticComplexMethod") // One branch per kind of SGR parameter, read in order.
+private fun dimAfter(
+    sgr: String,
+    dim: Boolean,
+): Boolean {
+    val params = sgr.removePrefix("\u001b[").removeSuffix("m").split(';')
+    var now = dim
+    var dimHere = false
+    var colour = false
+    var index = 0
+    while (index < params.size) {
+        val value = params[index].toIntOrNull()
+        when {
+            params[index].isEmpty() || value == 0 || value == NORMAL_INTENSITY -> {
+                now = false
+            }
+
+            value == DIM -> {
+                now = true
+                dimHere = true
+            }
+
+            value in EXTENDED_COLOUR -> {
+                colour = true
+                when (params.getOrNull(index + 1)) {
+                    "5" -> index += 2
+                    "2" -> index += TRUECOLOUR_PARAMS
+                    else -> now = false
+                }
+            }
+
+            value == null -> {
+                now = false
+            }
+
+            value in BASIC_COLOURS -> {
+                colour = true
+            }
+        }
+        index++
+    }
+    return now && (dimHere || !colour)
+}
+
+private const val DIM = 2
+private const val NORMAL_INTENSITY = 22
+private const val TRUECOLOUR_PARAMS = 4
+private val EXTENDED_COLOUR = setOf(38, 48, 58)
+private val BASIC_COLOURS = (30..37) + (39..47) + 49 + (90..97) + (100..107)
+
+private const val PROMPT_MARK = "❯"
+private const val SHELL_MARK = "!"
+private val RULE = "─".repeat(20)
+
+/** The pane a prompt goes to and the agent process that must still run in it. */
+data class PaneTarget(
+    val paneId: String,
+    val agentPid: Long,
+)
+
+/** What the ready check found. */
+internal sealed interface Readiness {
+    data object Ready : Readiness
+
+    /** A turn is running. The prompt waits in the bridge until the agent is idle. */
+    data object Busy : Readiness
+
+    data class Refused(
+        val reason: Refusal,
+    ) : Readiness
+}
+
+/**
+ * The send guard (ADR 0013 guard 8, issue #50): decides whether the bridge may type into a pane, and types.
+ * It protects against accidents, not against you, so it never looks at what the text says. A leading `!` or
+ * `/` is typed exactly as sent.
+ *
+ * @param settle how long the agent gets to take in a paste before the bridge checks again and presses Enter.
+ */
+internal class SendGuard(
+    private val io: PaneIo,
+    private val statuses: AgentStatusSource,
+    private val settle: Duration = 150.milliseconds,
+) {
+    /** The checks before typing: idle, no dialog open, input box empty. Anything unclear is a refusal. */
+    suspend fun readiness(
+        target: PaneTarget,
+        approvalOpen: Boolean,
+    ): Readiness {
+        val status = if (approvalOpen) null else statusOf(target)
+        return when {
+            approvalOpen -> Readiness.Refused(Refusal.WAITING)
+            status == null -> Readiness.Refused(missingStatus(target))
+            status.status == AgentStatus.WAITING -> Readiness.Refused(Refusal.WAITING)
+            status.status == AgentStatus.BUSY -> Readiness.Busy
+            status.status == AgentStatus.IDLE -> boxReadiness(target)
+            else -> Readiness.Refused(Refusal.UNKNOWN)
+        }
+    }
+
+    /**
+     * Types [text] and presses Enter once, in its own key event. The agent must run in the pane right before the
+     * paste. Right before Enter the bridge checks again: the agent is idle and still runs in the pane (if it had
+     * exited, Enter would run the text in a shell), no phone approval for the pane is open ([approvalOpen]), and
+     * the input box holds the pasted text (a dialog that opened meanwhile would take Enter as its answer). Null
+     * when Enter was pressed.
+     */
+    suspend fun type(
+        target: PaneTarget,
+        text: String,
+        approvalOpen: () -> Boolean = { false },
+        beforeEnter: suspend () -> Unit = {},
+    ): Refusal? {
+        val notTyped =
+            when {
+                !io.runsAgent(target.paneId, target.agentPid) -> Refusal.NOT_RUNNING
+                !io.paste(target.paneId, text) -> Refusal.UNKNOWN
+                else -> null
+            }
+        if (notTyped != null) return notTyped
+        delay(settle)
+        val refusal = beforeEnterCheck(target, text, approvalOpen) ?: enter(target, beforeEnter)
+        return refusal?.let(Refusal::leftInBox)
+    }
+
+    /** The checks right before Enter. Null when Enter may be pressed. */
+    private suspend fun beforeEnterCheck(
+        target: PaneTarget,
+        text: String,
+        approvalOpen: () -> Boolean,
+    ): Refusal? {
+        val stillRuns = io.runsAgent(target.paneId, target.agentPid)
+        val status = if (stillRuns) statusOf(target)?.status else null
+        val screen = if (status == AgentStatus.IDLE) io.capture(target.paneId) else null
+        val box = screen?.let(::readInputBox)
+        return when {
+            !stillRuns -> Refusal.NOT_RUNNING
+            status == AgentStatus.WAITING || approvalOpen() -> Refusal.WAITING
+            status != AgentStatus.IDLE -> Refusal.UNKNOWN
+            box == InputBox.ABSENT -> Refusal.WAITING
+            box != InputBox.DRAFT || !boxShowsPaste(screen.orEmpty(), text) -> Refusal.UNKNOWN
+            else -> null
+        }
+    }
+
+    private suspend fun enter(
+        target: PaneTarget,
+        beforeEnter: suspend () -> Unit,
+    ): Refusal? {
+        beforeEnter()
+        return if (io.pressEnter(target.paneId)) null else Refusal.UNKNOWN
+    }
+
+    /** Whether the input box is empty now, for the confirmation of a prompt that starts no turn. */
+    suspend fun boxIsEmpty(paneId: String): Boolean = io.capture(paneId)?.let(::readInputBox) == InputBox.EMPTY
+
+    private suspend fun statusOf(target: PaneTarget): AgentStatus? = statuses.statuses()?.get(target.agentPid)
+
+    private suspend fun missingStatus(target: PaneTarget): Refusal =
+        if (io.runsAgent(target.paneId, target.agentPid)) Refusal.UNKNOWN else Refusal.NOT_RUNNING
+
+    private suspend fun boxReadiness(target: PaneTarget): Readiness =
+        when (io.capture(target.paneId)?.let(::readInputBox)) {
+            InputBox.EMPTY -> Readiness.Ready
+            InputBox.DRAFT -> Readiness.Refused(Refusal.NOT_EMPTY)
+            InputBox.ABSENT, null -> Readiness.Refused(Refusal.UNKNOWN)
+        }
+}

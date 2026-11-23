@@ -72,7 +72,7 @@ Every tmux session has a Chat | Terminal toggle in the session header. Terminal 
 
 **Hand-back on leave.** Leaving Terminal, by the toggle, back, the cover screen, the app going to the background or a dropped socket, closes the stream. The bridge detaches its tmux client, so the desk gets its size back within the 0.4 s tmux polling interval. If the bridge itself dies, tmux removes the view session when the client's input ends.
 
-**No desk attached.** If no other client is attached, nothing takes the size back, and the window stays at the phone's size after you leave. This is how tmux behaves with `window-size latest`. The first build accepts it. A low priority follow-up restores the previous size when the last view client leaves and no other client is attached.
+**No desk attached.** If no other client is attached, nothing takes the size back, and the window stays at the phone's size after you leave. This is how tmux behaves with `window-size latest`. Since milestone 7 Wave 2, the bridge gives the session back the size it had before the phone took it when the last view client leaves and no other client is attached.
 
 **Scrollback.** Control mode shows the live screen, and tmux copy mode on the shared pane would also show at the desk, so it is not used. The bridge serves read-only history from `capture-pane -S -<n> -e` for the pane. The phone shows it as an overlay above the live screen. The overlay never changes the window size or the desk's view. A swipe up opens it, and new output or typing returns to live. For a full-screen program on the alternate screen, which has no tmux history, a swipe sends scroll keys to the program instead: Page Up, or the mouse wheel when the program has turned on mouse mode.
 

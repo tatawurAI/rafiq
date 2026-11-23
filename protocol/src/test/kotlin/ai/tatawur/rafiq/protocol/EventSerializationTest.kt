@@ -87,6 +87,7 @@ class EventSerializationTest {
                         ApprovalOption("o-3", ApprovalOptionKind.DENY, "Deny"),
                     ),
                 expiresAtMs = 1_767_225_900_000,
+                detail = ApprovalDetail("npm test\nnpm run lint", lineCount = 2, sessionRule = "Bash(npm test:*)"),
             ),
             EventPayload.ApprovalResolved(id = "a-1", outcome = ApprovalOutcome.SELECTED, optionId = "o-1"),
             EventPayload.StatusChanged(
@@ -113,6 +114,20 @@ class EventSerializationTest {
                 diffRef = "d-1",
                 gitStatus = " M",
             ),
+            EventPayload.TurnProgress(
+                threadId = "t-1",
+                phase = TurnPhase.RUNNING_STEP,
+                currentStep = "Bash: npm test",
+                startedAtMs = 1_767_225_600_000,
+            ),
+            EventPayload.PromptDelivery(
+                clientId = "c-9",
+                threadId = "t-1",
+                state = DeliveryState.NOT_DELIVERED,
+                code = "input_not_empty",
+                message = "There is half-typed text in the terminal.",
+            ),
+            EventPayload.ChatIncomplete(threadId = "t-1", reason = "reply_mismatch"),
         )
 
     // A kind missing from the known set, or a changed wire name, would decode to Unknown here

@@ -42,6 +42,7 @@ fun ConnectionBanner(
             ConnectionState.Connecting -> R.string.connection_connecting to RafiqTheme.colors.textMuted
             is ConnectionState.Offline -> R.string.connection_offline to RafiqTheme.colors.textSecondary
             ConnectionState.Unauthorized -> R.string.connection_unauthorized to RafiqTheme.colors.needsYou
+            ConnectionState.IdentityRefused -> R.string.connection_identity_refused to RafiqTheme.colors.needsYou
         }
     Surface(
         modifier = modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
@@ -127,6 +128,7 @@ private fun BannersPreview() {
                 ConnectionBanner(ConnectionState.Connecting)
                 ConnectionBanner(ConnectionState.Offline(retryAtMs = null))
                 ConnectionBanner(ConnectionState.Unauthorized)
+                ConnectionBanner(ConnectionState.IdentityRefused)
                 FeedbackBar(Feedback.StillWorking, onDismiss = {})
                 FeedbackBar(Feedback.Failed("session_closed"), onDismiss = {})
             }

@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.sessions
 
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.ApprovalCard
+import ai.tatawur.rafiq.client.ApprovalText
 import ai.tatawur.rafiq.protocol.ApprovalOption
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
@@ -150,7 +151,7 @@ fun PinnedApproval(
                 modifier = Modifier.padding(spacing.smallMedium),
                 verticalArrangement = Arrangement.spacedBy(spacing.small),
             ) {
-                ApprovalDescription(approval.description, maxLines = Int.MAX_VALUE)
+                ApprovalRequestText(approval)
                 ApprovalOptions(approval.options, answering, onAnswer)
             }
         } else {
@@ -169,13 +170,21 @@ fun PinnedApproval(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(spacing.small),
             ) {
-                ApprovalDescription(approval.description, maxLines = 2, modifier = Modifier.weight(1f))
+                ApprovalRequestSummary(approval, maxLines = 2, modifier = Modifier.weight(1f))
                 Button(
                     onClick = onJump ?: { expanded = true },
                     enabled = !answering,
                     modifier = Modifier.heightIn(min = spacing.minTouchTarget),
                     shape = MaterialTheme.shapes.small,
-                ) { Text(stringResource(if (answering) R.string.approval_sending_short else R.string.approval_expand)) }
+                ) {
+                    val label =
+                        when {
+                            answering -> R.string.approval_sending_short
+                            ApprovalText.of(approval, expanded = false).needsFullView -> R.string.approval_see_full
+                            else -> R.string.approval_expand
+                        }
+                    Text(stringResource(label))
+                }
             }
         }
     }
@@ -195,6 +204,9 @@ fun PinnedApprovalFull(
     modifier: Modifier = Modifier,
 ) {
     val spacing = RafiqTheme.spacing
+    // A request a short card cannot show in full is answered only after you have seen all of it.
+    var full by rememberSaveable(approval.id) { mutableStateOf(false) }
+    val fullViewFirst = ApprovalText.of(approval, expanded = false).needsFullView
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -205,40 +217,48 @@ fun PinnedApprovalFull(
             modifier = Modifier.padding(spacing.smallMedium),
             verticalArrangement = Arrangement.spacedBy(spacing.small),
         ) {
-            val jumpLabel = stringResource(R.string.approval_jump)
-            ApprovalDescription(
-                approval.description,
-                maxLines = 3,
-                modifier =
-                    if (onJump != null) {
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = spacing.minTouchTarget)
-                            .clickable(role = Role.Button, onClickLabel = jumpLabel, onClick = onJump)
-                    } else {
-                        Modifier
-                    },
-            )
-            ApprovalOptions(approval.options, answering, onAnswer, twoColumns = true)
+            when {
+                full -> {
+                    ApprovalRequestText(approval)
+                    ApprovalOptions(approval.options, answering, onAnswer, twoColumns = true)
+                }
+
+                fullViewFirst -> {
+                    ApprovalRequestSummary(approval, maxLines = 3)
+                    SeeFullCommand(onClick = { full = true })
+                }
+
+                else -> {
+                    val jumpLabel = stringResource(R.string.approval_jump)
+                    ApprovalRequestSummary(
+                        approval,
+                        maxLines = 3,
+                        modifier =
+                            if (onJump != null) {
+                                Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = spacing.minTouchTarget)
+                                    .clickable(role = Role.Button, onClickLabel = jumpLabel, onClick = onJump)
+                            } else {
+                                Modifier
+                            },
+                    )
+                    ApprovalOptions(approval.options, answering, onAnswer, twoColumns = true)
+                }
+            }
         }
     }
 }
 
+/** Opens the whole request, in place of the answer buttons on a card too short to show all of it. */
 @Composable
-private fun ApprovalDescription(
-    text: String,
-    maxLines: Int,
-    modifier: Modifier = Modifier,
-) {
-    Box(modifier = modifier, contentAlignment = Alignment.CenterStart) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-            color = RafiqTheme.colors.text,
-            maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+private fun SeeFullCommand(onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().heightIn(min = RafiqTheme.spacing.largeTouchTarget),
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(RafiqTheme.spacing.hairline, RafiqTheme.colors.needsYou),
+    ) { Text(stringResource(R.string.approval_see_full), color = RafiqTheme.colors.text) }
 }
 
 internal val previewApproval =

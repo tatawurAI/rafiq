@@ -68,6 +68,19 @@ class ColdStartTest {
         }
 
     @Test
+    fun a_socket_refused_for_the_tailscale_login_says_so_and_stays_paired() =
+        runTest {
+            // #61: not a token problem, so no "pair again" and no lost pairing, and it keeps trying slowly.
+            val source = RejectingSource(status = 403, code = "identity_mismatch")
+            val repository = repository(source = source)
+
+            openAndWait(repository)
+
+            assertEquals(ConnectionState.IdentityRefused, repository.connection.value)
+            assertTrue(source.opens > 1, "opened ${source.opens} times")
+        }
+
+    @Test
     fun a_socket_refused_with_503_is_retried() =
         runTest {
             val source = RejectingSource(status = 503)
@@ -142,6 +155,7 @@ class ColdStartTest {
 /** A bridge that answers every socket handshake with HTTP [status]. */
 private class RejectingSource(
     private val status: Int,
+    private val code: String? = null,
 ) : EventSource {
     var opens = 0
 
@@ -150,6 +164,6 @@ private class RejectingSource(
         token: String,
     ) = flow<SocketFrame> {
         opens++
-        throw HandshakeRejectedException(status)
+        throw HandshakeRejectedException(status, code)
     }
 }

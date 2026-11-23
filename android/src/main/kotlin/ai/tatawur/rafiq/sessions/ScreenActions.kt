@@ -92,7 +92,12 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.launch
 
-/** What the session view can ask its state holder to do. Previews pass the no-op defaults. */
+/**
+ * What the session view can ask its state holder to do. Previews pass the no-op defaults.
+ *
+ * @property viewToggle the Chat and Terminal toggle, or null when Terminal is not offered here.
+ * @property onOpenHooks opens the hook setup for a session in tmux, or null for any other session.
+ */
 @Immutable
 data class SessionActions(
     val onBack: () -> Unit = {},
@@ -107,6 +112,9 @@ data class SessionActions(
     val onDismissFeedback: () -> Unit = {},
     val onPairAgain: () -> Unit = {},
     val viewToggle: ViewToggle? = null,
+    val onOpenHooks: (() -> Unit)? = null,
+    val onDismissHooksOffer: () -> Unit = {},
+    val onDismissRefusal: () -> Unit = {},
 )
 
 /**

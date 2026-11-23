@@ -1,11 +1,17 @@
 package ai.tatawur.rafiq.client.terminal
 
+import ai.tatawur.rafiq.client.visibleControls
 import ai.tatawur.rafiq.protocol.api.TerminalEnded
+import ai.tatawur.rafiq.protocol.api.TerminalListWindows
 import ai.tatawur.rafiq.protocol.api.TerminalMessage
+import ai.tatawur.rafiq.protocol.api.TerminalNotice
 import ai.tatawur.rafiq.protocol.api.TerminalResize
+import ai.tatawur.rafiq.protocol.api.TerminalSelectWindow
 import ai.tatawur.rafiq.protocol.api.TerminalSize
 import ai.tatawur.rafiq.protocol.api.TerminalSnapshot
 import ai.tatawur.rafiq.protocol.api.TerminalUnknown
+import ai.tatawur.rafiq.protocol.api.TerminalWindow
+import ai.tatawur.rafiq.protocol.api.TerminalWindows
 import ai.tatawur.rafiq.protocol.api.terminalJson
 import kotlinx.serialization.SerializationException
 import java.io.ByteArrayOutputStream
@@ -29,24 +35,32 @@ data class MirroredWindow(
         const val MAX_NAME = 40
 
         /** The window of [snapshot], or null when the bridge did not send one. */
-        fun of(snapshot: TerminalSnapshot): MirroredWindow? =
-            snapshot.window?.let { window ->
-                val clean = window.name.filterNot { it.isISOControl() }.trim()
-                MirroredWindow(window.index, clean.take(MAX_NAME))
-            }
+        fun of(snapshot: TerminalSnapshot): MirroredWindow? = snapshot.window?.let(::of)
+
+        /** [window] with its name made safe to show. */
+        fun of(window: TerminalWindow): MirroredWindow {
+            // Cut first, so an escape is never cut in half.
+            val clean = visibleControls(window.name.trim().take(MAX_NAME), keep = emptySet())
+            return MirroredWindow(window.index, clean)
+        }
     }
 }
+
+/** The plain words of a bridge notice, at most this long, with control characters dropped. */
+private const val MAX_NOTICE = 200
 
 /** What the emulator must do with one step of `WS /terminal`, after the frames are paired up. */
 sealed interface TerminalEvent {
     /**
      * Resize the emulator to [size], then write [vt]. [vt] repaints the screen from any state,
-     * including the middle of an escape sequence left by an earlier frame.
+     * including the middle of an escape sequence left by an earlier frame. [mouse] is true when the
+     * program turned mouse mode on, so a swipe scrolls it with the wheel.
      */
     class Snapshot(
         val size: CellSize,
         val vt: ByteArray,
         val window: MirroredWindow? = null,
+        val mouse: Boolean = false,
     ) : TerminalEvent
 
     /** Pane output to write as it is. */
@@ -62,6 +76,25 @@ sealed interface TerminalEvent {
     /** The pane is gone or the bridge ended the view. The socket closes after it. */
     data class Ended(
         val reason: String,
+    ) : TerminalEvent
+
+    /**
+     * The session's windows, for the window picker, in index order.
+     *
+     * @property shown the index of the window the phone shows.
+     */
+    data class Windows(
+        val windows: List<MirroredWindow>,
+        val shown: Int,
+    ) : TerminalEvent
+
+    /**
+     * Something to tell you, such as the window you watched closing. [code] is the bridge's stable name, for
+     * example `window_closed`, and [message] the same in plain words, made safe to show.
+     */
+    data class Notice(
+        val code: String,
+        val message: String,
     ) : TerminalEvent
 }
 
@@ -97,7 +130,16 @@ class TerminalStreamDecoder {
                 TerminalEvent.Ended(message.reason)
             }
 
-            is TerminalResize, TerminalUnknown, null -> {
+            is TerminalWindows -> {
+                TerminalEvent.Windows(message.windows.map { MirroredWindow.of(it) }, message.shown)
+            }
+
+            is TerminalNotice -> {
+                val clean = visibleControls(message.message.trim().take(MAX_NOTICE), keep = emptySet())
+                TerminalEvent.Notice(message.code, clean)
+            }
+
+            is TerminalResize, TerminalListWindows, is TerminalSelectWindow, TerminalUnknown, null -> {
                 null
             }
         }
@@ -111,9 +153,17 @@ class TerminalStreamDecoder {
             CellSize(snapshot.cols, snapshot.rows),
             snapshotToVt(snapshot, bytes),
             MirroredWindow.of(snapshot),
+            snapshot.modes.mouse,
         )
     }
 }
+
+/** The up-going request for the session's windows. */
+fun listWindowsMessage(): String = terminalJson.encodeToString(TerminalMessage.serializer(), TerminalListWindows)
+
+/** The up-going request to show window [index] on the phone. */
+fun selectWindowMessage(index: Int): String =
+    terminalJson.encodeToString(TerminalMessage.serializer(), TerminalSelectWindow(index))
 
 /** The up-going resize message for a viewport of [size]. */
 fun resizeMessage(size: CellSize): String =

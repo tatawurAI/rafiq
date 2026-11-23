@@ -42,7 +42,13 @@ The finished bridge will also read files in your project folders. The protection
 | Path scoping | The file API refuses paths outside the session's project root. | M5 |
 | Auth relay | Sign-in flows are relayed without exposing credentials to the phone or a third party. | M5 |
 
+An agent in tmux runs as the same OS user as the bridge. Its hooks reach the bridge over a Unix socket in a folder only that user can open, with a credential that is new at every start. A same-user agent that is allowed to read the bridge's data folder can still read that credential and approve its own requests. Running the bridge as a different OS user is the complete fix. [docs/setup.md](docs/setup.md#the-limit-of-a-hook-on-the-same-user) describes it, and what it does not cover yet.
+
 M3 and M5 are [milestones](https://github.com/tatawurAI/rafiq/milestones). Agent credentials stay on your server, and the phone never holds them.
+
+### Optional Tailscale login check
+
+With `RAFIQ_TAILSCALE_LOGIN` set, every route except `GET /health` and both socket handshakes also need the `Tailscale-User-Login` header that `tailscale serve` adds to name that login. A missing or different login gets 403 `identity_mismatch`. This is a second proof next to the device token: a stolen token used from another Tailscale login is refused. The bridge trusts the header only on a loopback connection and will not start with the setting and a non-loopback bind address, so a client that reaches the port directly cannot supply it. It gives no protection against anything running on your server, since a local process can connect from loopback and send any header. Tailscale documents the header under "Identity headers" in [Tailscale Serve](https://tailscale.com/kb/1312/serve). See [docs/setup.md](docs/setup.md#check-your-tailscale-login-too-optional).
 
 ## In scope
 

@@ -22,6 +22,7 @@ import ai.tatawur.rafiq.ui.fold.FoldSplit
 import ai.tatawur.rafiq.ui.fold.Hinge
 import ai.tatawur.rafiq.ui.fold.LocalHinge
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,12 +43,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +74,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -135,12 +140,14 @@ internal fun ColumnScope.TimelinePane(
     }
     HorizontalDivider(color = RafiqTheme.colors.border, thickness = RafiqTheme.spacing.hairline)
     ConnectionBanner(state.connection, onPairAgain = actions.onPairAgain)
+    val openHooks = actions.onOpenHooks
+    if (state.offerHooks && openHooks != null) HooksOffer(onReview = openHooks, onDismiss = actions.onDismissHooksOffer)
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         val threadId = state.selectedThread?.id
         if (!state.isLoaded) {
             LaunchedEffect(Unit) { onPinnedCardOnScreen(false) }
             CenteredNote(stringResource(R.string.session_loading))
-        } else if (state.timeline.isEmpty()) {
+        } else if (state.timeline.isEmpty() && state.echoes.isEmpty() && state.progress == null) {
             LaunchedEffect(Unit) { onPinnedCardOnScreen(false) }
             CenteredNote(stringResource(R.string.thread_empty))
         } else {
@@ -161,6 +168,7 @@ internal fun SessionComposer(
     dictation: DictationControl?,
     showQuickReplies: Boolean,
 ) {
+    state.refusal?.let { RefusalLine(it, actions.onDismissRefusal, actions.onOpenHooks) }
     Composer(
         state =
             ComposerState(
@@ -187,6 +195,7 @@ internal fun SessionHeader(
     state: SessionUiState,
     actions: SessionActions,
     windowLabel: String? = null,
+    onWindowLabelClick: (() -> Unit)? = null,
 ) {
     val spacing = RafiqTheme.spacing
     val thread = state.selectedThread
@@ -203,7 +212,7 @@ internal fun SessionHeader(
                 tint = RafiqTheme.colors.text,
             )
         }
-        HeaderTitle(state, windowLabel, Modifier.weight(1f))
+        HeaderTitle(state, windowLabel, Modifier.weight(1f), onWindowLabelClick)
         actions.viewToggle?.let { ChatTerminalToggle(it) }
         if (actions.viewToggle?.terminal != true && thread != null && thread.status == AgentState.WORKING) {
             IconButton(onClick = { actions.onCancel(thread.id) }) {
@@ -215,15 +224,45 @@ internal fun SessionHeader(
                 )
             }
         }
+        actions.onOpenHooks?.let { SessionMenu(it) }
     }
 }
 
-/** The session's title, the mirrored window when Terminal shows, and the agent and status. */
+/** The header's menu, for a session in tmux: the hook setup, where you can also remove the hooks. */
+@Composable
+private fun SessionMenu(onOpenHooks: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(
+                painter = painterResource(R.drawable.ic_more),
+                contentDescription = stringResource(R.string.session_menu),
+                modifier = Modifier.size(RafiqTheme.spacing.icon),
+                tint = RafiqTheme.colors.text,
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.session_menu_hooks)) },
+                onClick = {
+                    open = false
+                    onOpenHooks()
+                },
+            )
+        }
+    }
+}
+
+/**
+ * The session's title, the mirrored window when Terminal shows, and the agent, status and permission mode.
+ * Tapping the window label opens the window picker.
+ */
 @Composable
 private fun HeaderTitle(
     state: SessionUiState,
     windowLabel: String?,
     modifier: Modifier = Modifier,
+    onWindowLabelClick: (() -> Unit)? = null,
 ) {
     val spacing = RafiqTheme.spacing
     val session = state.screen.session
@@ -241,7 +280,7 @@ private fun HeaderTitle(
                 modifier = Modifier.weight(1f, fill = false),
             )
             // Terminal mirrors one window, but the grant covers the whole session: say which.
-            windowLabel?.let { MirroredWindowLabel(it) }
+            windowLabel?.let { MirroredWindowLabel(it, onWindowLabelClick) }
         }
         if (session != null) {
             Row(
@@ -249,13 +288,21 @@ private fun HeaderTitle(
                 horizontalArrangement = Arrangement.spacedBy(spacing.small),
             ) {
                 StatusDot(session.status)
+                val subtitle =
+                    stringResource(
+                        R.string.session_subtitle,
+                        session.agent,
+                        stringResource(sessionStatusLabel(session.status, state.mainHasMessages)),
+                    )
                 Text(
                     text =
-                        stringResource(
-                            R.string.session_subtitle,
-                            session.agent,
-                            stringResource(sessionStatusLabel(session.status, state.mainHasMessages)),
-                        ),
+                        session.permissionMode?.let { mode ->
+                            stringResource(
+                                R.string.session_subtitle,
+                                subtitle,
+                                stringResource(R.string.permission_mode, mode),
+                            )
+                        } ?: subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = RafiqTheme.colors.textMuted,
                     maxLines = 1,
@@ -267,11 +314,24 @@ private fun HeaderTitle(
 }
 
 @Composable
-private fun MirroredWindowLabel(label: String) {
+private fun MirroredWindowLabel(
+    label: String,
+    onClick: (() -> Unit)?,
+) {
+    val picker = stringResource(R.string.terminal_windows_pick)
     Text(
         text = label,
+        modifier =
+            if (onClick != null) {
+                Modifier
+                    .heightIn(min = RafiqTheme.spacing.minTouchTarget)
+                    .clickable(role = Role.Button, onClickLabel = picker, onClick = onClick)
+                    .wrapContentHeight()
+            } else {
+                Modifier
+            },
         style = MaterialTheme.typography.labelSmall,
-        color = RafiqTheme.colors.textMuted,
+        color = if (onClick != null) RafiqTheme.colors.accent else RafiqTheme.colors.textMuted,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )

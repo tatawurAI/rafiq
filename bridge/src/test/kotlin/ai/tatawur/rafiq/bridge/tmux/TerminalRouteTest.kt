@@ -40,7 +40,7 @@ class TerminalRouteTest {
         server: TmuxServer = tmux.server,
     ): RealBridge {
         val settings = TerminalSettings(enabled, sessions.toSet(), tmux.socket, limits)
-        return RealBridge(dir.resolve("data-${opened++}"), TerminalGate(settings, server)).also { bridge = it }
+        return RealBridge(dir.resolve("data-${opened++}"), openGate(settings, server)).also { bridge = it }
     }
 
     /** The snapshot text frame and the one binary frame that must follow it at once. */
@@ -217,6 +217,28 @@ class TerminalRouteTest {
         for (leaked in listOf("12;40R", "62;22c", "rgb:", "2004", "5;9H")) {
             assertFalse(leaked in screen, "$leaked reached the pane:\n$screen")
         }
+    }
+
+    @Test
+    fun an_open_view_survives_one_scan_interval_unallowed_and_ends_only_after_five_checks() {
+        tmux.newSession("weather-app")
+        val bridge = bridgeFor("weather-app")
+        val socket = bridge.terminal("weather-app")
+        socket.sendResize(60, 20)
+        socket.snapshot()
+
+        // One bad scan leaves the session out for a whole scan interval. That is not enough to end the view.
+        bridge.gate!!.updateOpenable(emptySet())
+        Thread.sleep(SHORT_DROP_MS)
+        bridge.gate!!.updateOpenable(setOf("weather-app"))
+        assertFalse(socket.closedWithin(4), "a short drop ended the view")
+
+        bridge.gate!!.updateOpenable(emptySet())
+
+        val ended = socket.until(seconds = 12) { it is Received.Text && "\"ended\"" in it.text } as Received.Text
+        assertTrue("no longer allowed" in ended.text, ended.text)
+        assertIs<Received.Closed>(socket.until(seconds = 5) { it is Received.Closed })
+        eventually("the view session is gone", check = ::noViewSession)
     }
 
     @Test
@@ -524,5 +546,8 @@ class TerminalRouteTest {
         const val STALL_MS = 5000L
         const val REVOKE_SETTLE_MS = 400L
         const val SETTLE_MS = 2500L
+
+        /** One scan interval of the tmux source, about 3 s: three or four access checks, short of the five. */
+        const val SHORT_DROP_MS = 3200L
     }
 }

@@ -1,5 +1,7 @@
 package ai.tatawur.rafiq.client.terminal
 
+import ai.tatawur.rafiq.client.sync.HandshakeRejectedException
+import ai.tatawur.rafiq.protocol.api.AuthErrorCodes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -135,6 +137,19 @@ class TerminalLink(
         if (holding) heldOpener?.trySend(Unit)
     }
 
+    /** Asks the bridge for the session's windows. A [TerminalEvent.Windows] answers. Nothing while detached. */
+    fun listWindows() {
+        uplink?.sendText(listWindowsMessage())
+    }
+
+    /**
+     * Asks the bridge to show window [index] on the phone. Only the phone's own view changes, never the desk's.
+     * A fresh snapshot answers, or a [TerminalEvent.Notice] when there is no such window.
+     */
+    fun selectWindow(index: Int) {
+        uplink?.sendText(selectWindowMessage(index))
+    }
+
     /**
      * Holds the socket while collected and emits what the emulator must apply. Cancelling the
      * collector closes the socket.
@@ -154,7 +169,8 @@ class TerminalLink(
                 currentStatus.value = TerminalStatus.Detached
                 throw cancelled
             } catch (failure: IOException) {
-                currentStatus.value = TerminalStatus.Failed(failure.message)
+                val identity = (failure as? HandshakeRejectedException)?.code == AuthErrorCodes.IDENTITY_MISMATCH
+                currentStatus.value = TerminalStatus.Failed(if (identity) IDENTITY_REFUSED else failure.message)
             }
         }
 
@@ -251,7 +267,7 @@ class TerminalLink(
         when (event) {
             is TerminalEvent.Snapshot -> {
                 pane.reset()
-                TerminalEvent.Snapshot(event.size, pane.filter(event.vt), event.window)
+                TerminalEvent.Snapshot(event.size, pane.filter(event.vt), event.window, event.mouse)
             }
 
             is TerminalEvent.Output -> {
@@ -293,6 +309,9 @@ class TerminalLink(
 
     companion object {
         val DEFAULT_RESIZE_DEBOUNCE: Duration = 150.milliseconds
+
+        /** The [TerminalStatus.Failed] message when your server accepts only its owner's Tailscale login. */
+        const val IDENTITY_REFUSED = "Your server only accepts your own Tailscale login."
 
         /** The [TerminalStatus.Failed] message after [MAX_OVERFLOWS] overflows in [OVERFLOW_WINDOW]. */
         const val FELL_BEHIND = "The screen could not keep up. Tap to retry."

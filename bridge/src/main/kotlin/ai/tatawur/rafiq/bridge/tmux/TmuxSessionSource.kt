@@ -41,24 +41,74 @@ class TmuxSessionSource(
     @Volatile
     private var visible: Set<String> = emptySet()
 
+    /**
+     * Called after every scan with the panes of the allowed sessions and the process table it used, so the Claude
+     * reader can follow the agent panes without asking tmux again. Set once, before [start].
+     */
+    @Volatile
+    var onScan: (suspend (panes: List<PaneInfo>, processes: Map<Int, Pair<Int, String>>) -> Unit)? = null
+
+    /**
+     * The agent's permission mode per session, from the Claude reader. Like `terminalAllowed`, it is not stored
+     * in the log, so every session this source shows or announces carries it. Set once, before [start].
+     */
+    @Volatile
+    var permissionModeOf: (sessionId: String) -> String? = { null }
+
+    /** The `terminalAllowed` this process last announced per session, so a change is announced once. */
+    private val announced = mutableMapOf<String, Boolean>()
+
     /** Whether clients may see the session: not a tmux session, or one this source lists right now. */
     fun isVisible(sessionId: String): Boolean = !isTmuxSessionId(sessionId) || sessionId in visible
+
+    /**
+     * [session] with `terminalAllowed` as of the last scan. The log does not store that field, because it
+     * follows the bridge's settings and the agent in the pane, not the session's history.
+     */
+    fun present(session: Session): Session =
+        if (isTmuxSessionId(session.id)) {
+            withExtras(session, gate.canOpen(session.id.removePrefix(TMUX_SESSION_PREFIX)))
+        } else {
+            session
+        }
+
+    /**
+     * [session] with the fields the log does not store: `terminal`, [terminalAllowed] and the permission mode.
+     * Every `SessionUpdated` for a tmux session is built through here, so none of them resets one of these.
+     */
+    private fun withExtras(
+        session: Session,
+        terminalAllowed: Boolean,
+    ): Session =
+        session.copy(
+            terminal = true,
+            terminalAllowed = terminalAllowed,
+            permissionMode = permissionModeOf(session.id) ?: session.permissionMode,
+        )
 
     /** Polls until [scope] ends. */
     fun start(scope: CoroutineScope) {
         scope.launch {
             while (true) {
-                @Suppress("TooGenericExceptionCaught") // A failed poll is retried on the next turn.
-                try {
-                    refresh()
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Exception) {
-                    visible = emptySet()
-                    logger.warn("tmux poll failed: {}", failure.toString())
-                }
+                poll()
                 delay(interval)
             }
+        }
+    }
+
+    /**
+     * One poll. A failed one hides the sessions until the next good poll, but keeps which ones Terminal may open,
+     * so one slow `tmux` call does not take Terminal away from a phone that has it open.
+     */
+    @Suppress("TooGenericExceptionCaught") // A failed poll is retried on the next turn.
+    suspend fun poll() {
+        try {
+            refresh()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            visible = emptySet()
+            logger.warn("tmux poll failed: {}", failure.toString())
         }
     }
 
@@ -71,20 +121,25 @@ class TmuxSessionSource(
             val allowed = existing.filter { settings.allows(it.name) }
             val names = allowed.map { it.name }.toSet()
             val panes = if (allowed.isEmpty()) emptyList() else gate.server.panes().filter { it.sessionName in names }
-            val detected = if (panes.isEmpty()) emptyMap() else agents.detect(panes, AgentDetector.processTable())
+            val processes = if (panes.isEmpty()) emptyMap() else AgentDetector.processTable()
+            val detected = if (panes.isEmpty()) emptyMap() else agents.detect(panes, processes)
+            val opens = mutableSetOf<String>()
             for (session in allowed) {
-                show(
-                    session.name,
-                    detected[session.name] ?: DetectedAgent(AgentDetector.TERMINAL, null),
-                )
+                val found = detected[session.name] ?: DetectedAgent(AgentDetector.TERMINAL, null)
+                val terminalAllowed = settings.access(session.name, found.agent != AgentDetector.TERMINAL).terminal
+                if (terminalAllowed) opens += session.name
+                show(session.name, found, terminalAllowed)
             }
             settleGone(existing.map { it.name }.toSet())
             visible = names.map { TMUX_SESSION_PREFIX + it }.toSet()
+            gate.updateOpenable(opens)
+            onScan?.invoke(panes, processes)
         }
 
     private suspend fun show(
         name: String,
         found: DetectedAgent,
+        terminalAllowed: Boolean,
     ) {
         val id = TMUX_SESSION_PREFIX + name
         val stored = log.session(id)
@@ -100,13 +155,25 @@ class TmuxSessionSource(
                     createdAtMs = now,
                     updatedAtMs = now,
                     terminal = true,
+                    terminalAllowed = terminalAllowed,
                 )
             val main = AgentThread(MAIN_THREAD, id, null, ThreadKind.MAIN, name, AgentState.DONE)
             log.createSession(session, AGENT_SESSION_REF, main)
-        } else if (stored.session.agent != found.agent) {
-            log.updateAgent(id, found.agent)
-            log.append(id, EventPayload.SessionUpdated(stored.session.copy(agent = found.agent, terminal = true)))
+        } else {
+            // A session first listed as a shell somewhere else gets Claude's folder once Claude runs in it, so the
+            // hooks and the record are looked for in the right project.
+            val project =
+                found.projectPath?.takeIf { found.agent == AgentDetector.CLAUDE_CODE } ?: stored.session.projectPath
+            val changed = stored.session.agent != found.agent || stored.session.projectPath != project
+            if (changed || announced[name] != terminalAllowed) {
+                if (stored.session.agent != found.agent) log.updateAgent(id, found.agent)
+                if (stored.session.projectPath != project) log.updateProject(id, project)
+                val updated =
+                    withExtras(stored.session.copy(agent = found.agent, projectPath = project), terminalAllowed)
+                log.append(id, EventPayload.SessionUpdated(updated))
+            }
         }
+        announced[name] = terminalAllowed
     }
 
     /** A tmux session tmux no longer has cannot be working or waiting on anything. */

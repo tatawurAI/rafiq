@@ -31,7 +31,7 @@ On your server, as the user who will run the bridge:
 rafiq-bridge setup
 ```
 
-Setup asks before every change. Answer `y` to go ahead. Anything else, or just Enter, skips that step and changes nothing. It runs nothing that changes your system without a yes. It does run two things that only read: `tailscale status --json`, and a look for programs on your `PATH`.
+Setup asks before every change. Answer `y` to go ahead. Anything else, or just Enter, skips that step and changes nothing. The one exception is the permission mode question below, shown as `[Y/n]`: there Enter means yes, because no is the risky answer. It runs nothing that changes your system without a yes. It does run two things that only read: `tailscale status --json`, and a look for programs on your `PATH`.
 
 It goes through these steps:
 
@@ -40,7 +40,7 @@ It goes through these steps:
 3. It offers each setting that is missing from the settings file, one question each:
    - `RAFIQ_DATA_DIR`, where the bridge keeps its database: `~/.local/share/rafiq`, or `$XDG_DATA_HOME/rafiq` if you set that.
    - `RAFIQ_AGENTS=claude-code=claude-agent-acp`, when the adapter is installed.
-   - `RAFIQ_DEFAULT_MODES=claude-code=default`, when Claude Code is in the agent list. Sessions you start from your phone ask before edits and commands. Without it, `claude-agent-acp` starts them in a mode that edits files without asking.
+   - `RAFIQ_DEFAULT_MODES=claude-code=default`, when Claude Code is in the agent list. Sessions you start from your phone ask before edits and commands. Without it, `claude-agent-acp` starts them in a mode that edits files without asking. This question defaults to yes.
    - `RAFIQ_ALLOWED_HOSTS` with your `*.ts.net` name, added to any names already there.
 4. It prints the `tailscale serve --bg 8740` command and offers to run it. On Linux that needs `sudo`, or allow your user once with `sudo tailscale set --operator=$USER`.
 5. It prints every setting the bridge will use and where it came from:

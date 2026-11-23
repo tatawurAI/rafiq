@@ -56,6 +56,8 @@ dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
+    // The phone decrypts pushes with Tink's Web Push code. The interop test runs the bridge's output through it.
+    testImplementation(libs.tink.apps.webpush)
 }
 
 // The version reported by GET /health. It is written into a resource so the

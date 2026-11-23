@@ -16,6 +16,8 @@ import ai.tatawur.rafiq.bridge.server.InMemoryConnectionRegistry
 import ai.tatawur.rafiq.bridge.server.installIdentityCheck
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.sessions.isTmuxSessionId
+import ai.tatawur.rafiq.bridge.setup.Commands
+import ai.tatawur.rafiq.bridge.setup.LoadedSettings
 import ai.tatawur.rafiq.bridge.store.DeviceStore
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.bridge.tmux.AgentDetector
@@ -38,14 +40,13 @@ import java.util.Properties
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
-/** Starts the bridge with settings from the environment and serves until the process is stopped. */
+/** Starts the bridge with settings from `bridge.conf` and the environment, and serves until the process is stopped. */
 @Suppress("LongMethod") // Start-up wiring reads top to bottom, one block per feature, in the order it must run.
 fun main(args: Array<String>) {
-    // `rafiq-bridge pair`, `devices` and `revoke` talk to the running bridge and exit.
-    if (args.firstOrNull() in DeviceCli.COMMANDS) {
-        exitProcess(DeviceCli.run(args.toList(), System.getenv(), System.out, System.err))
-    }
-    val config = BridgeConfig.fromEnvironment(System.getenv())
+    // `setup`, `service`, and `pair`, `devices` and `revoke` (which talk to the running bridge) run and exit.
+    Commands.run(args.toList(), System.getenv())?.let(::exitProcess)
+    // The environment wins over bridge.conf (ADR 0014).
+    val config = LoadedSettings.load(System.getenv()).config()
     val version = bridgeVersion()
     warnAboutMissingSettings(config)
     val eventLog = EventLog.open(config.dataDir, Dispatchers.IO.limitedParallelism(1))

@@ -50,6 +50,11 @@ lifecycle = "2.11.1"
 
 # Push through UnifiedPush (ADR 0010). Apache-2.0. It manages the Web Push key pair and decrypts with Tink.
 unifiedpush-connector = "3.3.5"
+# QR pairing (ADR 0014). The bridge draws the code with qrcodegen (MIT). The app scans it with CameraX and ZXing core
+# (Apache-2.0), which decode on the phone with no Google Play services. The bridge's tests decode with ZXing too.
+qrcodegen = "1.8.0"
+zxing = "3.5.4"
+camerax = "1.6.2"
 
 spotless = "8.11.0"
 ktlint = "1.8.0"
@@ -95,6 +100,12 @@ termlib = { module = "org.connectbot:termlib", version.ref = "termlib" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 unifiedpush-connector = { module = "org.unifiedpush.android:connector", version.ref = "unifiedpush-connector" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+
+qrcodegen = { module = "io.nayuki:qrcodegen", version.ref = "qrcodegen" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
+camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
+camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
 
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }

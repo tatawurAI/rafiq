@@ -41,12 +41,16 @@ dependencies {
     // The ACP Kotlin SDK: JSON-RPC over the agent process's stdio, and ACP's typed messages.
     implementation(libs.acp)
     runtimeOnly(libs.logback.classic)
+    // Draws the pairing QR code in the terminal.
+    implementation(libs.qrcodegen)
 
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.ktor.client.websockets)
     testImplementation(libs.kotlin.test)
     // Virtual time for the reader's waits: the approval deadline, the ordering window and the reply check.
     testImplementation(libs.kotlinx.coroutines.test)
+    // Decodes the printed pairing QR code, to check it holds what the app will read.
+    testImplementation(libs.zxing.core)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)

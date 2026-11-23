@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- QR pairing and pairing links, kept in their own file so the setup lane owns them. -->
+<resources>
+  <string name="setup_scan_button">Scan the QR code</string>
+  <string name="setup_scan_hint">Point your camera at the QR code that rafiq-bridge pair or rafiq-bridge setup printed on your server.</string>
+  <string name="setup_scan_not_rafiq">That QR code is not a Rafiq pairing code. Scan the one rafiq-bridge pair printed.</string>
+  <string name="setup_scan_camera_failed">The camera could not start. Type the address and code instead.</string>
+  <string name="setup_scan_type_instead">Type it instead</string>
+  <string name="setup_camera_denied">Rafiq uses the camera only to scan the pairing code. You can type the address and code instead.</string>
+  <string name="setup_link_check">Check that this is your server\'s address, then tap Connect.</string>
+  <string name="setup_link_already_paired">This phone is already paired. To pair it with a server again, unpair it in Settings first.</string>
+</resources>

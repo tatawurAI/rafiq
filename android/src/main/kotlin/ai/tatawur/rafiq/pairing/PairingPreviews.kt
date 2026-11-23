@@ -40,12 +40,19 @@ private fun PairingUnreachablePreview() {
     )
 }
 
+@Preview(name = "Pairing, filled in from a link", showSystemUi = true)
+@Composable
+private fun PairingFromLinkPreview() {
+    PairingPreview(url = "https://server.example.ts.net", code = "ABCD-EFGH", failure = null, fromLink = true)
+}
+
 @Composable
 private fun PairingPreview(
     url: String,
     code: String,
     failure: CodePairResult?,
     revoked: Boolean = false,
+    fromLink: Boolean = false,
 ) {
     RafiqTheme {
         Surface(color = MaterialTheme.colorScheme.background) {
@@ -55,6 +62,7 @@ private fun PairingPreview(
                     code,
                     notice = if (revoked) stringResource(R.string.pair_revoked_notice) else null,
                     hint = failure?.let { hintFor(it) },
+                    info = if (fromLink) stringResource(R.string.setup_link_check) else null,
                 ),
                 onUrlChange = {},
                 onCodeChange = {},

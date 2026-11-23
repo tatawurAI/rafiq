@@ -80,6 +80,11 @@ dependencies {
 
     // Push through a UnifiedPush distributor such as ntfy (ADR 0010).
     implementation(libs.unifiedpush.connector)
+    // Scanning the pairing QR code: CameraX for the camera, ZXing core to decode. No Google Play services.
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
+    implementation(libs.zxing.core)
 
     // JVM unit tests for the screens' state holders.
     testImplementation(libs.kotlin.test)

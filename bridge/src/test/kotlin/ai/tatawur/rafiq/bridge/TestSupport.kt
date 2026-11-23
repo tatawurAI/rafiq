@@ -183,6 +183,7 @@ class BridgeFixture(
     visibility: (String) -> Boolean = { !isTmuxSessionId(it) },
     present: (Session) -> Session = { it },
     defaultModes: Map<String, String> = emptyMap(),
+    onStored: suspend (String) -> Unit = {},
 ) : AutoCloseable {
     val log: EventLog = EventLog.open(dir, Dispatchers.IO.limitedParallelism(1))
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -194,6 +195,7 @@ class BridgeFixture(
             visibility = visibility,
             present = present,
             defaultModes = defaultModes,
+            onStored = onStored,
         )
 
     override fun close() {

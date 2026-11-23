@@ -347,6 +347,42 @@ class PushNotifierTest {
         }
 
     @Test
+    fun approvals_have_their_own_cap_too() =
+        runTest {
+            val world = World(this, settings = PushSettings(approvalRatePerDevice = 3, rateWindow = 1.minutes))
+            world.phone("phone")
+            world.log.seed()
+            world.notifier.start()
+
+            repeat(5) { world.log.append(TEST_SESSION.id, approval("apr_$it")) }
+            runCurrent()
+
+            assertEquals(listOf("apr_0", "apr_1", "apr_2"), world.received.map { it.payload.approvalId })
+        }
+
+    @Test
+    fun a_revoked_device_loses_its_idle_worker_at_the_next_push() =
+        runTest {
+            val world = World(this)
+            val phone = world.phone("phone")
+            val tablet = world.phone("tablet")
+            world.log.seed()
+            world.notifier.start()
+            world.log.append(TEST_SESSION.id, approval("apr_1"))
+            runCurrent()
+            val phoneId = world.ids.getValue(phone)
+            val tabletId = world.ids.getValue(tablet)
+            assertEquals(setOf(phoneId, tabletId), world.notifier.devicesWithWorkers)
+
+            world.devices.revoke(phoneId)
+            world.log.append(TEST_SESSION.id, approval("apr_2"))
+            runCurrent()
+
+            assertEquals(setOf(tabletId), world.notifier.devicesWithWorkers)
+            assertEquals(listOf(tablet), world.received.filter { it.payload.approvalId == "apr_2" }.map { it.endpoint })
+        }
+
+    @Test
     fun a_push_that_throws_does_not_stop_the_next_one() =
         runTest {
             val world = World(this)

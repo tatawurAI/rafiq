@@ -31,8 +31,9 @@ import kotlin.time.Duration.Companion.seconds
  *   stops and starts again at once does not buzz the phone.
  * @property attempts how many times one push is tried in all.
  * @property backoff the wait before the second try, doubled before each later one.
- * @property ratePerDevice at most this many pushes per device in [rateWindow]. Past it they are dropped, except
- *   approvals and their clearing, which are never capped.
+ * @property ratePerDevice at most this many turn and error pushes per device in [rateWindow]. Past it they are dropped.
+ * @property approvalRatePerDevice the same for approvals and their clearing, in a bucket of their own, so a chatty
+ *   agent never uses up the room an approval needs, and an agent looping on approvals is still capped.
  * @property sendTimeout the longest one try may take, whatever the transport does.
  * @property subscriptionCapacity how many events may wait for the notifier. Every event lands here, message deltas
  *   included, and the notifier filters by kind itself, so this is sized for a burst of streaming text.
@@ -42,6 +43,7 @@ data class PushSettings(
     val attempts: Int = 3,
     val backoff: Duration = 2.seconds,
     val ratePerDevice: Int = 30,
+    val approvalRatePerDevice: Int = 120,
     val rateWindow: Duration = 1.minutes,
     val sendTimeout: Duration = 15.seconds,
     val queuePerDevice: Int = 64,
@@ -85,6 +87,15 @@ class PushNotifier(
     private val triggers = PushTriggers()
     private val pendingTurnDone = HashMap<String, Job>()
     private val queues = HashMap<String, Channel<PushPayload>>()
+
+    /** The devices that have a worker now. For tests and diagnostics; read it on [dispatcher]. */
+    internal val devicesWithWorkers: Set<String> get() = queues.keys.toSet()
+
+    /** The send times in each of a device's two rate windows. */
+    private class RateBuckets {
+        val approvals = ArrayDeque<Long>()
+        val others = ArrayDeque<Long>()
+    }
 
     /**
      * Subscribes and starts pushing. Call it after start-up recovery, so the events recovery writes are not live.
@@ -165,7 +176,10 @@ class PushNotifier(
 
     private suspend fun fanOut(payload: PushPayload) {
         if (!visible(payload.sessionId)) return
-        for (deviceId in store.pushDevices()) {
+        val devices = store.pushDevices()
+        // A device revoked or unregistered while its worker sat idle: end the worker and drop its queue.
+        queues.keys.filterNot(devices::contains).forEach { gone -> queues.remove(gone)?.close() }
+        for (deviceId in devices) {
             val queue = queues.getOrPut(deviceId) { worker(deviceId) }
             if (queue.trySend(payload).isFailure) {
                 logger.warn("Dropped a {} push for device {}: its queue is full.", payload.kind, deviceId)
@@ -180,9 +194,9 @@ class PushNotifier(
     private fun worker(deviceId: String): Channel<PushPayload> {
         val queue = Channel<PushPayload>(settings.queuePerDevice)
         scope.launch(dispatcher) {
-            val sentAtMs = ArrayDeque<Long>()
+            val buckets = RateBuckets()
             for (payload in queue) {
-                if (!sendOne(deviceId, payload, sentAtMs)) {
+                if (!sendOne(deviceId, payload, buckets)) {
                     if (queues[deviceId] === queue) queues.remove(deviceId)
                     queue.close()
                     break
@@ -197,10 +211,18 @@ class PushNotifier(
     private suspend fun sendOne(
         deviceId: String,
         payload: PushPayload,
-        sentAtMs: ArrayDeque<Long>,
+        buckets: RateBuckets,
     ): Boolean {
-        // Approvals and their clearing are what push is for, so the cap never drops them.
-        if (payload.kind !in UNCAPPED && overRate(sentAtMs)) {
+        // Approvals and their clearing are what push is for, so they have their own, larger bucket. It still stops
+        // an agent that loops on approvals from flooding the push service.
+        val approval = payload.kind in APPROVAL_KINDS
+        val over =
+            if (approval) {
+                overRate(buckets.approvals, settings.approvalRatePerDevice)
+            } else {
+                overRate(buckets.others, settings.ratePerDevice)
+            }
+        if (over) {
             logger.warn("Dropped a {} push for device {}: over the rate cap.", payload.kind, deviceId)
             return true
         }
@@ -215,11 +237,14 @@ class PushNotifier(
     }
 
     /** A sliding window over the times of the pushes already sent. Records this one when it may go. */
-    private fun overRate(sentAtMs: ArrayDeque<Long>): Boolean {
+    private fun overRate(
+        sentAtMs: ArrayDeque<Long>,
+        limit: Int,
+    ): Boolean {
         val now = nowMs()
         val window = settings.rateWindow.inWholeMilliseconds
         while (sentAtMs.isNotEmpty() && now - sentAtMs.first() >= window) sentAtMs.removeFirst()
-        if (sentAtMs.size >= settings.ratePerDevice) return true
+        if (sentAtMs.size >= limit) return true
         sentAtMs.addLast(now)
         return false
     }
@@ -293,7 +318,7 @@ class PushNotifier(
     private companion object {
         val logger = LoggerFactory.getLogger(PushNotifier::class.java)
 
-        /** Kinds the per-device rate cap never drops. */
-        val UNCAPPED = setOf(PushKind.APPROVAL, PushKind.APPROVAL_CLEARED)
+        /** Kinds counted in the approval bucket, not the general one. */
+        val APPROVAL_KINDS = setOf(PushKind.APPROVAL, PushKind.APPROVAL_CLEARED)
     }
 }

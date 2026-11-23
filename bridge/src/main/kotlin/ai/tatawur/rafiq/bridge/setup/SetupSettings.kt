@@ -17,12 +17,14 @@ private const val CLAUDE_CODE = "claude-code"
  * @property reason one sentence on what the setting does, shown before the question.
  * @property needs another proposed setting this one only makes sense with. When you decline that one, this one is
  *   not asked, so the file never names an agent it does not list.
+ * @property defaultYes true when an empty answer means yes, for a setting whose absence is the risky choice.
  */
 internal class ProposedSetting(
     val name: String,
     val value: String,
     val reason: String,
     val needs: String? = null,
+    val defaultYes: Boolean = false,
 )
 
 /**
@@ -61,6 +63,8 @@ internal fun proposedSettings(
             "$CLAUDE_CODE=default",
             "Sessions you start from your phone ask before edits and commands.",
             needs = AGENTS.takeIf { proposeAgent },
+            // Without it, phone sessions start in a mode that never asks before edits.
+            defaultYes = true,
         ).takeIf { loaded.values[DEFAULT_MODES].isNullOrBlank() && (proposeAgent || listsClaude) },
         dnsName
             ?.takeIf { name -> hosts(loaded.values[ALLOWED_HOSTS]).none { it.equals(name, ignoreCase = true) } }

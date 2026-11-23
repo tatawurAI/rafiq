@@ -92,4 +92,20 @@ class ApprovalTextTest {
 
         assertEquals("git status" + "<U+2800>".repeat(60) + "; x", text.lines.single())
     }
+
+    @Test
+    fun other_characters_that_draw_nothing_show_as_markers_in_a_command() {
+        val hidden = listOf(0x034F, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180F, 0xFE00, 0xFE0F, 0xE0100)
+        val command = "rm" + hidden.joinToString("") { String(Character.toChars(it)) } + " -rf"
+
+        val text = ApprovalText.of(card(ApprovalDetail(command, 1)), expanded = true)
+
+        assertEquals("rm" + hidden.joinToString("") { "<U+%04X>".format(it) } + " -rf", text.lines.single())
+    }
+
+    @Test
+    fun an_emoji_style_selector_stays_in_window_names_and_history() {
+        // Outside commands, U+FE0F mostly picks how an emoji looks, so it is left alone there.
+        assertEquals("deploy \u2764\uFE0F", visibleControls("deploy \u2764\uFE0F", keep = emptySet()))
+    }
 }

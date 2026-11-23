@@ -63,7 +63,7 @@ data class ApprovalText(
         ): ApprovalText {
             val detail = card.detail
             val text = detail?.text ?: card.description
-            val all = text.removeSuffix("\n").lines().map { visibleControls(it) }
+            val all = text.removeSuffix("\n").lines().map { visibleControls(it, markVariationSelectors = true) }
             val lineCount = maxOf(detail?.lineCount ?: all.size, all.size)
             val shown = if (expanded) all else collapse(all)
             val moreHere = hidesSome(shown, all)

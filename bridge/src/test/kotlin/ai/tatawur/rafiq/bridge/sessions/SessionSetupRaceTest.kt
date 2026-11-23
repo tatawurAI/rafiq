@@ -1,6 +1,11 @@
 package ai.tatawur.rafiq.bridge.sessions
 
 import ai.tatawur.rafiq.bridge.BridgeFixture
+import ai.tatawur.rafiq.bridge.FakeAdapter
+import ai.tatawur.rafiq.bridge.FakeAgentSession
+import ai.tatawur.rafiq.bridge.claudeLikeModes
+import ai.tatawur.rafiq.protocol.AgentState
+import ai.tatawur.rafiq.protocol.EventPayload
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -65,7 +70,7 @@ class SessionSetupRaceTest {
         runBlocking {
             val fixture = fixture()
             val create = async(Dispatchers.Default) { runCatching { fixture.sessions.create("fake", project, null) } }
-            stored.await()
+            val sessionId = stored.await()
 
             fixture.sessions.shutdown()
             // Stopped by the shutdown itself, not only once the create gets going again.
@@ -78,10 +83,44 @@ class SessionSetupRaceTest {
 
             val refused = assertThrows<SessionException.Conflict> { create.await().getOrThrow() }
             assertEquals("bridge_stopping", refused.code)
-            assertTrue(
-                fixture.adapter.started
-                    .single()
-                    .closed,
+            // The row was written before the shutdown, so it says it was interrupted, once, and is not left clean.
+            val interrupted =
+                fixture.log.after(sessionId, 0, 100).map { it.payload }.filter {
+                    it is EventPayload.StatusChanged && it.threadId == null && it.state == AgentState.ERROR
+                }
+            assertEquals(1, interrupted.size)
+            assertEquals(
+                AgentState.ERROR,
+                fixture.log
+                    .session(sessionId)
+                    ?.session
+                    ?.status,
             )
+        }
+
+    @Test
+    fun a_shutdown_before_a_new_session_is_stored_leaves_no_row() =
+        runBlocking {
+            val modeGate = CompletableDeferred<Unit>()
+            val agent = CompletableDeferred<FakeAgentSession>()
+            val adapter =
+                FakeAdapter(modes = claudeLikeModes()).apply {
+                    onStart = {
+                        it.setModeGate = modeGate
+                        agent.complete(it)
+                    }
+                }
+            val fixture =
+                BridgeFixture(dir.resolve("data"), adapter, defaultModes = mapOf("fake" to "default")).also(opened::add)
+            val create = async(Dispatchers.Default) { runCatching { fixture.sessions.create("fake", project, null) } }
+            // Held while the starting mode is set, before the row is written.
+            agent.await().setModeEntered.await()
+
+            fixture.sessions.shutdown()
+            modeGate.complete(Unit)
+
+            val refused = assertThrows<SessionException.Conflict> { create.await().getOrThrow() }
+            assertEquals("bridge_stopping", refused.code)
+            assertEquals(emptyList(), fixture.sessions.sessions())
         }
 }

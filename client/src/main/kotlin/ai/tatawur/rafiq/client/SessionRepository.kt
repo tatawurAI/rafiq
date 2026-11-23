@@ -2,6 +2,8 @@ package ai.tatawur.rafiq.client
 
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.ProjectFolderListing
+import ai.tatawur.rafiq.protocol.api.ProjectsOverview
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,12 +31,31 @@ interface SessionRepository {
     /** The agents the bridge can start, for "New session". */
     suspend fun agents(): CommandResult<List<String>>
 
-    /** Starts a session. A null [title] lets the bridge name it. */
+    /**
+     * Starts a session. A null [title] lets the bridge name it. A null [modeId] starts it in your server's
+     * default permission mode for the agent.
+     */
     suspend fun createSession(
         agent: String,
         projectPath: String,
         title: String?,
+        modeId: String? = null,
     ): CommandResult<Session>
+
+    /** Switches the session's permission mode. The new mode arrives as a `session_updated` event. */
+    suspend fun setMode(
+        sessionId: String,
+        modeId: String,
+    ): CommandResult<Unit>
+
+    /** Recent project folders on your server and the roots you may browse, for "New session". */
+    suspend fun projects(): CommandResult<ProjectsOverview>
+
+    /**
+     * The folders directly inside [path] on your server. A path outside the roots fails with
+     * `outside_project_roots`, and one that is not a folder comes back as [CommandResult.NotFound].
+     */
+    suspend fun projectFolders(path: String): CommandResult<ProjectFolderListing>
 
     /**
      * Sends a prompt to the session's main thread. The bridge logs it as a user message, so the

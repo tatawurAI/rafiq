@@ -12,6 +12,8 @@ import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.api.AuthErrorCodes
 import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.ProjectFolderListing
+import ai.tatawur.rafiq.protocol.api.ProjectsOverview
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.coroutines.CancellationException
@@ -112,7 +114,18 @@ class SyncingSessionRepository(
         agent: String,
         projectPath: String,
         title: String?,
-    ): CommandResult<Session> = api.createSession(agent, projectPath, title).noting()
+        modeId: String?,
+    ): CommandResult<Session> = api.createSession(agent, projectPath, title, modeId).noting()
+
+    override suspend fun setMode(
+        sessionId: String,
+        modeId: String,
+    ): CommandResult<Unit> = api.setMode(sessionId, modeId).noting()
+
+    override suspend fun projects(): CommandResult<ProjectsOverview> = api.projects().noting()
+
+    override suspend fun projectFolders(path: String): CommandResult<ProjectFolderListing> =
+        api.projectFolders(path).noting()
 
     override suspend fun prompt(
         sessionId: String,

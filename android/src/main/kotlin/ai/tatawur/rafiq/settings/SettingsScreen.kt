@@ -1,8 +1,10 @@
 package ai.tatawur.rafiq.settings
 
 import ai.tatawur.rafiq.R
+import ai.tatawur.rafiq.client.ApprovalUnlock
 import ai.tatawur.rafiq.terminal.BiometricCheck
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
+import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +19,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -55,6 +59,8 @@ fun SettingsRoute(
     settings: SecuritySettings,
     onBack: () -> Unit,
     onUnpair: () -> Unit = {},
+    approvalUnlock: ApprovalUnlock? = null,
+    notifications: @Composable () -> Unit = {},
 ) {
     val unpair = remember(onUnpair) { UnpairPrompt(onUnpair) }
     val askingUnpair by unpair.asking.collectAsStateWithLifecycle()
@@ -62,6 +68,29 @@ fun SettingsRoute(
     val scope = rememberCoroutineScope()
     val lockOn by settings.terminalLock.collectAsStateWithLifecycle(initialValue = false)
     val approvalLockOn by settings.approvalLock.collectAsStateWithLifecycle(initialValue = false)
+    val approvalLockReset by settings.approvalLockReset.collectAsStateWithLifecycle(initialValue = false)
+    val keyRefused = stringResource(R.string.approval_lock_not_created)
+    // The approval lock's key is made when the lock goes on and deleted when it goes off (issue #14).
+    val writeApprovalLock: suspend (Boolean) -> Unit = { on ->
+        when {
+            approvalUnlock == null -> {
+                settings.setApprovalLock(on)
+            }
+
+            !on -> {
+                approvalUnlock.lockTurnedOff()
+                settings.setApprovalLock(false)
+            }
+
+            approvalUnlock.lockTurnedOn() -> {
+                settings.setApprovalLock(true)
+            }
+
+            else -> {
+                Toast.makeText(context, keyRefused, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
     val available = remember { BiometricCheck.available(context) }
     val title = stringResource(R.string.settings_confirm_title)
     val terminalSubtitle = stringResource(R.string.settings_terminal_lock)
@@ -84,7 +113,9 @@ fun SettingsRoute(
         onTerminalLockChange = { on -> change(on, terminalSubtitle, settings::setTerminalLock) },
         onUnpair = unpair::ask,
         approvalLock = approvalLockOn,
-        onApprovalLockChange = { on -> change(on, approvalSubtitle, settings::setApprovalLock) },
+        onApprovalLockChange = { on -> change(on, approvalSubtitle, writeApprovalLock) },
+        approvalLockReset = approvalLockReset,
+        notifications = notifications,
     )
     if (askingUnpair) UnpairConfirmation(onConfirm = unpair::confirm, onDismiss = unpair::cancel)
 }
@@ -100,6 +131,8 @@ fun SettingsScreen(
     onUnpair: () -> Unit = {},
     approvalLock: Boolean = false,
     onApprovalLockChange: (Boolean) -> Unit = {},
+    approvalLockReset: Boolean = false,
+    notifications: @Composable () -> Unit = {},
 ) {
     val spacing = RafiqTheme.spacing
     val colors = RafiqTheme.colors
@@ -109,6 +142,7 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .consumeWindowInsets(WindowInsets.safeDrawing)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = spacing.medium, vertical = spacing.small),
         verticalArrangement = Arrangement.spacedBy(spacing.medium),
     ) {
@@ -141,6 +175,15 @@ fun SettingsScreen(
             biometricAvailable,
             onApprovalLockChange,
         )
+        if (approvalLockReset) {
+            Text(
+                stringResource(R.string.approval_lock_reset_short),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.needsYou,
+            )
+        }
+        HorizontalDivider(color = colors.border, thickness = spacing.hairline)
+        notifications()
         HorizontalDivider(color = colors.border, thickness = spacing.hairline)
         UnpairRow(onUnpair)
     }

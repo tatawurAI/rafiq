@@ -7,21 +7,38 @@ To build from source instead, follow the [README](../README.md#quickstart).
 ## What you need
 
 - A server running macOS or Linux, on arm64 or x64.
-- `curl` and `tar`, which every supported system has.
-- Python 3. The bridge's hook program is a Python script, and it runs on your server.
+- `curl`, `tar`, Python 3 and Node.js with npm. The bridge's hook program is a Python script, and the agent adapter in step 1 comes from npm. macOS has `curl`, `tar` and Python 3 built in, and you add Node.js with `brew install node` or from [nodejs.org](https://nodejs.org). On Debian or Ubuntu, a stock install has none of the others:
+
+  ```sh
+  sudo apt install curl ca-certificates python3 nodejs npm
+  ```
+
 - [Tailscale](https://tailscale.com) on your server and your phone. [docs/setup.md](setup.md) covers it.
 - tmux, only if you turn on Terminal and the Chat view for tmux sessions.
+
+## Put `~/.local/bin` on your PATH
+
+This install puts programs in `~/.local/bin`, and `rafiq-bridge setup` looks for the agent adapter on your `PATH`. Add the folder once:
+
+```sh
+mkdir -p ~/.local/bin
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The last line applies it to this terminal. New logins pick it up from `~/.profile`. If your shell is zsh on macOS, use `~/.zprofile` instead of `~/.profile`.
 
 ## 1. Install the agent adapter
 
 The bridge talks to your coding agent through an ACP adapter. It is a separate install, and the release does not include it. For Claude Code, install the adapter and sign in to Claude Code on your server:
 
 ```sh
-npm install -g @agentclientprotocol/claude-agent-acp
-claude
+npm install -g --prefix ~/.local @agentclientprotocol/claude-agent-acp
 ```
 
-`claude` opens Claude Code, where you sign in once. The bridge never signs in for you.
+The `--prefix` puts the adapter in `~/.local/bin`, so a normal user needs no `sudo`. A plain `npm install -g` fails with a permission error on Linux. If you installed Node.js with Homebrew on macOS, plain `npm install -g` works too.
+
+Then sign in to Claude Code on your server. Install it as [Claude Code's documentation](https://docs.claude.com/en/docs/claude-code) describes, run `claude`, and sign in once. The bridge never signs in for you.
 
 ## On macOS or Linux with Homebrew
 
@@ -55,11 +72,19 @@ curl --fail --location --remote-name "$base/SHA256SUMS"
 
 Check the download against the checksum list:
 
+On Linux:
+
+```sh
+grep " $archive\$" SHA256SUMS | sha256sum -c -
+```
+
+On macOS:
+
 ```sh
 grep " $archive\$" SHA256SUMS | shasum -a 256 -c -
 ```
 
-You should see `OK`. On a Linux system without `shasum`, use `sha256sum -c -` instead. The list comes from the same release, so it catches a damaged download. It does not prove who built the file.
+You should see `OK`. The list comes from the same release, so it catches a damaged download. It does not prove who built the file.
 
 ## 3. Unpack it
 
@@ -69,7 +94,7 @@ tar -xzf "$archive" -C ~/.local/opt
 ln -sf ~/.local/opt/rafiq-bridge-$version-$platform/bin/rafiq-bridge ~/.local/bin/rafiq-bridge
 ```
 
-The folder holds `bin/`, `lib/`, `hooks/` and `runtime/`, which is the Java runtime. Keep them together. The `rafiq-bridge` link works from any folder. Make sure `~/.local/bin` is on your `PATH`.
+The folder holds `bin/`, `lib/`, `hooks/` and `runtime/`, which is the Java runtime. Keep them together. The `rafiq-bridge` link works from any folder, because `~/.local/bin` is on your `PATH`.
 
 ## 4. Set it up
 

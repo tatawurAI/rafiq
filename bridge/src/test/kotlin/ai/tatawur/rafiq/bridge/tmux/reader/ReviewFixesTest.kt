@@ -137,6 +137,18 @@ class ReviewFixesTest {
             assertEquals(2, io.enters.size)
         }
 
+    // NEW-A. A prompt that starts with blank lines is matched by its first line with text.
+    @Test
+    fun a_prompt_that_starts_with_blank_lines_gets_its_enter() =
+        runTest {
+            val reader = attached()
+            io.onPaste = { io.screen = FakePaneIo.box("fix the test") }
+
+            reader.prompt(SESSION, "\n\nfix the test", "c-1")
+
+            assertEquals(1, io.enters.size)
+        }
+
     // NEW-3. A reply written while the bridge was down is shown, even when an older reply has the same words.
     @Test
     fun a_new_reply_with_the_words_of_an_older_one_is_backfilled_after_a_restart() =

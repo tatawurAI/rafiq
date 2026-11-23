@@ -8,6 +8,8 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.net.http.HttpTimeoutException
 import java.time.Duration
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import javax.net.ssl.SSLContext
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -87,10 +89,19 @@ class HttpPushSender(
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build()
         return try {
-            outcome(client.sendAsync(request, HttpResponse.BodyHandlers.discarding()).await().statusCode())
+            // The request timeout ends with the headers. This bounds the whole exchange, so an endpoint that drips its
+            // body cannot hold the worker.
+            val response =
+                client
+                    .sendAsync(request, HttpResponse.BodyHandlers.discarding())
+                    .orTimeout(2 * timeout.toMillis(), TimeUnit.MILLISECONDS)
+                    .await()
+            outcome(response.statusCode())
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (timedOut: HttpTimeoutException) {
+            SendOutcome.Retry(timedOut.javaClass.simpleName)
+        } catch (timedOut: TimeoutException) {
             SendOutcome.Retry(timedOut.javaClass.simpleName)
         } catch (failure: IOException) {
             SendOutcome.Retry(failure.javaClass.simpleName)

@@ -43,19 +43,25 @@ class WebPushEncryptor(
         val generator = KeyPairGenerator.getInstance("EC")
         generator.initialize(ECGenParameterSpec(CURVE), random)
         val salt = ByteArray(SALT_BYTES).also(random::nextBytes)
-        return encrypt(plaintext, uaPublic, authSecret, generator.generateKeyPair(), salt)
+        return encrypt(plaintext, uaPublic, authSecret, generator.generateKeyPair(), salt, PADDED_BYTES)
     }
 
-    /** The deterministic core, with the sender's key pair and the salt passed in. Tests feed it RFC 8291's values. */
+    /**
+     * The deterministic core, with the sender's key pair and the salt passed in. Tests feed it RFC 8291's values.
+     *
+     * @param paddedBytes the size of the record before encryption: the plaintext, the 0x02 delimiter and zero
+     *   padding after it (RFC 8188 section 2). Zero means no padding.
+     */
     internal fun encrypt(
         plaintext: ByteArray,
         uaPublic: ByteArray,
         authSecret: ByteArray,
         asKeys: KeyPair,
         salt: ByteArray,
+        paddedBytes: Int = 0,
     ): ByteArray {
-        // One record holds the plaintext, the 0x02 delimiter and the 16-byte tag.
         require(plaintext.size + 1 + TAG_BYTES <= RECORD_SIZE - HEADER_BYTES) { "The push payload is too large." }
+        require(paddedBytes == 0 || plaintext.size < paddedBytes) { "The push payload is larger than the padding." }
         val asPublic = encodePoint(asKeys.public as ECPublicKey)
         val ecdhSecret =
             KeyAgreement.getInstance("ECDH").run {
@@ -73,8 +79,10 @@ class WebPushEncryptor(
         val nonce = hmac(prk, "Content-Encoding: nonce".toByteArray() + 0 + 1).copyOf(NONCE_BYTES)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(cek, "AES"), GCMParameterSpec(TAG_BYTES * Byte.SIZE_BITS, nonce))
-        // 0x02 marks the last record. No padding beyond it.
-        val ciphertext = cipher.doFinal(plaintext + LAST_RECORD)
+        // 0x02 marks the last record. Zeros after it pad every payload kind to one size, so the push service cannot
+        // tell an approval from a finished turn by its length.
+        val record = (plaintext + LAST_RECORD).copyOf(maxOf(plaintext.size + 1, paddedBytes))
+        val ciphertext = cipher.doFinal(record)
         return ByteBuffer
             .allocate(HEADER_BYTES + ciphertext.size)
             .put(salt)
@@ -94,6 +102,9 @@ class WebPushEncryptor(
         private const val COORDINATE_BYTES = 32
         private const val UNCOMPRESSED: Byte = 0x04
         private const val LAST_RECORD: Byte = 0x02
+
+        /** Every push's record before encryption is this long, whatever its kind. */
+        const val PADDED_BYTES = 256
 
         /** The record size written in the header. Push services accept at least 4096 bytes. */
         const val RECORD_SIZE = 4096

@@ -116,8 +116,9 @@ fun main(args: Array<String>) {
         hookChannel?.close()
         runBlocking { claude?.close() }
         adminServer?.close()
-        deviceStore.close()
+        // Before the stores close, so no push worker or reader touches a closed connection.
         scope.cancel()
+        deviceStore.close()
         eventLog.close()
     }
 }

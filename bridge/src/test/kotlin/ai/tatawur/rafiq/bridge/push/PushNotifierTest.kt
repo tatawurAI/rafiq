@@ -12,6 +12,7 @@ import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.status
 import ai.tatawur.rafiq.bridge.store.DeviceStore
 import ai.tatawur.rafiq.bridge.store.EventLog
+import ai.tatawur.rafiq.bridge.store.StoredPush
 import ai.tatawur.rafiq.bridge.store.Subscription
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.ApprovalOption
@@ -21,6 +22,7 @@ import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.api.PushKind
 import ai.tatawur.rafiq.protocol.api.PushPayload
 import ai.tatawur.rafiq.protocol.protocolJson
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -59,12 +61,18 @@ class PushNotifierTest {
         val received = mutableListOf<Received>()
         val attempts = mutableListOf<String>()
 
+        val ids = HashMap<String, String>()
+
         /** The answer for each attempt, in order. Once empty, every attempt is accepted. */
         val script = ArrayDeque<SendOutcome>()
+
+        /** Run at the start of each attempt, in order, before [script]: one may throw or never return. */
+        val stalls = ArrayDeque<suspend () -> Unit>()
 
         private val transport =
             PushTransport { endpoint, body, _, urgency ->
                 attempts += endpoint
+                stalls.removeFirstOrNull()?.invoke()
                 val outcome = script.removeFirstOrNull() ?: SendOutcome.Accepted
                 if (outcome == SendOutcome.Accepted) {
                     val phone = phones.getValue(endpoint)
@@ -101,6 +109,7 @@ class PushNotifierTest {
             val endpoint = "https://push.example.ts.net/up/$name"
             val keys = TestPhoneKeys()
             phones[endpoint] = keys
+            ids[endpoint] = id
             if (register) StorePushRegistry(store).register(id, keys.registration(endpoint))
             return endpoint
         }
@@ -290,6 +299,12 @@ class PushNotifierTest {
             assertEquals(listOf("apr_2"), world.received.map { it.payload.approvalId })
         }
 
+    /** A turn on the main thread that fails: one error push. */
+    private suspend fun World.failedTurn() {
+        log.append(TEST_SESSION.id, status(AgentState.WORKING, TEST_MAIN_THREAD.id))
+        log.append(TEST_SESSION.id, status(AgentState.ERROR, TEST_MAIN_THREAD.id))
+    }
+
     @Test
     fun pushes_past_the_rate_cap_are_dropped_until_the_window_moves_on() =
         runTest {
@@ -299,19 +314,74 @@ class PushNotifierTest {
             world.log.seed()
             world.notifier.start()
 
-            repeat(5) { world.log.append(TEST_SESSION.id, approval("apr_$it")) }
+            repeat(5) { world.failedTurn() }
             runCurrent()
-            assertEquals(listOf("apr_0", "apr_1", "apr_2"), world.received.map { it.payload.approvalId })
+            assertEquals(3, world.received.size)
 
             advanceTimeBy(1.minutes)
-            world.log.append(TEST_SESSION.id, approval("apr_late"))
+            world.failedTurn()
             runCurrent()
-            assertEquals(
-                "apr_late",
-                world.received
-                    .last()
-                    .payload.approvalId,
-            )
+            assertEquals(4, world.received.size)
+        }
+
+    @Test
+    fun approvals_still_go_when_the_rate_cap_is_spent() =
+        runTest {
+            val world = World(this, settings = PushSettings(rateWindow = 10.minutes))
+            world.phone("phone")
+            world.log.seed()
+            world.notifier.start()
+            val main = TEST_MAIN_THREAD.id
+
+            repeat(31) {
+                world.log.append(TEST_SESSION.id, status(AgentState.WORKING, main))
+                world.log.append(TEST_SESSION.id, status(AgentState.WAITING_ON_YOU, main))
+                advanceTimeBy(4.seconds)
+            }
+            assertEquals(30, world.kinds().count { it == PushKind.TURN_DONE })
+
+            world.log.append(TEST_SESSION.id, approval("apr_1"))
+            world.log.append(TEST_SESSION.id, EventPayload.ApprovalResolved("apr_1"))
+            runCurrent()
+            assertEquals(listOf(PushKind.APPROVAL, PushKind.APPROVAL_CLEARED), world.kinds().takeLast(2))
+        }
+
+    @Test
+    fun a_push_that_throws_does_not_stop_the_next_one() =
+        runTest {
+            val world = World(this)
+            val endpoint = world.phone("phone")
+            val id = world.ids.getValue(endpoint)
+            world.log.seed()
+            world.notifier.start()
+            // Keys that slipped past validation: 0x04 and zeros is not a point, so encryption throws.
+            val broken = StoredPush(endpoint, byteArrayOf(4) + ByteArray(64), ByteArray(16))
+            world.store.setPush(id, broken, 0)
+
+            world.log.append(TEST_SESSION.id, approval("apr_1"))
+            runCurrent()
+            StorePushRegistry(world.store).register(id, world.phones.getValue(endpoint).registration(endpoint))
+            world.log.append(TEST_SESSION.id, approval("apr_2"))
+            runCurrent()
+
+            assertEquals(listOf("apr_2"), world.received.map { it.payload.approvalId })
+        }
+
+    @Test
+    fun a_send_that_never_returns_times_out_and_the_next_push_goes() =
+        runTest {
+            val world = World(this)
+            world.phone("phone")
+            world.log.seed()
+            world.notifier.start()
+            repeat(PushSettings().attempts) { world.stalls += { awaitCancellation() } }
+
+            world.log.append(TEST_SESSION.id, approval("apr_1"))
+            advanceTimeBy(5.minutes)
+            world.log.append(TEST_SESSION.id, approval("apr_2"))
+            runCurrent()
+
+            assertEquals(listOf("apr_2"), world.received.map { it.payload.approvalId })
         }
 
     @Test
@@ -333,6 +403,16 @@ class PushNotifierTest {
 
             assertEquals(1, world.attempts.size)
             assertNull(world.received.firstOrNull())
+
+            // Registering again starts a new worker for the phone.
+            val endpoint = world.phones.keys.single()
+            StorePushRegistry(world.store).register(
+                world.ids.getValue(endpoint),
+                world.phones.getValue(endpoint).registration(endpoint),
+            )
+            world.log.append(TEST_SESSION.id, approval("apr_3"))
+            runCurrent()
+            assertEquals(listOf("apr_3"), world.received.map { it.payload.approvalId })
         }
 
     @Test

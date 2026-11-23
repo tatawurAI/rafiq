@@ -72,7 +72,7 @@ class ProjectPickerModelTest {
         runTest {
             val model = model()
 
-            model.type("/home/dev/docs-site")
+            model.type("/opt/docs-site")
             settle()
 
             assertEquals(PathCheck.OutsideRoots, model.state.value.check)

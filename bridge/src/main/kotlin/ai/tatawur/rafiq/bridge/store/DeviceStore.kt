@@ -35,6 +35,21 @@ sealed interface DeviceLookup {
     data object Unknown : DeviceLookup
 }
 
+/**
+ * Where one device's pushes go: its UnifiedPush endpoint and the Web Push keys from its registration, decoded.
+ *
+ * @property p256dh the phone's P-256 public key, 65 bytes uncompressed.
+ * @property auth the 16-byte authentication secret.
+ */
+class StoredPush(
+    val endpoint: String,
+    val p256dh: ByteArray,
+    val auth: ByteArray,
+) {
+    // The endpoint is a capability: anyone holding it can push to the phone.
+    override fun toString(): String = "StoredPush(endpoint=<hidden>)"
+}
+
 /** What [DeviceStore.revoke] did. */
 enum class RevokeOutcome { REVOKED, ALREADY_REVOKED, NOT_FOUND }
 
@@ -209,20 +224,26 @@ class DeviceStore(
                 }
         }
 
-    /** Marks [id] revoked. The row stays, so the next request with its token can be told apart from a wrong one. */
+    /**
+     * Marks [id] revoked and deletes its push registration in the same transaction, so no push reaches a
+     * revoked phone. The device row stays, so the next request with its token can be told apart from a wrong one.
+     */
     suspend fun revoke(
         id: String,
         nowMs: Long,
     ): RevokeOutcome =
         withContext(dispatcher) {
             val changed =
-                connection
-                    .prepareStatement("UPDATE devices SET revoked_at_ms = ? WHERE id = ? AND revoked_at_ms IS NULL")
-                    .use {
-                        it.setLong(1, nowMs)
-                        it.setString(2, id)
-                        it.executeUpdate()
-                    }
+                transaction {
+                    deletePushRow(id)
+                    connection
+                        .prepareStatement("UPDATE devices SET revoked_at_ms = ? WHERE id = ? AND revoked_at_ms IS NULL")
+                        .use {
+                            it.setLong(1, nowMs)
+                            it.setString(2, id)
+                            it.executeUpdate()
+                        }
+                }
             when {
                 changed == 1 -> RevokeOutcome.REVOKED
                 list().any { it.id == id } -> RevokeOutcome.ALREADY_REVOKED
@@ -284,6 +305,82 @@ class DeviceStore(
             Unit
         }
 
+    /**
+     * Stores where [deviceId]'s pushes go, replacing an earlier registration. Only an active device can hold one,
+     * so a registration that races a revoke is never left behind.
+     *
+     * @return false when the device is unknown or revoked, and nothing was stored.
+     */
+    suspend fun setPush(
+        deviceId: String,
+        push: StoredPush,
+        nowMs: Long,
+    ): Boolean =
+        withContext(dispatcher) {
+            connection
+                .prepareStatement(
+                    """INSERT INTO push_registrations (device_id, endpoint, p256dh, auth, updated_at_ms)
+                       SELECT ?, ?, ?, ?, ? WHERE EXISTS
+                         (SELECT 1 FROM devices WHERE id = ? AND revoked_at_ms IS NULL)
+                       ON CONFLICT(device_id) DO UPDATE SET endpoint = excluded.endpoint, p256dh = excluded.p256dh,
+                         auth = excluded.auth, updated_at_ms = excluded.updated_at_ms""",
+                ).use {
+                    it.setString(1, deviceId)
+                    it.setString(2, push.endpoint)
+                    it.setBytes(3, push.p256dh)
+                    it.setBytes(4, push.auth)
+                    it.setLong(5, nowMs)
+                    it.setString(6, deviceId)
+                    it.executeUpdate() == 1
+                }
+        }
+
+    /**
+     * Deletes [deviceId]'s push registration. With [endpoint], only while it still points there, so a push
+     * service's "gone" for an old endpoint never deletes a registration the phone has just replaced.
+     */
+    suspend fun deletePush(
+        deviceId: String,
+        endpoint: String? = null,
+    ) = withContext(dispatcher) {
+        if (endpoint == null) {
+            deletePushRow(deviceId)
+        } else {
+            connection.prepareStatement("DELETE FROM push_registrations WHERE device_id = ? AND endpoint = ?").use {
+                it.setString(1, deviceId)
+                it.setString(2, endpoint)
+                it.executeUpdate()
+            }
+        }
+        Unit
+    }
+
+    /** The push registration of [deviceId] while the device is active, or null. */
+    suspend fun push(deviceId: String): StoredPush? =
+        withContext(dispatcher) {
+            connection.prepareStatement("$SELECT_PUSH AND p.device_id = ?").use { statement ->
+                statement.setString(1, deviceId)
+                statement.executeQuery().use { rows -> if (rows.next()) rows.push().second else null }
+            }
+        }
+
+    /** The ids of the active devices that registered for pushes. */
+    suspend fun pushDevices(): List<String> =
+        withContext(dispatcher) {
+            connection.prepareStatement(SELECT_PUSH).use { statement ->
+                statement.executeQuery().use { rows -> buildList { while (rows.next()) add(rows.push().first) } }
+            }
+        }
+
+    private fun deletePushRow(deviceId: String) {
+        connection.prepareStatement("DELETE FROM push_registrations WHERE device_id = ?").use {
+            it.setString(1, deviceId)
+            it.executeUpdate()
+        }
+    }
+
+    private fun java.sql.ResultSet.push() = getString(1) to StoredPush(getString(2), getBytes(3), getBytes(4))
+
     override fun close() = connection.close()
 
     @Suppress("TooGenericExceptionCaught") // Roll back on any failure, then rethrow it.
@@ -323,6 +420,9 @@ class DeviceStore(
             }
 
         private const val SELECT_DEVICE = "SELECT id, name, created_at_ms, last_seen_ms, revoked_at_ms"
+        private const val SELECT_PUSH =
+            "SELECT p.device_id, p.endpoint, p.p256dh, p.auth FROM push_registrations p " +
+                "JOIN devices d ON d.id = p.device_id WHERE d.revoked_at_ms IS NULL"
         private const val PURGE_CODES = "DELETE FROM pairing_codes WHERE used_at_ms IS NOT NULL OR expires_at_ms <= ?"
         private const val FIND_LIVE_CODE =
             "SELECT name FROM pairing_codes WHERE code_hash = ? AND used_at_ms IS NULL AND expires_at_ms > ?"
@@ -349,6 +449,14 @@ class DeviceStore(
                      name TEXT NOT NULL,
                      expires_at_ms INTEGER NOT NULL,
                      used_at_ms INTEGER
+                   )""",
+                // One registration per device. The endpoint is a capability, like a token, so the file stays 0600.
+                """CREATE TABLE IF NOT EXISTS push_registrations (
+                     device_id TEXT PRIMARY KEY REFERENCES devices(id),
+                     endpoint TEXT NOT NULL,
+                     p256dh BLOB NOT NULL,
+                     auth BLOB NOT NULL,
+                     updated_at_ms INTEGER NOT NULL
                    )""",
             )
 

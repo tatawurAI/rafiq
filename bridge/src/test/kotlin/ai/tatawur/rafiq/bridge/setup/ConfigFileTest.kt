@@ -135,4 +135,41 @@ class ConfigFileTest {
         val refused = assertFailsWith<IllegalArgumentException> { ConfigFile.checkPrivate(file, uid + 1) }
         assertTrue(refused.message.orEmpty().startsWith("$file belongs to user id $uid"), refused.message)
     }
+
+    @Test
+    fun an_unknown_user_id_is_refused_rather_than_skipping_the_checks() {
+        writeFile("RAFIQ_PORT=9000\n")
+
+        val refused = assertFailsWith<IllegalArgumentException> { ConfigFile.checkPrivate(file, uid = null) }
+        assertTrue("could not tell which user" in refused.message.orEmpty())
+    }
+
+    @Test
+    fun a_settings_folder_that_is_a_symbolic_link_is_refused() {
+        val real = home.resolve("dotfiles/rafiq")
+        ConfigFile.write(real.resolve("bridge.conf"), "RAFIQ_PORT=9000\n")
+        Files.createDirectories(file.parent.parent)
+        Files.createSymbolicLink(file.parent, real)
+
+        val refused = assertFailsWith<IllegalArgumentException> { ConfigFile.read(file) }
+        assertTrue("symbolic link" in refused.message.orEmpty())
+    }
+
+    @Test
+    fun the_user_id_comes_from_proc_self_and_otherwise_from_id_u() {
+        val uid = assertNotNull(ConfigFile.processUid)
+        val noProc = home.resolve("no-proc")
+        val asked = mutableListOf<List<String>>()
+
+        assertEquals(
+            uid,
+            ConfigFile.effectiveUid(home) {
+                asked += it
+                CommandResult(0, "")
+            },
+        )
+        assertTrue(asked.isEmpty())
+        assertEquals(501, ConfigFile.effectiveUid(noProc) { CommandResult(0, "501\n") })
+        assertEquals(null, ConfigFile.effectiveUid(noProc) { CommandResult(127, "id: not found") })
+    }
 }

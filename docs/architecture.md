@@ -111,7 +111,10 @@ The health, session, summary, agent, thread, prompt, cancel, approval and event 
 | `WS /events?session=&after=` | Stream a session's events, replaying from sequence `after` |
 | `WS /terminal?session=` | Mirror a tmux session's pane and take your keys. Exists only when Terminal is on. See [Terminal](#terminal). |
 | `GET /terminal/history?session=&window=&lines=` | Read-only scrollback of a pane of an allowed tmux session. Exists only when Terminal is on. See [Terminal](#terminal). |
-| `POST /sessions` | Start a session (agent, project) |
+| `POST /sessions` | Start a session (agent, project, and optionally `mode_id`, one of the permission modes the agent advertises). Without `mode_id` the session starts in the agent's entry of `RAFIQ_DEFAULT_MODES`. A mode the agent does not offer is 400 `unknown_mode`. A configured default it does not offer is 409 `default_mode_unavailable`, and the session is not started. |
+| `POST /sessions/{id}/mode` | Switch a session's permission mode. Logged as `session_updated`, which carries `permission_mode` and `available_modes`. An unknown mode is 400 `unknown_mode`. A tmux session is 409 `mode_not_supported`. A resumed session gets its mode back before the next prompt. |
+| `GET /projects` | Recent project folders, newest first and only those that still exist, and the roots from `RAFIQ_PROJECT_ROOTS` |
+| `GET /projects/folders?path=` | The folders directly inside a folder under a root, sorted, without hidden ones, capped at 500. A path outside every root, by `..` or a symlink too, is 403 `outside_project_roots`. A missing folder or a file is 404 `not_a_folder`. Names only, never file contents. |
 | `GET /sessions` | List sessions. With Terminal on, this includes the allowed tmux sessions. |
 | `GET /sessions/summaries` | List sessions with what the session list shows: the newest event `seq`, a one-line preview of the newest agent or user message on the main thread, and the approvals still open, oldest first. Read from small summary tables kept with the log, so polling it is cheap. |
 | `GET /agents` | The agents you can start a session with, as `{"id": ...}` objects |

@@ -126,6 +126,32 @@ What it does not do:
 - `tailscale funnel` requests carry no identity header, so they are refused. Never use funnel for the bridge anyway.
 - A login with non-ASCII characters is not supported. Tailscale sends it encoded, and the bridge refuses it. The bridge also will not start if `RAFIQ_TAILSCALE_LOGIN` holds an encoded value.
 
+## Project folders and permission modes
+
+New session on your phone offers your recent project folders, and lets you browse folders on your server one level at a time. It also sets the permission mode the agent starts in.
+
+`RAFIQ_PROJECT_ROOTS` lists the folders you may browse, as absolute paths separated by commas:
+
+```sh
+export RAFIQ_PROJECT_ROOTS=/srv/projects,/srv/sandbox
+```
+
+- The phone sees folder names only, one level at a time, and never file contents.
+- The bridge refuses any path outside these folders, including one that leaves a root through `..` or a symlink.
+- Hidden folders are not listed, and a folder shows at most 500 folders.
+- Without the setting, nothing can be browsed. Recent projects and a typed path still work.
+
+`RAFIQ_DEFAULT_MODES` sets the permission mode a session starts in when you do not pick one, as `agent=mode` pairs separated by commas. Set it so sessions from your phone ask before edits and commands, whatever your server's own agent settings say:
+
+```sh
+export RAFIQ_DEFAULT_MODES=claude-code=default
+```
+
+- The mode names come from the agent. For Claude Code, `default` asks before edits and commands, `acceptEdits` accepts file edits, `plan` plans before changing anything, `auto` lets Claude Code decide, and `bypassPermissions` never asks.
+- An agent with no entry starts in whatever mode it picks itself, which can be one that never asks.
+- If the agent does not offer the mode you set, the bridge refuses to start the session and says so, rather than start it in a mode that might never ask.
+- You can change the mode of a running session from its header on your phone. Sessions in tmux keep the mode you set in the agent itself.
+
 ## Terminal
 
 Terminal shows a tmux session on your server in the app, and sends your keys to it. It is a remote shell. It is off until you turn it on, and it reaches only the sessions you name.

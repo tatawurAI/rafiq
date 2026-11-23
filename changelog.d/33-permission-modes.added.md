@@ -1,0 +1,1 @@
+You can pick the permission mode a session starts in, see the current mode in the session header and change it while the session runs. Your server can set a default per agent with `RAFIQ_DEFAULT_MODES`, so sessions from your phone ask before edits and commands.

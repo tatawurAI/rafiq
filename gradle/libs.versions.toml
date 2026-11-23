@@ -48,6 +48,9 @@ okhttp = "5.5.1"
 datastore = "1.3.0"
 lifecycle = "2.11.1"
 
+# Push through UnifiedPush (ADR 0010). Apache-2.0. It manages the Web Push key pair and decrypts with Tink.
+unifiedpush-connector = "3.3.5"
+
 spotless = "8.11.0"
 ktlint = "1.8.0"
 detekt = "1.23.8"
@@ -90,6 +93,7 @@ lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-com
 window = { module = "androidx.window:window", version.ref = "window" }
 termlib = { module = "org.connectbot:termlib", version.ref = "termlib" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
+unifiedpush-connector = { module = "org.unifiedpush.android:connector", version.ref = "unifiedpush-connector" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }

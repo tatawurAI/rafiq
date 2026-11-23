@@ -2,12 +2,15 @@ package ai.tatawur.rafiq
 
 import ai.tatawur.rafiq.data.RafiqApplication
 import ai.tatawur.rafiq.pairing.PairingScreen
+import ai.tatawur.rafiq.push.OpenSessionIntent
+import ai.tatawur.rafiq.push.PushSettingsRoute
 import ai.tatawur.rafiq.settings.SettingsRoute
 import ai.tatawur.rafiq.terminal.MultiTouchGate
 import ai.tatawur.rafiq.ui.fold.LocalHinge
 import ai.tatawur.rafiq.ui.fold.rememberHinge
 import ai.tatawur.rafiq.ui.navigation.RafiqNavHost
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.MotionEvent
@@ -39,6 +42,8 @@ class MainActivity : ComponentActivity() {
         // The screens see only the repository interfaces from :client.
         val container = (application as RafiqApplication).container
         val sessions = sessionsForLaunch(intent, container.sessions)
+        // Push: a notification tap that started the app opens its session.
+        OpenSessionIntent.sessionOf(intent)?.let(container.push::open)
         setContent {
             // Folding is handled as a configuration change (see the manifest), so the hinge updates
             // in place and the screens keep their scroll position.
@@ -56,12 +61,25 @@ class MainActivity : ComponentActivity() {
                                 SettingsRoute(
                                     container.security,
                                     onBack,
-                                ) { lifecycleScope.launch { container.pairing.unpair() } }
+                                    onUnpair = { lifecycleScope.launch { container.pairing.unpair() } },
+                                    approvalUnlock = container.approvals.unlock,
+                                    notifications = { PushSettingsRoute(container.push) },
+                                )
                             },
+                            // Push: open the session a notification names; tell push which session is on screen.
+                            openRequest = container.push.openRequest,
+                            onOpened = container.push::opened,
+                            onSessionShown = container.push::sessionShown,
                         )
                     }
                 }
             }
         }
+    }
+
+    // Push: a notification tap while the app is open (singleTop) opens its session.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        OpenSessionIntent.sessionOf(intent)?.let((application as RafiqApplication).container.push::open)
     }
 }

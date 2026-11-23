@@ -78,6 +78,9 @@ dependencies {
     // The Terminal view's emulator.
     implementation(libs.termlib)
 
+    // Push through a UnifiedPush distributor such as ntfy (ADR 0010).
+    implementation(libs.unifiedpush.connector)
+
     // JVM unit tests for the screens' state holders.
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)

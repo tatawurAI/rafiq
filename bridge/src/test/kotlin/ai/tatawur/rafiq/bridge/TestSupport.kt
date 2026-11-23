@@ -15,6 +15,7 @@ import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.SessionMode
 import ai.tatawur.rafiq.protocol.ThreadKind
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * An agent that does only what a test scripts: the test pushes payloads, and prompts are recorded.
@@ -66,6 +68,20 @@ class FakeAgentSession(
     private val modeState = MutableStateFlow(modes)
     val prompts = CopyOnWriteArrayList<Pair<String, String>>()
 
+    /** The mode the agent was in at each prompt, in order. */
+    val promptModes = CopyOnWriteArrayList<String?>()
+
+    /** When set, [setMode] waits for it before the agent answers, to hold a mode change open. */
+    @Volatile var setModeGate: CompletableDeferred<Unit>? = null
+
+    private val inSetMode = AtomicBoolean(false)
+
+    /** True once [setMode] was called while an earlier call had not been answered. */
+    @Volatile var overlappingSetMode = false
+
+    /** Completes when [setMode] is first called. */
+    val setModeEntered = CompletableDeferred<Unit>()
+
     /** Every mode the bridge switched to, in order. */
     val modeChanges = CopyOnWriteArrayList<String>()
 
@@ -99,6 +115,7 @@ class FakeAgentSession(
     ) {
         failure?.let { throw it }
         prompts += threadId to text
+        promptModes += modeState.value.currentModeId
         // Like the real adapter: it reports the turn starting, but never echoes the user's message.
         emit(status(AgentState.WORKING, threadId))
     }
@@ -124,7 +141,15 @@ class FakeAgentSession(
     override suspend fun setMode(modeId: String) {
         failure?.let { throw it }
         require(modeState.value.offers(modeId)) { "No mode $modeId." }
-        modeChanges += modeId
+        // A second change while one is still open means a request reached a session that was not ready.
+        if (!inSetMode.compareAndSet(false, true)) overlappingSetMode = true
+        try {
+            setModeEntered.complete(Unit)
+            setModeGate?.await()
+            modeChanges += modeId
+        } finally {
+            inSetMode.set(false)
+        }
         modeState.value = modeState.value.copy(currentModeId = modeId)
     }
 

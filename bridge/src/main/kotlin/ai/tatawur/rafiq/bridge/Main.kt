@@ -5,6 +5,10 @@ import ai.tatawur.rafiq.bridge.hook.HookSettings
 import ai.tatawur.rafiq.bridge.hook.HookSetup
 import ai.tatawur.rafiq.bridge.hook.NoopHookSink
 import ai.tatawur.rafiq.bridge.projects.FolderCatalog
+import ai.tatawur.rafiq.bridge.push.HttpPushSender
+import ai.tatawur.rafiq.bridge.push.PushNotifier
+import ai.tatawur.rafiq.bridge.push.PushRegistry
+import ai.tatawur.rafiq.bridge.push.StorePushRegistry
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.DeviceAdminServer
 import ai.tatawur.rafiq.bridge.server.DeviceService
@@ -83,6 +87,8 @@ fun main(args: Array<String>) {
         sessions.recoverAfterRestart()
         terminal?.prepare()
     }
+    // After recovery, so the events recovery writes about the past are never pushed.
+    val push = startPush(config, deviceStore, eventLog, sessions, scope)
     terminal?.source?.start(scope)
     terminal?.let { warnAboutInheritedSecrets(it) }
     val hookChannel = hookDir?.let { dir -> HookChannel(dir, claude ?: NoopHookSink, scope).start() }
@@ -100,6 +106,7 @@ fun main(args: Array<String>) {
                 devices,
                 hooks,
                 projects = projects,
+                push = push,
             )
             // After the token check, so a request with no token still gets 401 first.
             installIdentityCheck(config.tailscaleLogin)
@@ -112,6 +119,31 @@ fun main(args: Array<String>) {
         scope.cancel()
         eventLog.close()
     }
+}
+
+/**
+ * Push (ADR 0010): the registrations for `/devices/me/push`, and the notifier, started. With `RAFIQ_PUSH=0` there is
+ * neither, and the route is left out.
+ */
+internal fun startPush(
+    config: BridgeConfig,
+    deviceStore: DeviceStore,
+    eventLog: EventLog,
+    sessions: SessionManager,
+    scope: CoroutineScope,
+): PushRegistry? {
+    if (!config.push) return null
+    val notifier =
+        PushNotifier(
+            subscribe = eventLog::subscribeAll,
+            threadsOf = eventLog::threads,
+            store = deviceStore,
+            visible = sessions::isVisible,
+            transport = HttpPushSender(),
+            scope = scope,
+        )
+    runBlocking { notifier.start() }
+    return StorePushRegistry(deviceStore)
 }
 
 /** With tmux sessions off none of this exists, so no tmux command runs and no tmux session is listed. */

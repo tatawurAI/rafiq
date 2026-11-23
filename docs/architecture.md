@@ -117,6 +117,8 @@ The health, session, summary, agent, thread, prompt, cancel, approval and event 
 | `GET /agents` | The agents you can start a session with, as `{"id": ...}` objects |
 | `POST /pair` | Trade a pairing code for this phone's device token. Needs no token, because it is where a phone gets one. Host and origin checks still apply. A wrong, expired or used code is 401 `invalid_pairing_code`. After 100 wrong codes in five minutes, every attempt is 429 `too_many_attempts` with `Retry-After`. |
 | `DELETE /devices/me` | Revoke the calling device and close its open sockets. Answers 204. Used when you unpair in the app. It cannot affect another device. |
+| `PUT /devices/me/push` | Register where the calling device's pushes go: its UnifiedPush endpoint and Web Push keys (`endpoint`, `p256dh`, `auth`). Replaces an earlier one. Answers 204. A bad endpoint or key is 400 `invalid_push_registration`. Exists unless `RAFIQ_PUSH=0`. See [Push](#push). |
+| `DELETE /devices/me/push` | Stop pushes to the calling device. Answers 204. Exists unless `RAFIQ_PUSH=0`. |
 | `GET /sessions/{id}/threads` | List a session's threads |
 | `POST /sessions/{id}/prompt` | Send a prompt. Prompts go to the main thread, and a helper thread is refused. For a tmux session the send guard decides first: a refusal is `409` with a `SendRefusal` code, and what happens next comes as `prompt_delivery` events matched by `client_id`. See [Chat for tmux sessions](#chat-for-tmux-sessions). |
 | `POST /sessions/{id}/threads/{threadId}/cancel` | Stop the current turn on a thread |
@@ -215,6 +217,17 @@ Each phone is a device with its own token. The bridge keeps devices and one-time
 - **The legacy token.** `RAFIQ_DEVICE_TOKEN` becomes the device `legacy` at start, so a phone paired before per-device tokens keeps working. Revoking `legacy` is permanent, even if the variable is still set.
 
 This does not cover anyone with a shell as the bridge's user. See [SECURITY.md](../SECURITY.md) and ADR 0012.
+
+### Push
+
+When an agent needs you and the app is closed, the bridge sends a push through UnifiedPush. See [ADR 0010](adr/0010-push-transport.md).
+
+- **Registration.** The app sends its distributor's endpoint and a Web Push key pair with `PUT /devices/me/push`. The bridge accepts only an `https` endpoint with a host and no user name or password, up to 1024 characters, a P-256 public key that lies on the curve, and a 16-byte auth secret. It keeps one registration per device in `rafiq.db`. Revoking the device deletes it in the same transaction.
+- **What pushes.** The notifier reads every session's live events. An approval opening pushes `approval`, and its answer pushes `approval_cleared`. The main thread stopping after a turn it was seen working on pushes `turn_done`, once it has stayed stopped for 3 seconds. A session or thread failing after it was seen running pushes `error`, once per turn. Only changes the notifier saw happen count, so the events a restart writes about the past never push.
+- **Who gets it.** Every active device with a registration, for a session the bridge lists.
+- **The payload.** A `PushPayload` with ids and a kind only, encrypted for the phone with RFC 8291 (`aes128gcm`), so the push service sees neither. The app fetches what it shows from the bridge.
+- **Sending.** `https` only, no redirects, 5 second timeouts, and the response body is never read. `TTL` is one hour, and approvals go with `Urgency: high`. A 404 or 410 deletes the registration. Other failures are tried up to three times with backoff. Each device gets at most 30 pushes a minute. The endpoint is never logged.
+- **Off switch.** `RAFIQ_PUSH=0` leaves out the routes and the notifier.
 
 ### Auth relay
 

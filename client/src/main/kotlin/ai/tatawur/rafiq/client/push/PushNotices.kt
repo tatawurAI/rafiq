@@ -9,6 +9,9 @@ import ai.tatawur.rafiq.protocol.api.PushKind
 import ai.tatawur.rafiq.protocol.api.PushPayload
 import ai.tatawur.rafiq.protocol.api.SessionSummary
 import ai.tatawur.rafiq.protocol.protocolJson
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * What the phone shows for one push. A push carries ids and a kind only (ADR 0010), so everything a
@@ -59,10 +62,14 @@ sealed interface PushNotice {
  *
  * @param isShowing true when the app is in the foreground on that session, which already shows what the push
  *   is about. Then nothing is shown, so you are not told twice.
+ * @param fetchBudget how long to wait for your server before showing the generic notification. The UnifiedPush
+ *   connector keeps the app's push service bound for five seconds after a push, and after that Android may
+ *   freeze the process, so the fetch has to finish well inside that.
  */
 class PushNotices(
     private val api: BridgeApi,
     private val isShowing: (sessionId: String) -> Boolean,
+    private val fetchBudget: Duration = DEFAULT_FETCH_BUDGET,
 ) {
     /**
      * @param content the push's body after Web Push decryption.
@@ -83,10 +90,13 @@ class PushNotices(
     private suspend fun fetched(payload: PushPayload): PushNotice {
         if (isShowing(payload.sessionId)) return PushNotice.Nothing
         val generic = PushNotice.Generic(payload.sessionId, payload.kind, payload.approvalId)
-        return when (val result = api.summaries()) {
+        return when (val result = withTimeoutOrNull(fetchBudget) { api.summaries() }) {
             is CommandResult.Ok -> fromSummary(payload, result.value.find { it.session.id == payload.sessionId })
+
             // A phone your server no longer accepts shows nothing at all.
             CommandResult.Unauthorized -> PushNotice.Nothing
+
+            // Too slow, offline, or any other failure.
             else -> generic
         }
     }
@@ -103,8 +113,10 @@ class PushNotices(
                 val request = summary.openApprovals.find { it.id == approvalId }
                 when {
                     request != null -> PushNotice.Approval(summary.session, request.toCard(summary.session.id, null))
+
                     // Answered before the phone asked. Any notification already up for it goes too.
                     approvalId != null -> PushNotice.Clear(approvalId)
+
                     else -> PushNotice.Nothing
                 }
             }
@@ -123,8 +135,11 @@ class PushNotices(
         }
     }
 
-    private companion object {
-        fun decode(content: ByteArray): PushPayload? =
+    companion object {
+        /** Four seconds: inside the connector's five-second binding, with room to post the notification. */
+        val DEFAULT_FETCH_BUDGET: Duration = 4.seconds
+
+        private fun decode(content: ByteArray): PushPayload? =
             try {
                 protocolJson.decodeFromString(PushPayload.serializer(), content.toString(Charsets.UTF_8))
             } catch (_: IllegalArgumentException) {

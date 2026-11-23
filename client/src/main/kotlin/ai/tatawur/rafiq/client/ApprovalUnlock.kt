@@ -78,7 +78,8 @@ class ApprovalUnlock(
         var use = key.use()
         // A lock turned on before this key existed gets its key now. Making one needs no check.
         if (use == KeyUse.MISSING) use = if (key.create()) key.use() else KeyUse.BROKEN
-        if (use == KeyUse.NEEDS_CHECK) use = if (askBiometric()) key.use() else return Unlock.REFUSED
+        // A failed or cancelled prompt leaves NEEDS_CHECK, which refuses below.
+        if (use == KeyUse.NEEDS_CHECK && askBiometric()) use = key.use()
         return when (use) {
             KeyUse.USABLE -> {
                 Unlock.ALLOWED

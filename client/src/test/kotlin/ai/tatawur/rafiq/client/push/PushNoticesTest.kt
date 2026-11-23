@@ -13,6 +13,7 @@ import ai.tatawur.rafiq.protocol.api.PushKind
 import ai.tatawur.rafiq.protocol.api.PushPayload
 import ai.tatawur.rafiq.protocol.api.SessionSummary
 import ai.tatawur.rafiq.protocol.protocolJson
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.builtins.ListSerializer
 import java.io.IOException
@@ -20,6 +21,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * A push is untrusted and carries ids only (ADR 0010). What the phone shows comes from your server, and only
@@ -64,6 +66,22 @@ class PushNoticesTest {
         }
 
     @Test
+    fun a_fetch_slower_than_the_budget_shows_the_generic_notification() =
+        runTest {
+            val notices =
+                notices(
+                    HttpTransport {
+                        delay(PushNotices.DEFAULT_FETCH_BUDGET + 1.seconds)
+                        listed(open = listOf(request("apr_1"))).execute(it)
+                    },
+                )
+
+            val notice = notices.noticeFor(push(PushKind.APPROVAL, "apr_1"), decrypted = true)
+
+            assertEquals(PushNotice.Generic(SESSION, PushKind.APPROVAL, "apr_1"), notice)
+        }
+
+    @Test
     fun a_cleared_approval_removes_its_notification_and_so_does_one_answered_before_the_fetch() =
         runTest {
             val notices = notices(listed(open = emptyList()))
@@ -73,7 +91,10 @@ class PushNoticesTest {
                 notices.noticeFor(push(PushKind.APPROVAL_CLEARED, "apr_1"), decrypted = true),
             )
             assertTrue(requests.isEmpty(), "clearing needs nothing from your server")
-            assertEquals(PushNotice.Clear("apr_2"), notices.noticeFor(push(PushKind.APPROVAL, "apr_2"), decrypted = true))
+            assertEquals(
+                PushNotice.Clear("apr_2"),
+                notices.noticeFor(push(PushKind.APPROVAL, "apr_2"), decrypted = true),
+            )
         }
 
     @Test
@@ -104,7 +125,10 @@ class PushNoticesTest {
         transport: HttpTransport,
         showing: String? = null,
     ) = PushNotices(
-        BridgeApi({ request -> requests += request; transport.execute(request) }) {
+        BridgeApi({ request ->
+            requests += request
+            transport.execute(request)
+        }) {
             BridgeCredentials("https://bridge.example.ts.net", "test-token")
         },
         isShowing = { it == showing },
@@ -137,8 +161,10 @@ class PushNoticesTest {
         sessionId: String = SESSION,
     ): ByteArray =
         protocolJson
-            .encodeToString(PushPayload.serializer(), PushPayload(kind = kind, sessionId = sessionId, approvalId = approvalId))
-            .toByteArray()
+            .encodeToString(
+                PushPayload.serializer(),
+                PushPayload(kind = kind, sessionId = sessionId, approvalId = approvalId),
+            ).toByteArray()
 
     private companion object {
         const val SESSION = "ses_weather_app"

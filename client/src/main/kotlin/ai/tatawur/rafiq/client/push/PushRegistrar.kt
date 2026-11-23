@@ -181,9 +181,9 @@ class PushRegistrar(
     }
 
     private suspend fun sendIfNeeded() {
-        val paired = pairedWith ?: return
-        val registration = endpoint ?: return
-        if (sent == paired to registration) return
+        val paired = pairedWith
+        val registration = endpoint
+        if (paired == null || registration == null || sent == paired to registration) return
         state.value =
             when (val result = api.registerPush(registration)) {
                 is CommandResult.Ok -> {

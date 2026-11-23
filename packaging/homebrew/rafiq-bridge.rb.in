@@ -1,0 +1,70 @@
+# Homebrew formula template for the Rafiq bridge. It installs the self-contained build from a GitHub
+# Release, so the machine needs no JDK. The release workflow fills in the @...@ values from SHA256SUMS
+# (scripts/render-homebrew-formula.sh) and attaches the result to the release as rafiq-bridge.rb.
+# Copy that file to Formula/rafiq-bridge.rb in the tap repository. See packaging/homebrew/README.md.
+class RafiqBridge < Formula
+  desc "Bridge that lets the Rafiq app steer coding-agent sessions on your server"
+  homepage "https://github.com/tatawurAI/rafiq"
+  version "@VERSION@"
+  license "Apache-2.0"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/tatawurAI/rafiq/releases/download/v@VERSION@/rafiq-bridge-@VERSION@-macos-arm64.tar.gz"
+      sha256 "@SHA256_MACOS_ARM64@"
+    end
+    on_intel do
+      url "https://github.com/tatawurAI/rafiq/releases/download/v@VERSION@/rafiq-bridge-@VERSION@-macos-x64.tar.gz"
+      sha256 "@SHA256_MACOS_X64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/tatawurAI/rafiq/releases/download/v@VERSION@/rafiq-bridge-@VERSION@-linux-arm64.tar.gz"
+      sha256 "@SHA256_LINUX_ARM64@"
+    end
+    on_intel do
+      url "https://github.com/tatawurAI/rafiq/releases/download/v@VERSION@/rafiq-bridge-@VERSION@-linux-x64.tar.gz"
+      sha256 "@SHA256_LINUX_X64@"
+    end
+  end
+
+  def install
+    # The whole folder (bin, lib, hooks, runtime) stays together. bin/rafiq-bridge follows symlinks to find it.
+    libexec.install Dir["*"]
+    bin.install_symlink libexec/"bin/rafiq-bridge"
+  end
+
+  # `brew services start rafiq-bridge`. The bridge reads its settings from its environment, or from the
+  # config file that `rafiq-bridge setup` writes. Run setup first so the service has your agent settings.
+  service do
+    run [opt_bin/"rafiq-bridge"]
+    keep_alive true
+    environment_variables PATH: std_service_path_env, RAFIQ_DATA_DIR: var/"rafiq"
+    log_path var/"log/rafiq-bridge.log"
+    error_log_path var/"log/rafiq-bridge.log"
+  end
+
+  def caveats
+    <<~EOS
+      Rafiq also needs an ACP adapter for your agent. For Claude Code:
+        npm install -g @agentclientprotocol/claude-agent-acp
+      Then follow https://github.com/tatawurAI/rafiq/blob/v#{version}/docs/install.md
+    EOS
+  end
+
+  test do
+    port = free_port
+    ENV["RAFIQ_PORT"] = port.to_s
+    ENV["RAFIQ_DATA_DIR"] = (testpath/"data").to_s
+    pid = spawn bin/"rafiq-bridge"
+    begin
+      sleep 10
+      assert_match '"status":"ok"', shell_output("curl --silent http://127.0.0.1:#{port}/health")
+    ensure
+      Process.kill("TERM", pid)
+      Process.wait(pid)
+    end
+  end
+end

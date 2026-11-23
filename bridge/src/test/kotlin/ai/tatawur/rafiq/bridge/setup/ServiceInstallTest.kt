@@ -6,6 +6,7 @@ import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -18,10 +19,27 @@ class ServiceInstallTest {
     lateinit var home: Path
 
     private val commands = mutableListOf<List<String>>()
+
+    // How many `launchctl bootstrap` calls fail before one works, as while launchd still unloads the old job.
+    private var bootstrapFailures = 0
+    private var pauses = 0
     private val runner =
         CommandRunner { command ->
             commands += command
-            CommandResult(0, if (command == listOf("id", "-u")) "501\n" else "")
+            when {
+                command == listOf("id", "-u") -> {
+                    CommandResult(0, "501\n")
+                }
+
+                command.getOrNull(1) == "bootstrap" && bootstrapFailures > 0 -> {
+                    bootstrapFailures--
+                    CommandResult(5, "Bootstrap failed: 5: Input/output error")
+                }
+
+                else -> {
+                    CommandResult(0, "")
+                }
+            }
         }
     private val out = ByteArrayOutputStream()
 
@@ -35,13 +53,15 @@ class ServiceInstallTest {
         runner,
         PrintStream(out),
         PrintStream(ByteArrayOutputStream()),
+        pause = { pauses++ },
     )
 
     @Test
     fun the_launchd_agent_starts_the_installed_bridge_with_your_path_and_no_rafiq_settings() {
         val program = Path.of("/opt/rafiq & co/bin/rafiq-bridge")
         val shellOnly = mapOf("RAFIQ_DEVICE_TOKEN" to "replace-with-a-long-random-value")
-        val install = service(ServiceInstall.Platform.MACOS, shellOnly)
+        val install =
+            service(ServiceInstall.Platform.MACOS, shellOnly + ("PATH" to "/opt/homebrew/bin::bin:./x:/usr/bin"))
 
         assertEquals(0, install.install(program))
 
@@ -50,7 +70,9 @@ class ServiceInstallTest {
         val values = plistValues(plist)
         assertEquals("ai.tatawur.rafiq-bridge", values["Label"])
         assertEquals(program.toString(), values["ProgramArguments"])
+        // The empty and relative entries would be read against wherever launchd starts the bridge.
         assertEquals("/opt/homebrew/bin:/usr/bin", values["PATH"])
+        assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(plist)))
         assertFalse("RAFIQ_DEVICE_TOKEN" in Files.readString(plist))
         assertEquals(listOf("launchctl", "bootstrap", "gui/501", plist.toString()), commands.last())
         // A setting only your shell has would vanish under launchd, so the install names it. By name only.
@@ -90,6 +112,23 @@ class ServiceInstallTest {
         assertEquals(1, run("install", program, "Windows 11"))
         assertEquals(2, run("start", program, "Linux"))
         assertTrue(commands.isEmpty())
+    }
+
+    @Test
+    fun launchctl_bootstrap_is_tried_again_while_the_old_job_is_still_unloading() {
+        bootstrapFailures = 2
+
+        assertEquals(0, service(ServiceInstall.Platform.MACOS).install(Path.of("/opt/rafiq/bin/rafiq-bridge")))
+
+        assertEquals(3, commands.count { it.getOrNull(1) == "bootstrap" })
+        assertEquals(2, pauses)
+    }
+
+    @Test
+    fun uninstall_stops_the_launchd_job_even_when_its_file_is_gone() {
+        assertEquals(0, service(ServiceInstall.Platform.MACOS).uninstall())
+
+        assertTrue(listOf("launchctl", "bootout", "gui/501/ai.tatawur.rafiq-bridge") in commands, "$commands")
     }
 
     /** The plist's string values by key, with the program arguments joined and the environment flattened in. */

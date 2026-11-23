@@ -230,6 +230,24 @@ class SessionManager(
     private fun unknownMode(modeId: String) =
         SessionException.Invalid(UNKNOWN_MODE, "The agent does not offer the mode '$modeId' for this session.")
 
+    /**
+     * Logs each mode the agent reports until cancelled. A failure to log stops only this watcher: the session's
+     * own logging reports a broken log, and an uncaught failure here would end the session for it.
+     */
+    @Suppress("TooGenericExceptionCaught") // Logged and dropped; cancellation is rethrown.
+    private suspend fun watchModes(
+        sessionId: String,
+        agentSession: AgentSession,
+    ) {
+        try {
+            agentSession.modes.collect { recordModes(sessionId, it) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            logger.error("Could not log a mode change for session {}.", sessionId, failure)
+        }
+    }
+
     /** Logs a mode change, once: the stored session is compared first, so a repeat of the same modes logs nothing. */
     private suspend fun recordModes(
         sessionId: String,
@@ -512,7 +530,7 @@ class SessionManager(
         liveSession.job =
             scope.launch(start = CoroutineStart.LAZY) {
                 // A mode the agent switches to on its own, such as leaving a planning mode, is logged as it comes.
-                val modeWatcher = launch { agentSession.modes.collect { recordModes(sessionId, it) } }
+                val modeWatcher = launch { watchModes(sessionId, agentSession) }
                 try {
                     val failure = drain(sessionId, liveSession, buffer)
                     modeWatcher.cancel()

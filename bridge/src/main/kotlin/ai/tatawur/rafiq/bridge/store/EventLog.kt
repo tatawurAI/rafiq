@@ -53,6 +53,7 @@ class EventLog(
 ) : AutoCloseable {
     private val connection: Connection = DriverManager.getConnection(jdbcUrl)
     private val subscribers = ConcurrentHashMap<String, CopyOnWriteArrayList<Subscription>>()
+    private val allSubscribers = CopyOnWriteArrayList<Subscription>()
 
     init {
         connection.createStatement().use { statement ->
@@ -293,6 +294,15 @@ class EventLog(
             subscription
         }
 
+    /**
+     * Like [subscribe], but for every session's new events, including sessions created later. The push notifier
+     * uses it. Same bounded buffer: a reader that falls behind is closed.
+     */
+    suspend fun subscribeAll(capacity: Int): Subscription =
+        onDispatcher {
+            Subscription(Channel(capacity)) { closed -> allSubscribers.remove(closed) }.also(allSubscribers::add)
+        }
+
     /** The ids of the session's approval requests that have no [EventPayload.ApprovalResolved] in its log. */
     suspend fun unresolvedApprovals(sessionId: String): List<String> =
         onDispatcher {
@@ -370,6 +380,7 @@ class EventLog(
 
     override fun close() {
         subscribers.values.flatten().forEach(Subscription::close)
+        allSubscribers.forEach(Subscription::close)
         connection.close()
     }
 
@@ -516,6 +527,7 @@ class EventLog(
     /** Hands [event] to each subscriber without ever waiting: one that has no room is closed as too slow. */
     private fun publish(event: Event) {
         subscribers[event.sessionId]?.forEach { it.offer(event) }
+        allSubscribers.forEach { it.offer(event) }
     }
 
     private fun readEvent(rows: ResultSet): Event =

@@ -256,6 +256,13 @@ class SessionViewModel(
         }
     }
 
+    /** Switches the session's permission mode. The header shows the new mode when its `session_updated` arrives. */
+    fun setMode(modeId: String) {
+        viewModelScope.launch {
+            local.update { it.copy(feedback = repository.setMode(sessionId, modeId).feedback()) }
+        }
+    }
+
     fun cancel(threadId: String) {
         viewModelScope.launch {
             local.update { it.copy(feedback = repository.cancel(sessionId, threadId).feedback()) }

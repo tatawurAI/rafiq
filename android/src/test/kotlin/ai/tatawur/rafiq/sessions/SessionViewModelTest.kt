@@ -1,7 +1,5 @@
 package ai.tatawur.rafiq.sessions
 
-import ai.tatawur.rafiq.protocol.api.ProjectFolderListing
-import ai.tatawur.rafiq.protocol.api.ProjectsOverview
 import ai.tatawur.rafiq.client.ApprovalCard
 import ai.tatawur.rafiq.client.CommandResult
 import ai.tatawur.rafiq.client.ConnectionState
@@ -19,6 +17,8 @@ import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.ProjectFolderListing
+import ai.tatawur.rafiq.protocol.api.ProjectsOverview
 import ai.tatawur.rafiq.protocol.api.SendRefusal
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.Dispatchers

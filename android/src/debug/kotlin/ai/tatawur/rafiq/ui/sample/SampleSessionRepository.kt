@@ -14,10 +14,10 @@ import ai.tatawur.rafiq.protocol.ApprovalOptionKind
 import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
+import ai.tatawur.rafiq.protocol.SessionMode
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.ToolCallKind
 import ai.tatawur.rafiq.protocol.ToolCallStatus
-import ai.tatawur.rafiq.protocol.SessionMode
 import ai.tatawur.rafiq.protocol.api.HookSetupPreview
 import ai.tatawur.rafiq.protocol.api.ProjectFolderListing
 import ai.tatawur.rafiq.protocol.api.ProjectsOverview
@@ -115,17 +115,28 @@ class SampleSessionRepository(
         sessionId: String,
         modeId: String,
     ): CommandResult<Unit> {
-        val state = states.value[sessionId] ?: return CommandResult.NotFound
-        val session = state.session ?: return CommandResult.NotFound
-        if (session.availableModes.none { it.id == modeId }) {
-            return CommandResult.Failed("unknown_mode", "The agent does not offer that mode.")
+        val state = states.value[sessionId]
+        val session = state?.session
+        return when {
+            state == null || session == null -> {
+                CommandResult.NotFound
+            }
+
+            session.availableModes.none { it.id == modeId } -> {
+                CommandResult.Failed("unknown_mode", "The agent does not offer that mode.")
+            }
+
+            else -> {
+                states.update { it + (sessionId to state.copy(session = session.copy(permissionMode = modeId))) }
+                CommandResult.Ok(Unit)
+            }
         }
-        states.update { it + (sessionId to state.copy(session = session.copy(permissionMode = modeId))) }
-        return CommandResult.Ok(Unit)
     }
 
     override suspend fun projects(): CommandResult<ProjectsOverview> =
-        CommandResult.Ok(ProjectsOverview(recent = listOf("/srv/weather-app", "/srv/docs-site"), roots = listOf("/srv")))
+        CommandResult.Ok(
+            ProjectsOverview(recent = listOf("/srv/weather-app", "/srv/docs-site"), roots = listOf("/srv")),
+        )
 
     override suspend fun projectFolders(path: String): CommandResult<ProjectFolderListing> =
         when (path) {

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Permission mode (#33). The mode names and descriptions come from the agent. -->
+  <string name="mode_label">Mode: %1$s</string>
+  <string name="mode_unknown">unknown</string>
+  <string name="mode_switch">Change the mode</string>
+  <string name="mode_current">%1$s (current)</string>
+  <string name="new_session_mode">Permission mode</string>
+  <string name="new_session_mode_default">Your server\'s default</string>
+  <string name="new_session_mode_default_help">Starts in the mode your server sets for this agent. You can change it once the session runs.</string>
+  <string name="new_session_mode_later">Starts in the mode your server sets for this agent. Once it runs, tap the mode in the session header to change it.</string>
+
+  <!-- Project picker (#35). -->
+  <string name="projects_recent">Recent projects</string>
+  <string name="projects_browse">Browse your server</string>
+  <string name="projects_up">Up one folder</string>
+  <string name="projects_use_folder">Use this folder</string>
+  <string name="projects_loading">Loading folders</string>
+  <string name="projects_no_folders">No folders in here.</string>
+  <string name="projects_folder_failed">Could not list this folder. Go up and try again.</string>
+  <string name="projects_truncated">Only the first folders are shown. Type the path for one further down.</string>
+  <string name="projects_check_not_absolute">Start the path with /, from the top of your server\'s disk.</string>
+  <string name="projects_check_checking">Checking the folder on your server</string>
+  <string name="projects_check_folder">Folder found on your server.</string>
+  <string name="projects_check_not_a_folder">There is no folder at this path on your server.</string>
+  <string name="projects_check_outside_roots">Not under a folder your server lets you browse. Your server checks it when you start.</string>
+  <string name="projects_check_unchecked">Could not check the folder now. Your server checks it when you start.</string>
+  <string name="new_session_checking_project">Checking the project folder</string>
+  <string name="new_session_bad_project">Fix the project folder to start.</string>
+</resources>

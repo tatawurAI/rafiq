@@ -182,15 +182,30 @@ class ProjectPickerModel(
 
     private fun verdict(result: CommandResult<ProjectFolderListing>): PathCheck =
         when {
-            result is CommandResult.Ok -> PathCheck.Folder
+            result is CommandResult.Ok -> {
+                PathCheck.Folder
+            }
+
             // A bridge from before the picker answers every project route with 404, which says nothing here.
             result is CommandResult.NotFound && current.value.overviewFailure == CommandResult.NotFound -> {
                 PathCheck.Unchecked(result)
             }
-            result is CommandResult.NotFound -> PathCheck.NotAFolder
-            result is CommandResult.Failed && result.code == ProjectErrorCodes.NOT_A_FOLDER -> PathCheck.NotAFolder
-            result is CommandResult.Failed && result.code == ProjectErrorCodes.OUTSIDE_ROOTS -> PathCheck.OutsideRoots
-            else -> PathCheck.Unchecked(result.withoutValue())
+
+            result is CommandResult.NotFound -> {
+                PathCheck.NotAFolder
+            }
+
+            result is CommandResult.Failed && result.code == ProjectErrorCodes.NOT_A_FOLDER -> {
+                PathCheck.NotAFolder
+            }
+
+            result is CommandResult.Failed && result.code == ProjectErrorCodes.OUTSIDE_ROOTS -> {
+                PathCheck.OutsideRoots
+            }
+
+            else -> {
+                PathCheck.Unchecked(result.withoutValue())
+            }
         }
 
     private companion object {

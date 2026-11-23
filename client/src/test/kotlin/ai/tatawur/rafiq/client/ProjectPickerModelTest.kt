@@ -86,11 +86,21 @@ class ProjectPickerModelTest {
 
             model.open("/srv")
             testScheduler.runCurrent()
-            assertEquals(listOf("api-server", "weather-app"), model.state.value.browsing?.listing?.folders)
+            assertEquals(
+                listOf("api-server", "weather-app"),
+                model.state.value.browsing
+                    ?.listing
+                    ?.folders,
+            )
 
             model.openChild("weather-app")
             testScheduler.runCurrent()
-            assertEquals(listOf("src"), model.state.value.browsing?.listing?.folders)
+            assertEquals(
+                listOf("src"),
+                model.state.value.browsing
+                    ?.listing
+                    ?.folders,
+            )
 
             model.chooseBrowsed()
             assertEquals("/srv/weather-app", model.state.value.path)
@@ -98,7 +108,11 @@ class ProjectPickerModelTest {
 
             model.up()
             testScheduler.runCurrent()
-            assertEquals("/srv", model.state.value.browsing?.path)
+            assertEquals(
+                "/srv",
+                model.state.value.browsing
+                    ?.path,
+            )
             model.up()
             assertNull(model.state.value.browsing)
         }
@@ -108,7 +122,10 @@ class ProjectPickerModelTest {
         runTest {
             val model = model()
 
-            model.choose(model.state.value.recent.first())
+            model.choose(
+                model.state.value.recent
+                    .first(),
+            )
 
             assertEquals("/srv/weather-app", model.state.value.path)
             assertTrue(model.state.value.check.allowsStart)

@@ -222,11 +222,15 @@ private fun warnAboutMissingSettings(config: BridgeConfig) {
     if (config.deviceToken == null) {
         log.warn("RAFIQ_DEVICE_TOKEN is not set. Pair a phone with: rafiq-bridge pair --name <device>")
     }
-    for (agent in config.agents.map(AgentSpec::id).filterNot(config.defaultModes::containsKey)) {
-        log.warn(
-            "RAFIQ_DEFAULT_MODES has no entry for {}, so its sessions start in the agent's own default mode, which " +
-                "may never ask before edits. See docs/setup.md, Project folders and permission modes.",
-            agent,
-        )
-    }
+    defaultModeWarnings(config).forEach(log::warn)
 }
+
+/**
+ * One warning per agent with no `RAFIQ_DEFAULT_MODES` entry. Its sessions start in whatever mode the agent picks,
+ * which may never ask before edits.
+ */
+internal fun defaultModeWarnings(config: BridgeConfig): List<String> =
+    config.agents.map(AgentSpec::id).filterNot(config.defaultModes::containsKey).map { agent ->
+        "RAFIQ_DEFAULT_MODES has no entry for $agent, so its sessions start in the agent's own default mode, " +
+            "which may never ask before edits. See docs/setup.md, Project folders and permission modes."
+    }

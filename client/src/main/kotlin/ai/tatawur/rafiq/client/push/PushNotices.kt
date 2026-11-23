@@ -9,6 +9,8 @@ import ai.tatawur.rafiq.protocol.api.PushKind
 import ai.tatawur.rafiq.protocol.api.PushPayload
 import ai.tatawur.rafiq.protocol.api.SessionSummary
 import ai.tatawur.rafiq.protocol.protocolJson
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -71,6 +73,53 @@ class PushNotices(
     private val isShowing: (sessionId: String) -> Boolean,
     private val fetchBudget: Duration = DEFAULT_FETCH_BUDGET,
 ) {
+    // Guards posting and the cleared ids. Never held across a fetch, so a clear is never kept waiting.
+    private val posting = Mutex()
+
+    // Approvals already answered or gone, newest last, capped at RECENTLY_CLEARED.
+    private val cleared = LinkedHashSet<String>()
+
+    /**
+     * Turns a push into a notice and hands it to [show], one at a time. Each push is handled on its own, so an
+     * approval's clear can arrive while its own fetch is still running. Every cleared id is remembered for a
+     * while, and an approval that was cleared meanwhile is never shown: you answered it at the desk.
+     *
+     * @param show posts or removes the notification. It runs under a lock, after the fetch.
+     */
+    suspend fun handle(
+        content: ByteArray,
+        decrypted: Boolean,
+        show: (PushNotice) -> Unit,
+    ) {
+        val notice = noticeFor(content, decrypted)
+        posting.withLock {
+            when (notice) {
+                is PushNotice.Clear -> {
+                    remember(notice.approvalId)
+                    show(notice)
+                }
+
+                is PushNotice.Approval -> {
+                    if (notice.approval.id !in cleared) show(notice)
+                }
+
+                is PushNotice.Generic -> {
+                    if (notice.approvalId.let { it == null || it !in cleared }) show(notice)
+                }
+
+                else -> {
+                    show(notice)
+                }
+            }
+        }
+    }
+
+    private fun remember(approvalId: String) {
+        cleared.remove(approvalId)
+        cleared.add(approvalId)
+        if (cleared.size > RECENTLY_CLEARED) cleared.remove(cleared.first())
+    }
+
     /**
      * @param content the push's body after Web Push decryption.
      * @param decrypted false when the distributor could not decrypt it with this phone's key.
@@ -138,6 +187,9 @@ class PushNotices(
     companion object {
         /** Four seconds: inside the connector's five-second binding, with room to post the notification. */
         val DEFAULT_FETCH_BUDGET: Duration = 4.seconds
+
+        /** How many cleared approval ids are remembered. Far more than can be open at once (ten per bridge). */
+        const val RECENTLY_CLEARED = 128
 
         private fun decode(content: ByteArray): PushPayload? =
             try {

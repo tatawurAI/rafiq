@@ -44,12 +44,17 @@ class SecuritySettings(
 
     /**
      * True after the approval lock turned itself off because the phone's biometrics changed (issue #14), until
-     * you turn it on or off again. Settings says why the lock is off.
+     * you dismiss the notice or turn the lock on or off again. Settings and the session list say why.
      */
     val approvalLockReset: Flow<Boolean> =
         prefs.data
             .catch { failure -> if (failure is IOException) emit(LOCKED) else throw failure }
             .map { it[APPROVAL_LOCK_RESET] ?: false }
+
+    /** You read the notice that the approval lock turned itself off. */
+    suspend fun dismissApprovalLockReset() {
+        prefs.edit { it[APPROVAL_LOCK_RESET] = false }
+    }
 
     /** The approval lock's key was destroyed by a biometric change: the lock turns off, and says why. */
     suspend fun approvalLockKeyInvalidated() {

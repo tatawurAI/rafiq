@@ -57,7 +57,7 @@ class PushModule(
         content: ByteArray,
         decrypted: Boolean,
     ) {
-        scope.launch { notifier.show(notices.noticeFor(content, decrypted)) }
+        scope.launch { notices.handle(content, decrypted, notifier::show) }
     }
 
     /** The distributor dropped this phone's endpoint. */

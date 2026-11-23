@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.settings
 
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.ApprovalUnlock
+import ai.tatawur.rafiq.sessions.ApprovalLockResetCard
 import ai.tatawur.rafiq.terminal.BiometricCheck
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
 import android.widget.Toast
@@ -115,6 +116,7 @@ fun SettingsRoute(
         approvalLock = approvalLockOn,
         onApprovalLockChange = { on -> change(on, approvalSubtitle, writeApprovalLock) },
         approvalLockReset = approvalLockReset,
+        onDismissApprovalLockReset = { scope.launch { settings.dismissApprovalLockReset() } },
         notifications = notifications,
     )
     if (askingUnpair) UnpairConfirmation(onConfirm = unpair::confirm, onDismiss = unpair::cancel)
@@ -132,6 +134,7 @@ fun SettingsScreen(
     approvalLock: Boolean = false,
     onApprovalLockChange: (Boolean) -> Unit = {},
     approvalLockReset: Boolean = false,
+    onDismissApprovalLockReset: () -> Unit = {},
     notifications: @Composable () -> Unit = {},
 ) {
     val spacing = RafiqTheme.spacing
@@ -175,13 +178,7 @@ fun SettingsScreen(
             biometricAvailable,
             onApprovalLockChange,
         )
-        if (approvalLockReset) {
-            Text(
-                stringResource(R.string.approval_lock_reset_short),
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.needsYou,
-            )
-        }
+        if (approvalLockReset) ApprovalLockResetCard(onDismiss = onDismissApprovalLockReset)
         HorizontalDivider(color = colors.border, thickness = spacing.hairline)
         notifications()
         HorizontalDivider(color = colors.border, thickness = spacing.hairline)

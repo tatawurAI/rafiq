@@ -93,6 +93,8 @@ class AppContainer(
         ApprovalGate(
             security.approvalLock,
             ApprovalUnlock(KeystoreApprovalKey()) { security.approvalLockKeyInvalidated() },
+            reset = security.approvalLockReset,
+            dismissReset = security::dismissApprovalLockReset,
         )
 
     /** Push through a UnifiedPush distributor, and the notifications it brings (ADR 0010). */

@@ -748,16 +748,28 @@ class SessionManager(
 
     /**
      * A resumed agent can come back in the mode it picks itself, which may never ask. The mode the session had
-     * is set again when the agent still offers it, before any prompt reaches the agent.
+     * is set again before any prompt reaches the agent. When that cannot be done, the session is errored and
+     * stopped rather than left running in a mode you did not choose.
+     *
+     * @throws SessionException.Conflict with `mode_not_restored` when the mode could not be set again.
      */
     private suspend fun restoreMode(
         session: Session,
         agentSession: AgentSession,
     ) {
-        val wanted = session.permissionMode ?: return
-        val modes = agentSession.modes.value
-        if (modes.currentModeId == wanted || !modes.offers(wanted)) return
-        unavailableAsConflict { agentSession.setMode(wanted) }
+        val wanted = session.permissionMode?.takeIf { it != agentSession.modes.value.currentModeId } ?: return
+        val failure =
+            try {
+                agentSession.setMode(wanted)
+                return
+            } catch (refused: AgentUnavailableException) {
+                refused
+            } catch (notOffered: IllegalArgumentException) {
+                notOffered
+            }
+        val detail = "The agent came back in another permission mode and refused '$wanted', so the session stopped."
+        record(session.id, null, EventPayload.StatusChanged(threadId = null, state = AgentState.ERROR, detail = detail))
+        throw SessionException.Conflict(MODE_NOT_RESTORED, detail, failure)
     }
 
     /** Runs [block], and if it fails ends the attached session so no process or buffer is left behind. */
@@ -851,6 +863,7 @@ class SessionManager(
         const val UNKNOWN_MODE = "unknown_mode"
         const val MODE_NOT_SUPPORTED = "mode_not_supported"
         const val DEFAULT_MODE_UNAVAILABLE = "default_mode_unavailable"
+        const val MODE_NOT_RESTORED = "mode_not_restored"
         const val CHAT_UNAVAILABLE_MESSAGE = "Chat is not available for tmux sessions on this bridge. Use Terminal."
         val WORKING_ONLY = setOf(AgentState.WORKING)
         val RUNNING_STATES = setOf(AgentState.WORKING, AgentState.WAITING_ON_YOU)

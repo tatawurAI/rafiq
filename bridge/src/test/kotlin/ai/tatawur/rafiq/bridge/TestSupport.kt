@@ -39,10 +39,13 @@ class FakeAdapter(
     val started = CopyOnWriteArrayList<FakeAgentSession>()
     val resumedRefs = CopyOnWriteArrayList<String>()
 
+    /** Runs on each session as it starts or resumes, before the bridge uses it, for example to make it refuse. */
+    @Volatile var onStart: (FakeAgentSession) -> Unit = {}
+
     override suspend fun start(
         sessionId: String,
         projectPath: Path,
-    ): AgentSession = FakeAgentSession(sessionId, "ref-$sessionId", modes).also(started::add)
+    ): AgentSession = FakeAgentSession(sessionId, "ref-$sessionId", modes).also(started::add).also(onStart)
 
     override suspend fun resume(
         sessionId: String,
@@ -50,7 +53,7 @@ class FakeAdapter(
         agentSessionRef: String,
     ): AgentSession {
         resumedRefs += agentSessionRef
-        return FakeAgentSession(sessionId, agentSessionRef, modes).also(started::add)
+        return FakeAgentSession(sessionId, agentSessionRef, modes).also(started::add).also(onStart)
     }
 }
 

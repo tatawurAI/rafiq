@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge.sessions
 
 import ai.tatawur.rafiq.bridge.BridgeFixture
 import ai.tatawur.rafiq.bridge.FakeAdapter
+import ai.tatawur.rafiq.bridge.agent.AgentUnavailableException
 import ai.tatawur.rafiq.bridge.claudeLikeModes
 import ai.tatawur.rafiq.bridge.eventAfter
 import ai.tatawur.rafiq.protocol.AgentState
@@ -175,6 +176,34 @@ class SessionModesTest {
             assertEquals(listOf("default"), resumed.modeChanges)
             assertEquals(1, resumed.prompts.size)
             assertEquals("default", resumed.modes.value.currentModeId)
+        }
+
+    @Test
+    fun a_resumed_session_whose_mode_cannot_be_set_again_is_errored_and_gets_no_prompt() =
+        runBlocking {
+            val before = fixture()
+            val session = before.sessions.create("fake", project, null)
+            before.close()
+            opened.remove(before)
+
+            val after = fixture()
+            after.adapter.onStart = { it.failure = AgentUnavailableException("The agent refused to change mode.") }
+            val refused =
+                assertThrows<SessionException.Conflict> {
+                    after.sessions.prompt(session.id, null, "Add a forecast endpoint")
+                }
+
+            assertEquals("mode_not_restored", refused.code)
+            val resumed = after.adapter.started.single()
+            assertEquals(emptyList(), resumed.prompts)
+            assertTrue(resumed.closed)
+            assertEquals(
+                AgentState.ERROR,
+                after.sessions
+                    .sessions()
+                    .single()
+                    .status,
+            )
         }
 
     @Test

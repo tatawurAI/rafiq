@@ -31,6 +31,8 @@ import kotlin.time.Duration.Companion.seconds
  * @property attempts how many times one push is tried in all.
  * @property backoff the wait before the second try, doubled before each later one.
  * @property ratePerDevice at most this many pushes per device in [rateWindow]. Past it they are dropped.
+ * @property subscriptionCapacity how many events may wait for the notifier. Every event lands here, message deltas
+ *   included, and the notifier filters by kind itself, so this is sized for a burst of streaming text.
  */
 data class PushSettings(
     val turnDoneDebounce: Duration = 3.seconds,
@@ -39,7 +41,7 @@ data class PushSettings(
     val ratePerDevice: Int = 30,
     val rateWindow: Duration = 1.minutes,
     val queuePerDevice: Int = 64,
-    val subscriptionCapacity: Int = 1024,
+    val subscriptionCapacity: Int = 16_384,
     val approvalTtlSeconds: Long = 3600,
     val otherTtlSeconds: Long = 3600,
 )
@@ -99,9 +101,10 @@ class PushNotifier(
             } catch (cancelled: CancellationException) {
                 subscription.close()
                 throw cancelled
-            } catch (slow: SlowConsumerException) {
-                // Events were missed. Pushes are best effort, so carry on with the next ones.
-                logger.warn("The push notifier fell behind the event log and missed some events: {}", slow.message)
+            } catch (_: SlowConsumerException) {
+                // The log closed the feed. Missed events stay missed: replaying them would send stale pushes, which
+                // are worse than none. Carry on with new events.
+                logger.warn("The push notifier fell behind the event log and skipped some events.")
                 subscription = subscribe(settings.subscriptionCapacity)
             } catch (failure: Exception) {
                 logger.warn("The push notifier failed on an event: {}", failure.javaClass.simpleName)

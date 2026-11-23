@@ -12,13 +12,16 @@ import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.status
 import ai.tatawur.rafiq.bridge.store.DeviceStore
 import ai.tatawur.rafiq.bridge.store.EventLog
+import ai.tatawur.rafiq.bridge.store.Subscription
 import ai.tatawur.rafiq.protocol.AgentState
 import ai.tatawur.rafiq.protocol.ApprovalOption
 import ai.tatawur.rafiq.protocol.ApprovalOptionKind
+import ai.tatawur.rafiq.protocol.Event
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.api.PushKind
 import ai.tatawur.rafiq.protocol.api.PushPayload
 import ai.tatawur.rafiq.protocol.protocolJson
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -46,6 +49,7 @@ class PushNotifierTest {
         val test: TestScope,
         visible: (String) -> Boolean = { true },
         settings: PushSettings = PushSettings(),
+        subscribe: (suspend (EventLog, Int) -> Subscription)? = null,
     ) {
         val dispatcher = StandardTestDispatcher(test.testScheduler)
         val log = EventLog("jdbc:sqlite::memory:", dispatcher)
@@ -76,7 +80,7 @@ class PushNotifierTest {
 
         val notifier =
             PushNotifier(
-                subscribe = log::subscribeAll,
+                subscribe = { capacity -> subscribe?.invoke(log, capacity) ?: log.subscribeAll(capacity) },
                 threadsOf = log::threads,
                 store = store,
                 visible = visible,
@@ -329,5 +333,33 @@ class PushNotifierTest {
 
             assertEquals(1, world.attempts.size)
             assertNull(world.received.firstOrNull())
+        }
+
+    @Test
+    fun a_notifier_that_falls_behind_resubscribes_and_never_pushes_what_it_missed() =
+        runTest {
+            // The first feed is one the test overflows by hand, as the log does when a reader is too slow.
+            val first = Subscription(Channel(2)) {}
+            var opened = 0
+            val world =
+                World(this, subscribe = { log, capacity -> if (opened++ == 0) first else log.subscribeAll(capacity) })
+            world.phone("phone")
+            world.log.seed()
+            world.notifier.start()
+            runCurrent()
+
+            fun missed(id: String) = Event(TEST_SESSION.id, 100, 0, approval(id))
+            // The notifier waits on the feed, so it takes the first at once, two more fill the buffer, and the fourth
+            // overflows it: the log closes the feed and drops that one.
+            repeat(4) { first.offer(missed("apr_missed_$it")) }
+            runCurrent()
+            world.log.append(TEST_SESSION.id, approval("apr_new"))
+            runCurrent()
+
+            assertEquals(2, opened)
+            assertEquals(
+                listOf("apr_missed_0", "apr_missed_1", "apr_missed_2", "apr_new"),
+                world.received.map { it.payload.approvalId },
+            )
         }
 }

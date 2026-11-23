@@ -119,4 +119,13 @@ class ServiceInstallTest {
         }
         return values
     }
+
+    @Test
+    fun a_homebrew_cellar_program_is_written_with_the_opt_path_that_survives_upgrades() {
+        assertEquals(
+            Path.of("/opt/homebrew/opt/rafiq-bridge/libexec/bin/rafiq-bridge"),
+            ServiceInstall.stablePath(Path.of("/opt/homebrew/Cellar/rafiq-bridge/0.3.0/libexec/bin/rafiq-bridge")),
+        )
+        assertEquals(null, ServiceInstall.stablePath(Path.of("/opt/rafiq/bin/rafiq-bridge")))
+    }
 }

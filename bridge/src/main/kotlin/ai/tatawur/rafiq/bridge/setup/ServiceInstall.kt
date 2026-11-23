@@ -161,6 +161,9 @@ class ServiceInstall(
 
         private const val FAILED = 1
         private const val USAGE_ERROR = 2
+
+        // "Cellar", "rafiq-bridge" and the version folder: what the opt path replaces.
+        private const val VERSION_AND_FILE = 3
         private const val USAGE = "Usage: rafiq-bridge service install | rafiq-bridge service uninstall"
         private val SERVICE_VARIABLES = listOf("PATH", "JAVA_HOME", "XDG_CONFIG_HOME")
         private const val APPLE_DTD = "http://www.apple.com/DTDs/PropertyList-1.0.dtd"
@@ -221,7 +224,7 @@ class ServiceInstall(
 
         /**
          * The installed start script, `bin/rafiq-bridge`, found by walking up from the bridge's own jar. Null when the
-         * bridge runs from a build folder instead.
+         * bridge runs from a build folder instead. A Homebrew install gives the stable `opt` path (see [stablePath]).
          */
         fun locateProgram(): Path? {
             val code =
@@ -236,6 +239,34 @@ class ServiceInstall(
                 .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
                 ?.toAbsolutePath()
                 ?.normalize()
+                ?.let { found -> stablePath(found)?.takeIf { Files.isExecutable(it) } ?: found }
+        }
+
+        /**
+         * For a program inside Homebrew's Cellar, `<prefix>/Cellar/rafiq-bridge/<version>/...`, the same file under
+         * `<prefix>/opt/rafiq-bridge/...`. The Cellar folder is replaced on every upgrade, and the `opt` link always
+         * points at the current version, so a service written with it keeps working. Null for any other path.
+         */
+        fun stablePath(program: Path): Path? {
+            val parts = program.map(Path::toString)
+            val cellar = parts.indexOf("Cellar")
+            val root = program.root
+            val inCellar =
+                root != null &&
+                    cellar >= 0 &&
+                    parts.getOrNull(cellar + 1) == "rafiq-bridge" &&
+                    parts.size > cellar + VERSION_AND_FILE
+            return if (inCellar) {
+                val opt =
+                    parts
+                        .take(cellar)
+                        .fold(root, Path::resolve)
+                        .resolve("opt")
+                        .resolve("rafiq-bridge")
+                parts.drop(cellar + VERSION_AND_FILE).fold(opt, Path::resolve)
+            } else {
+                null
+            }
         }
 
         /** The launchd agent: starts [program] at login, restarts it if it exits, and logs to [logFile]. */

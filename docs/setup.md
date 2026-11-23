@@ -111,6 +111,8 @@ RAFIQ_ALLOWED_HOSTS=box.example.ts.net
 - Blank lines and lines starting with `#` are ignored. A value is taken exactly as written. Do not put it in quotes.
 - An environment variable that is set wins over the file. One that is set but empty does not, so to change a value from the file, edit the file.
 - The bridge refuses to start if anyone but you can read or write the file, if it belongs to another user, or if others can write to its folder. Setup writes it with mode 0600 in a 0700 folder. Fix a file you wrote yourself with `chmod 600 ~/.config/rafiq/bridge.conf`.
+- `bridge.conf` and its `rafiq` folder must be a real file in a real folder, not symbolic links. If a dotfile manager links `~/.config/rafiq` or the file into place, the bridge refuses it. Have the manager copy the file instead, or keep `bridge.conf` out of it and let `rafiq-bridge setup` write it. A linked `~/.config` above the `rafiq` folder is fine.
+- If the bridge cannot tell which user it runs as, it refuses the file rather than skip these checks. It reads that from `/proc/self` on Linux and from `id -u` elsewhere, so keep `/usr/bin` on the bridge's `PATH`.
 - A line that is not a setting, or a setting given twice, stops the bridge with the line number. The message never shows the value.
 
 ## Set it up by hand

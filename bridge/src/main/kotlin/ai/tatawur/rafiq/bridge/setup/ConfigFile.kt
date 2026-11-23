@@ -7,6 +7,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The bridge's settings file, `bridge.conf` in `$XDG_CONFIG_HOME/rafiq/` (ADR 0014). It holds the same settings as
@@ -45,20 +46,27 @@ object ConfigFile {
     }
 
     /**
-     * Refuses [path] if it is a symbolic link, if anyone but its owner can read or write it, if it or its folder
-     * belongs to another user than [uid], or if others can write to the folder, since they could then swap the file.
-     * Ownership is compared by user id, the one the process runs as, so `sudo -E` or a container whose user has no
-     * name does not trip it. Skipped on a file system without Unix attributes.
+     * Refuses [path] if it or its folder is a symbolic link, if anyone but its owner can read or write it, if it or
+     * its folder belongs to another user than [uid], or if others can write to the folder, since they could then swap
+     * the file. Ownership is compared by user id, the one the process runs as, so `sudo -E` or a container whose user
+     * has no name does not trip it. Skipped only on a file system without Unix attributes. On one with them, an
+     * unknown [uid] is refused too: the check never passes because it could not run.
      *
-     * @param uid the user id that must own the file, by default the one this process runs as.
+     * @param uid the user id that must own the file, by default the one this process runs as, or null when that is
+     *   not known.
      */
     fun checkPrivate(
         path: Path,
         uid: Int? = processUid,
     ) {
-        if ("unix" !in path.fileSystem.supportedFileAttributeViews() || uid == null) return
-        require(!Files.isSymbolicLink(path)) {
-            "$path is a symbolic link, so the bridge will not use it. Replace it with the file itself."
+        if ("unix" !in path.fileSystem.supportedFileAttributeViews()) return
+        requireNotNull(uid) {
+            "The bridge could not tell which user it runs as, so it cannot check who owns $path and will not use it."
+        }
+        val folder = path.toAbsolutePath().parent
+        require(!Files.isSymbolicLink(path) && !Files.isSymbolicLink(folder)) {
+            "$path or its folder is a symbolic link, so the bridge will not use it. Keep the real file in a real " +
+                "folder there, not a link to one elsewhere."
         }
         val modes = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS)
         require(modes.intersect(NOT_OWNER_READ_WRITE).isEmpty()) {
@@ -69,7 +77,6 @@ object ConfigFile {
         require(owner == uid) {
             "$path belongs to user id $owner, not to $uid, who runs the bridge, so the bridge will not use it."
         }
-        val folder = path.toAbsolutePath().parent
         val folderOwner = ownerUid(folder)
         require(folderOwner == uid) {
             "$folder belongs to user id $folderOwner, not to $uid, who runs the bridge, so they could replace " +
@@ -84,19 +91,25 @@ object ConfigFile {
     private fun ownerUid(path: Path): Int = Files.getAttribute(path, "unix:uid", LinkOption.NOFOLLOW_LINKS) as Int
 
     /**
-     * The user id this process runs as. The JDK has no call for it, so it is read off a file the process creates: a
-     * new file belongs to the process's effective user. Null where Unix attributes are not available.
+     * The user id this process runs as, or null when it cannot be found out. The JDK has no call for it. On Linux it
+     * is the owner of `/proc/self`, which is the process's effective user. Elsewhere it comes from `id -u`, which
+     * prints the same.
      */
-    val processUid: Int? by lazy {
-        runCatching {
-            val probe = Files.createTempFile("rafiq-uid", ".probe")
-            try {
-                ownerUid(probe)
-            } finally {
-                Files.deleteIfExists(probe)
-            }
-        }.getOrNull()
-    }
+    val processUid: Int? by lazy { effectiveUid(Path.of("/proc/self"), ProcessCommandRunner(ID_TIMEOUT)) }
+
+    /** [processUid] from [procSelf] when it exists, else from `id -u` run by [runner]. */
+    internal fun effectiveUid(
+        procSelf: Path,
+        runner: CommandRunner,
+    ): Int? =
+        // /proc/self is a link to /proc/<pid>, and the folder it points at carries the user, so this one follows it.
+        runCatching { Files.getAttribute(procSelf, "unix:uid") as Int }.getOrNull()
+            ?: runner
+                .run(listOf("id", "-u"))
+                .takeIf { it.ok }
+                ?.output
+                ?.trim()
+                ?.toIntOrNull()
 
     /** True when [checkPrivate] would refuse [path]. */
     fun isOpenToOthers(path: Path): Boolean = runCatching { checkPrivate(path) }.isFailure
@@ -180,6 +193,7 @@ object ConfigFile {
         }
     }
 
+    private val ID_TIMEOUT = 5.seconds
     private val SETTING_NAME = Regex("RAFIQ_[A-Z0-9_]+")
     private val QUOTES = setOf('"', '\'')
 

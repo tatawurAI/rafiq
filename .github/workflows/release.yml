@@ -2,19 +2,21 @@
 #
 # Four stages:
 #   prepare  Checks that the tag matches rafiq.version in gradle.properties and writes the release notes.
-#   apk      Builds the release APK and signs it with the key held in repository secrets.
+#   apk      Builds the unsigned release APK. No secrets and no environment.
+#   sign-apk Signs that APK with apksigner alone. The only job with the signing secrets. No checkout, no Gradle.
 #   bridge   Builds the self-contained bridge on four native runners (macOS and Linux, arm64 and x64), and
 #            starts each one with no JDK on PATH before it counts.
 #   release  Writes SHA256SUMS and creates the GitHub Release with everything attached.
 #
-# Secrets used, all in the apk job only, and stored as secrets of the GitHub environment named release
+# Secrets used, all in the sign-apk job only, and stored as secrets of the GitHub environment named release
 # (see packaging/README.md), not as repository secrets:
 #   RAFIQ_RELEASE_KEYSTORE_BASE64    the keystore file, base64 encoded
 #   RAFIQ_RELEASE_KEYSTORE_PASSWORD  its store password
 #   RAFIQ_RELEASE_KEY_ALIAS          the key's alias
 #   RAFIQ_RELEASE_KEY_PASSWORD       the key's password
-# Gradle builds the APK unsigned and with no secrets. A later step signs it with apksigner alone. The
-# keystore is decoded into the runner's temp folder and deleted when the job ends, pass or fail.
+# Gradle builds the APK unsigned, on a runner that never sees a secret. A separate job on a fresh runner
+# signs it, so nothing the build started can reach the key. The keystore is decoded into that runner's temp
+# folder and deleted when the job ends, pass or fail.
 # Nothing here prints a secret. No Docker image is built.
 name: Release
 
@@ -126,9 +128,8 @@ jobs:
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    # Holds the signing secrets. Create this environment with required reviewers before the first tag, so
-    # a person approves every release that signs. It does nothing harmful until then.
-    environment: release
+    # Runs the Gradle build, so it runs code this repository does not control. It has no secrets and no
+    # environment. It only produces the unsigned APK.
     steps:
       - name: Check out the tagged commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -161,9 +162,38 @@ jobs:
           RAFIQ_VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
         run: ./gradlew --console=plain --no-daemon :android:assembleRelease
 
-      # Signing needs only apksigner and the keystore. No `set -x` and no echo of a value. Each secret is
-      # masked in logs and reaches this step alone. The passwords go to apksigner by environment variable
-      # name, so they never appear in a process listing.
+      - name: Keep the unsigned APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-apk
+          path: android/build/outputs/apk/release/*-unsigned.apk
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-apk:
+    name: sign-apk
+    needs: [prepare, apk]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Holds the signing secrets. Create this environment with required reviewers before the first tag, so
+    # a person approves every release that signs. It does nothing harmful until then. No checkout and no
+    # Gradle here: this job runs only the steps below, on a runner no build has touched.
+    environment: release
+    steps:
+      - name: Get the unsigned APK
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-apk
+          path: unsigned
+
+      - name: Install the Android build tools
+        run: |
+          set -euo pipefail
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "build-tools;37.0.0"
+
+      # No `set -x` and no echo of a value. Each secret is masked in logs. The passwords go to apksigner by
+      # environment variable name, so they never appear in a process listing. apksigner takes the key alias
+      # only as an argument, so the alias is visible in the process list. It is a name, not a secret.
       - name: Sign the APK
         env:
           KEYSTORE_BASE64: ${{ secrets.RAFIQ_RELEASE_KEYSTORE_BASE64 }}
@@ -182,7 +212,6 @@ jobs:
           umask 077
           keystore="${RUNNER_TEMP}/rafiq-release.jks"
           printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
-          unsigned=$(ls android/build/outputs/apk/release/*.apk)
           tools="${ANDROID_HOME}/build-tools/37.0.0"
           mkdir dist
           "${tools}/apksigner" sign \
@@ -191,15 +220,15 @@ jobs:
             --ks-pass env:RAFIQ_RELEASE_KEYSTORE_PASSWORD \
             --key-pass env:RAFIQ_RELEASE_KEY_PASSWORD \
             --out "dist/rafiq-${VERSION}.apk" \
-            "${unsigned}"
-          # A build that skipped signing would still produce an APK, so check this one is signed.
+            unsigned/*-unsigned.apk
+          # A step that skipped signing would still leave an APK, so check this one is signed.
           "${tools}/apksigner" verify "dist/rafiq-${VERSION}.apk"
 
       - name: Delete the keystore
         if: always()
         run: rm -f "${RUNNER_TEMP}/rafiq-release.jks"
 
-      - name: Keep the APK
+      - name: Keep the signed APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-apk
@@ -273,7 +302,7 @@ jobs:
 
   release:
     name: release
-    needs: [prepare, apk, bridge]
+    needs: [prepare, sign-apk, bridge]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # The only job that can write to the repository. It holds no signing secrets, and its checkout does not

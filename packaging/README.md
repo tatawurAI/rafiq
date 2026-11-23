@@ -9,14 +9,14 @@ This folder holds what ships with a release. `release.yml` in `.github/workflows
 
 1. Open a release pull request that sets `rafiq.version` in `gradle.properties` and updates `CHANGELOG.md` (see [CONTRIBUTING.md](../CONTRIBUTING.md)). Merge it.
 2. Tag the merged commit on `main` as `v<version>` and push the tag. The workflow refuses a tag whose commit is not on `main`, or whose version differs from `gradle.properties`.
-3. Approve the `apk` job when GitHub asks (see below).
+3. Approve the `sign-apk` job when GitHub asks (see below).
 4. Copy `rafiq-bridge.rb` from the release to the Homebrew tap.
 
 ## One-time setup for signing
 
 The signing key must never reach a job that a stray tag could start on its own. Two settings keep it that way, and both are made in GitHub, not in the repository.
 
-**The `release` environment.** The `apk` job runs in an environment named `release`.
+**The `release` environment.** The `sign-apk` job runs in an environment named `release`. No other job uses it or holds the secrets.
 
 1. In the repository settings, open Environments and create `release`.
 2. Turn on Required reviewers and add the maintainers who may approve a release.
@@ -44,4 +44,10 @@ Keep a backup. A phone that installed an APK signed with this key only accepts u
 
 ## How the APK is signed
 
-Gradle builds `:android:assembleRelease` with no secrets in its environment, which gives an unsigned APK. A later step signs it with `apksigner`, using only the decoded keystore and the passwords, then verifies the result and deletes the keystore.
+Signing is split from building, so code that runs during the build never shares a machine with the key.
+
+1. The `apk` job runs Gradle and builds `:android:assembleRelease`. It has no secrets and no environment, and it uploads the unsigned APK as an artifact.
+2. The `sign-apk` job starts on a fresh runner. It has no checkout and runs no Gradle. It downloads the unsigned APK, decodes the keystore, signs with `apksigner`, verifies the result, deletes the keystore and uploads the signed APK.
+3. The `release` job attaches the signed APK.
+
+The passwords reach `apksigner` as environment variables named on its command line, so they are not in a process listing. `apksigner` takes the key alias only as an argument, so the alias is visible there. It is a name, not a secret.

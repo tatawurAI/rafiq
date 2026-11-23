@@ -105,7 +105,7 @@ class SetupCli(
         val adapter = programs.find(ADAPTER)
         out.println(
             claude?.let { "  Found claude at $it. Make sure it is signed in: run claude once and follow its prompts." }
-                ?: "  claude is not on your PATH. Install Claude Code and sign in, then run setup again.",
+                ?: CLAUDE_MISSING,
         )
         out.println(
             adapter?.let { "  Found $ADAPTER at $it." }
@@ -123,7 +123,7 @@ class SetupCli(
             }
         out.println(
             when {
-                status == null -> "  tailscale is not on your PATH. Install Tailscale, sign in, and run setup again."
+                status == null -> TAILSCALE_MISSING
                 !status.running -> "  Tailscale is not connected. Run: tailscale up"
                 status.dnsName == null -> "  This machine has no ts.net name. Turn on MagicDNS in Tailscale."
                 else -> "  This machine is ${status.dnsName}."
@@ -236,6 +236,14 @@ class SetupCli(
         const val COMMAND = "setup"
 
         private const val FAILED = 1
+        private const val CLAUDE_MISSING =
+            "  claude is not on your PATH. Install Claude Code and sign in, then run setup again: " +
+                "https://docs.claude.com/en/docs/claude-code/setup"
+        private const val TAILSCALE_MISSING =
+            "  tailscale is not on your PATH. Install Tailscale, sign in, and run setup again: " +
+                "https://tailscale.com/download\n" +
+                "  Without it setup cannot fill in RAFIQ_ALLOWED_HOSTS, and without that rafiq-bridge pair prints no " +
+                "QR code."
         private const val DEFAULT_DEVICE_NAME = "phone"
         private const val WAIT_STEPS = 20
         private const val WAIT_STEP_MS = 500L

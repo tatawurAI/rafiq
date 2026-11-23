@@ -43,17 +43,22 @@ class ServiceInstallTest {
         }
     private val out = ByteArrayOutputStream()
 
+    private val err = ByteArrayOutputStream()
+
     private fun service(
         platform: ServiceInstall.Platform,
         environment: Map<String, String> = emptyMap(),
+        programs: ProgramFinder = ProgramFinder { Path.of("/usr/bin").resolve(it) },
     ) = ServiceInstall(
         platform,
         home,
-        mapOf("HOME" to home.toString(), "PATH" to "/opt/homebrew/bin:/usr/bin") + environment,
+        mapOf("HOME" to home.toString(), "PATH" to "/opt/homebrew/bin:/usr/bin", "XDG_RUNTIME_DIR" to "/run/user/501") +
+            environment,
         runner,
         PrintStream(out),
-        PrintStream(ByteArrayOutputStream()),
+        PrintStream(err),
         pause = { pauses++ },
+        programs = programs,
     )
 
     @Test
@@ -135,6 +140,21 @@ class ServiceInstallTest {
         assertEquals(0, service(ServiceInstall.Platform.MACOS).uninstall())
 
         assertTrue(listOf("launchctl", "bootout", "gui/501/ai.tatawur.rafiq-bridge") in commands, "$commands")
+    }
+
+    @Test
+    fun without_systemctl_or_a_user_session_nothing_is_written_and_the_message_says_what_to_do_instead() {
+        val noSystemctl = service(ServiceInstall.Platform.LINUX, programs = { null })
+        val noSession = service(ServiceInstall.Platform.LINUX, mapOf("XDG_RUNTIME_DIR" to ""))
+
+        assertEquals(1, noSystemctl.install(Path.of("/opt/rafiq/bin/rafiq-bridge")))
+        assertEquals(1, noSession.install(Path.of("/opt/rafiq/bin/rafiq-bridge")))
+
+        assertFalse(Files.exists(noSystemctl.unitPath))
+        assertEquals(listOf(listOf("systemctl", "--user", "is-system-running")), commands)
+        val message = err.toString()
+        assertTrue("No systemd user session here" in message && "tmux or screen" in message, message)
+        assertTrue("loginctl enable-linger" in message, message)
     }
 
     /** The plist's string values by key, with the program arguments joined and the environment flattened in. */

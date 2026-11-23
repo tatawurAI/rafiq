@@ -14,6 +14,9 @@ import ai.tatawur.rafiq.protocol.api.PushPayload
 import ai.tatawur.rafiq.protocol.api.SessionSummary
 import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.builtins.ListSerializer
 import java.io.IOException
@@ -79,6 +82,26 @@ class PushNoticesTest {
             val notice = notices.noticeFor(push(PushKind.APPROVAL, "apr_1"), decrypted = true)
 
             assertEquals(PushNotice.Generic(SESSION, PushKind.APPROVAL, "apr_1"), notice)
+        }
+
+    @Test
+    fun a_clear_that_arrives_during_the_approvals_fetch_means_it_is_never_shown() =
+        runTest {
+            val notices =
+                notices(
+                    HttpTransport {
+                        delay(2.seconds)
+                        listed(open = listOf(request("apr_1"))).execute(it)
+                    },
+                )
+            val shown = mutableListOf<PushNotice>()
+
+            launch { notices.handle(push(PushKind.APPROVAL, "apr_1"), decrypted = true) { shown += it } }
+            advanceTimeBy(1.seconds)
+            notices.handle(push(PushKind.APPROVAL_CLEARED, "apr_1"), decrypted = true) { shown += it }
+            advanceUntilIdle()
+
+            assertEquals(listOf<PushNotice>(PushNotice.Clear("apr_1")), shown)
         }
 
     @Test

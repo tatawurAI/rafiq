@@ -66,5 +66,10 @@ class SecuritySettingsTest {
 
             settings.setApprovalLock(true)
             assertFalse(settings.approvalLockReset.first())
+
+            settings.approvalLockKeyInvalidated()
+            settings.dismissApprovalLockReset()
+            assertFalse(settings.approvalLockReset.first())
+            assertFalse(settings.approvalLock.first(), "dismissing the notice must not turn the lock back on")
         }
 }

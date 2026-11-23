@@ -20,6 +20,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -35,15 +37,18 @@ import kotlinx.coroutines.flow.first
  * It is not exported and never shows over the lock screen.
  */
 class ApproveActivity : ComponentActivity() {
+    // The approval on screen. A tap on another approval's Approve while this screen is open arrives through
+    // onNewIntent (singleTop) and replaces it, so the screen never answers a different approval than it shows.
+    private var shown by mutableStateOf<Shown?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
-        val approvalId = intent.getStringExtra(EXTRA_APPROVAL)
-        val sessionId = intent.getStringExtra(EXTRA_SESSION)
-        if (approvalId == null || sessionId == null) {
+        shown = Shown.of(intent)
+        if (shown == null) {
             finish()
             return
         }
@@ -54,8 +59,10 @@ class ApproveActivity : ComponentActivity() {
         setContent {
             RafiqTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    val (approvalId, sessionId) = shown ?: return@Surface
+                    // Keyed by approval, so another approval gets its own model and loads afresh.
                     val viewModel =
-                        viewModel {
+                        viewModel(key = approvalId) {
                             ApproveViewModel { scope ->
                                 ApproveModel(
                                     api = container.push.api,
@@ -84,6 +91,27 @@ class ApproveActivity : ComponentActivity() {
                         onClose = ::finish,
                     )
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        Shown.of(intent)?.let {
+            setIntent(intent)
+            shown = it
+        }
+    }
+
+    private data class Shown(
+        val approvalId: String,
+        val sessionId: String,
+    ) {
+        companion object {
+            fun of(intent: Intent): Shown? {
+                val approvalId = intent.getStringExtra(EXTRA_APPROVAL)
+                val sessionId = intent.getStringExtra(EXTRA_SESSION)
+                return if (approvalId != null && sessionId != null) Shown(approvalId, sessionId) else null
             }
         }
     }

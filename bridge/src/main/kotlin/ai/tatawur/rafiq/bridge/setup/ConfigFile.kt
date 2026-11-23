@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge.setup
 
 import ai.tatawur.rafiq.bridge.BridgeConfig
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
@@ -37,34 +38,64 @@ object ConfigFile {
      *   The message names the file and the line number, never a value, because a value can be a secret.
      */
     fun read(path: Path): Map<String, String> {
-        if (!Files.exists(path)) return emptyMap()
+        // NOFOLLOW_LINKS: a dangling link is still refused, rather than read as no file.
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return emptyMap()
         checkPrivate(path)
         return parse(Files.readString(path), path)
     }
 
     /**
-     * Refuses [path] if anyone but its owner can read or write it, if it belongs to another user, or if others can
-     * write to the folder that holds it, since they could then swap the file. Skipped on a file system without POSIX
-     * permissions.
+     * Refuses [path] if it is a symbolic link, if anyone but its owner can read or write it, if it or its folder
+     * belongs to another user than [uid], or if others can write to the folder, since they could then swap the file.
+     * Ownership is compared by user id, the one the process runs as, so `sudo -E` or a container whose user has no
+     * name does not trip it. Skipped on a file system without Unix attributes.
+     *
+     * @param uid the user id that must own the file, by default the one this process runs as.
      */
-    fun checkPrivate(path: Path) {
-        if ("posix" !in path.fileSystem.supportedFileAttributeViews()) return
-        val modes = Files.getPosixFilePermissions(path)
-        val open = modes.intersect(NOT_OWNER_READ_WRITE)
-        require(open.isEmpty()) {
+    fun checkPrivate(
+        path: Path,
+        uid: Int? = processUid,
+    ) {
+        if ("unix" !in path.fileSystem.supportedFileAttributeViews() || uid == null) return
+        require(!Files.isSymbolicLink(path)) {
+            "$path is a symbolic link, so the bridge will not use it. Replace it with the file itself."
+        }
+        val modes = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS)
+        require(modes.intersect(NOT_OWNER_READ_WRITE).isEmpty()) {
             "$path can be read or written by other users, so the bridge will not use it. Make it private with: " +
                 "chmod 600 $path"
         }
-        val owner = Files.getOwner(path).name
-        val user = System.getProperty("user.name")
-        require(
-            owner == user,
-        ) { "$path belongs to $owner, not to $user, who runs the bridge, so the bridge will not use it." }
+        val owner = ownerUid(path)
+        require(owner == uid) {
+            "$path belongs to user id $owner, not to $uid, who runs the bridge, so the bridge will not use it."
+        }
         val folder = path.toAbsolutePath().parent
-        val folderModes = Files.getPosixFilePermissions(folder)
+        val folderOwner = ownerUid(folder)
+        require(folderOwner == uid) {
+            "$folder belongs to user id $folderOwner, not to $uid, who runs the bridge, so they could replace " +
+                "${path.fileName}. Keep bridge.conf in a folder of your own."
+        }
+        val folderModes = Files.getPosixFilePermissions(folder, LinkOption.NOFOLLOW_LINKS)
         require(PosixFilePermission.GROUP_WRITE !in folderModes && PosixFilePermission.OTHERS_WRITE !in folderModes) {
             "Other users can write to $folder, so they could replace ${path.fileName}. Fix it with: chmod 700 $folder"
         }
+    }
+
+    private fun ownerUid(path: Path): Int = Files.getAttribute(path, "unix:uid", LinkOption.NOFOLLOW_LINKS) as Int
+
+    /**
+     * The user id this process runs as. The JDK has no call for it, so it is read off a file the process creates: a
+     * new file belongs to the process's effective user. Null where Unix attributes are not available.
+     */
+    val processUid: Int? by lazy {
+        runCatching {
+            val probe = Files.createTempFile("rafiq-uid", ".probe")
+            try {
+                ownerUid(probe)
+            } finally {
+                Files.deleteIfExists(probe)
+            }
+        }.getOrNull()
     }
 
     /** True when [checkPrivate] would refuse [path]. */
@@ -137,8 +168,8 @@ object ConfigFile {
         val temporary =
             Files.createTempFile(
                 folder,
-                ".bridge",
-                ".conf",
+                ".rafiq",
+                ".tmp",
                 PosixFilePermissions.asFileAttribute(OWNER_ONLY_FILE),
             )
         try {

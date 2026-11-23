@@ -2,6 +2,8 @@ package ai.tatawur.rafiq.protocol.api
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.net.URI
+import java.net.URISyntaxException
 
 /**
  * Body of `POST /pair`, the one call that needs no device token.
@@ -63,8 +65,9 @@ object PairingLink {
     ): String = PREFIX + "url=" + encode(baseUrl) + "&code=" + encode(code)
 
     /**
-     * Reads a link made by [build]. Returns null for anything else, including a URL that is not `https://`, so a
-     * QR code from elsewhere cannot point the app at a plain-HTTP server.
+     * Reads a link made by [build]. Returns null for anything else, so a QR code from elsewhere cannot point the app
+     * at a plain-HTTP server or hide its real host. The URL must be `https://` with a host, and must not carry user
+     * info, a query or a fragment: `https://name.example.ts.net@other.example` names `other.example`, not the first.
      */
     fun parse(link: String): Parsed? {
         val params =
@@ -78,9 +81,23 @@ object PairingLink {
                     if (key.isEmpty()) null else key to decode(value)
                 }?.toMap()
                 .orEmpty()
-        val url = params["url"]?.takeIf { it.startsWith("https://") && it.length > "https://".length }
+        val url = params["url"]?.takeIf(::isPlainHttpsUrl)
         val code = params["code"]?.takeIf { it.isNotBlank() }
         return if (url != null && code != null) Parsed(url.trimEnd('/'), code) else null
+    }
+
+    private fun isPlainHttpsUrl(url: String): Boolean {
+        val uri =
+            try {
+                URI(url)
+            } catch (_: URISyntaxException) {
+                return false
+            }
+        return uri.scheme.equals("https", ignoreCase = true) &&
+            !uri.host.isNullOrEmpty() &&
+            uri.rawUserInfo == null &&
+            uri.rawQuery == null &&
+            uri.rawFragment == null
     }
 
     /** A parsed pairing link. */
@@ -88,6 +105,12 @@ object PairingLink {
         val baseUrl: String,
         val code: String,
     ) {
+        /** The server's host name, which the app shows so you can check it before connecting. */
+        val host: String get() = URI(baseUrl).host
+
+        /** True for a Tailscale MagicDNS name, `*.ts.net`, the kind of address `tailscale serve` gives your server. */
+        val isTailscaleName: Boolean get() = host.lowercase().endsWith(".ts.net")
+
         // The code is a short-lived secret.
         override fun toString(): String = "PairingLink.Parsed(baseUrl=$baseUrl)"
     }

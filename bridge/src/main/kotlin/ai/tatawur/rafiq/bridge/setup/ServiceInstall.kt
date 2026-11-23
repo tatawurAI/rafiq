@@ -2,6 +2,7 @@ package ai.tatawur.rafiq.bridge.setup
 
 import java.io.PrintStream
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 
 /**
@@ -15,7 +16,9 @@ import java.nio.file.Path
  * @param home your home folder. Tests pass a temporary one.
  * @param environment the environment the command runs in.
  * @param runner runs `launchctl`, `systemctl` and `id`. Tests pass a fake, so they never load a service.
+ * @param pause waits before `launchctl bootstrap` is tried again, while launchd finishes unloading the old job.
  */
+@Suppress("LongParameterList") // The command's whole world, passed in so tests can replace each part.
 class ServiceInstall(
     private val platform: Platform,
     private val home: Path,
@@ -23,6 +26,7 @@ class ServiceInstall(
     private val runner: CommandRunner,
     private val out: PrintStream,
     private val err: PrintStream,
+    private val pause: () -> Unit = { Thread.sleep(BOOTSTRAP_RETRY_MS) },
 ) {
     /** The init systems the bridge can register with. */
     enum class Platform { MACOS, LINUX }
@@ -44,64 +48,86 @@ class ServiceInstall(
     /** Writes the service definition for [program] and starts it. Returns the exit code for the command. */
     fun install(program: Path): Int {
         val serviceEnvironment =
-            SERVICE_VARIABLES.associateWith { environment[it].orEmpty() }.filterValues(String::isNotBlank)
+            SERVICE_VARIABLES
+                .associateWith { environment[it].orEmpty() }
+                .mapValues { (name, value) -> if (name == "PATH") absoluteEntries(value) else value }
+                .filterValues(String::isNotBlank)
         val text =
             when (platform) {
                 Platform.MACOS -> launchdPlist(program, serviceEnvironment, logFile)
                 Platform.LINUX -> systemdUnit(program, serviceEnvironment)
             }
-        Files.createDirectories(unitPath.parent)
-        Files.writeString(unitPath, text)
+        // Owner-only (0600), like bridge.conf: the file decides what runs as you at every log in.
+        ConfigFile.write(unitPath, text)
         out.println("Wrote $unitPath, which starts $program.")
         warnAboutShellOnlySettings()
-        val started = startCommands()?.let(::runAll) ?: false
+        val started =
+            when (platform) {
+                Platform.MACOS -> {
+                    userId()?.let(::startOnMac) ?: false
+                }
+
+                Platform.LINUX -> {
+                    runAll(
+                        listOf(
+                            listOf("systemctl", "--user", "daemon-reload"),
+                            listOf("systemctl", "--user", "enable", "--now", UNIT),
+                        ),
+                    )
+                }
+            }
         if (started) printStarted()
         return if (started) 0 else FAILED
     }
 
-    /** Stops the service and deletes its definition. Returns the exit code for the command. */
+    /**
+     * Stops the service and deletes its definition. Returns the exit code for the command. It stops the service even
+     * when the file is already gone, so a job loaded from a file someone deleted by hand does not keep running.
+     */
     fun uninstall(): Int {
-        if (!Files.exists(unitPath)) {
-            out.println("No service is installed at $unitPath.")
-            return 0
-        }
-        val stop =
+        val installed = Files.exists(unitPath, LinkOption.NOFOLLOW_LINKS)
+        // Either command fails when nothing is loaded, which is fine here, so the result only shapes the message.
+        val stopped =
             when (platform) {
-                Platform.MACOS -> userId()?.let { listOf(listOf("launchctl", "bootout", "gui/$it/$LABEL")) }
-                Platform.LINUX -> listOf(listOf("systemctl", "--user", "disable", "--now", UNIT))
-            }
-        if (stop == null || !runAll(stop)) {
-            err.println(
-                "Could not stop the service. Removing $unitPath anyway, so it does not start at your next log in.",
-            )
+                Platform.MACOS -> userId()?.let { runner.run(listOf("launchctl", "bootout", "gui/$it/$LABEL")).ok }
+                Platform.LINUX -> runner.run(listOf("systemctl", "--user", "disable", "--now", UNIT)).ok
+            } == true
+        if (installed) {
+            Files.delete(unitPath)
+            if (platform == Platform.LINUX) runner.run(listOf("systemctl", "--user", "daemon-reload"))
         }
-        Files.delete(unitPath)
-        if (platform == Platform.LINUX) runner.run(listOf("systemctl", "--user", "daemon-reload"))
-        out.println("Removed the service. Your settings in bridge.conf and the data folder are untouched.")
+        out.println(
+            when {
+                installed -> "Removed the service. Your settings in bridge.conf and the data folder are untouched."
+                stopped -> "Stopped a running service whose file at $unitPath was already gone."
+                else -> "No service is installed at $unitPath."
+            },
+        )
         return 0
     }
 
-    private val logFile: Path get() = home.resolve("Library/Logs/rafiq-bridge.log")
-
-    /** The commands that load and start the service, or null when they cannot be built. */
-    private fun startCommands(): List<List<String>>? =
-        when (platform) {
-            Platform.MACOS -> {
-                userId()?.let { uid ->
-                    // Unloading a previous install first makes a reinstall pick up the new file. It fails harmlessly
-                    // when nothing is loaded, so its result is not checked.
-                    runner.run(listOf("launchctl", "bootout", "gui/$uid/$LABEL"))
-                    listOf(listOf("launchctl", "bootstrap", "gui/$uid", unitPath.toString()))
-                }
-            }
-
-            Platform.LINUX -> {
-                listOf(
-                    listOf("systemctl", "--user", "daemon-reload"),
-                    listOf("systemctl", "--user", "enable", "--now", UNIT),
-                )
-            }
+    /**
+     * Unloads any earlier job, then loads the new file. launchd can still be unloading the old job when `bootstrap`
+     * runs, which fails with an I/O error, so `bootstrap` is tried a few times with a pause in between.
+     */
+    private fun startOnMac(uid: String): Boolean {
+        // Fails harmlessly when nothing is loaded, so its result is not checked.
+        runner.run(listOf("launchctl", "bootout", "gui/$uid/$LABEL"))
+        val bootstrap = listOf("launchctl", "bootstrap", "gui/$uid", unitPath.toString())
+        var result = runner.run(bootstrap)
+        var tries = 1
+        while (!result.ok && tries < BOOTSTRAP_TRIES) {
+            pause()
+            result = runner.run(bootstrap)
+            tries++
         }
+        if (!result.ok) {
+            err.println("${bootstrap.joinToString(" ")} failed (exit ${result.exitCode}): ${result.output.trim()}")
+        }
+        return result.ok
+    }
+
+    private val logFile: Path get() = home.resolve("Library/Logs/rafiq-bridge.log")
 
     private fun printStarted() {
         out.println("The bridge is running as a service and starts again when you log in.")
@@ -161,12 +187,25 @@ class ServiceInstall(
 
         private const val FAILED = 1
         private const val USAGE_ERROR = 2
+        private const val BOOTSTRAP_TRIES = 3
+        private const val BOOTSTRAP_RETRY_MS = 1_000L
 
         // "Cellar", "rafiq-bridge" and the version folder: what the opt path replaces.
         private const val VERSION_AND_FILE = 3
         private const val USAGE = "Usage: rafiq-bridge service install | rafiq-bridge service uninstall"
         private val SERVICE_VARIABLES = listOf("PATH", "JAVA_HOME", "XDG_CONFIG_HOME")
         private const val APPLE_DTD = "http://www.apple.com/DTDs/PropertyList-1.0.dtd"
+
+        /**
+         * [path] without empty or relative entries. An empty entry means the current folder, and a relative one is
+         * read against wherever the service starts, so either could run a program nobody meant to.
+         */
+        internal fun absoluteEntries(path: String): String =
+            path
+                .split(':')
+                .filter { it.isNotEmpty() && Path.of(it).isAbsolute }
+                .distinct()
+                .joinToString(":")
 
         /** The platform for an `os.name` value, or null for one with neither launchd nor systemd. */
         fun platformFor(osName: String): Platform? =

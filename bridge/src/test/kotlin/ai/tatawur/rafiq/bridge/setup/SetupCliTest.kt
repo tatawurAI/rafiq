@@ -17,7 +17,10 @@ class SetupCliTest {
 
     private val file get() = home.resolve(".config/rafiq/bridge.conf")
 
-    /** Answers questions from a script, in order, and records each one. Running out of answers means no. */
+    /**
+     * Answers questions from a script, in order, and records each one. An empty answer takes the question's default,
+     * as at a terminal. Running out of answers is the end of input, which is no.
+     */
     private class ScriptedConsole(
         answers: List<String>,
     ) : SetupConsole {
@@ -27,10 +30,14 @@ class SetupCliTest {
         val questions = mutableListOf<String>()
         val printed: String get() = bytes.toString()
 
-        override fun confirm(question: String): Boolean {
+        override fun confirm(
+            question: String,
+            default: Boolean,
+        ): Boolean {
             questions += question
             out.println(question)
-            return remaining.removeFirstOrNull() == "y"
+            val answer = remaining.removeFirstOrNull() ?: return false
+            return if (answer.isEmpty()) default else answer == "y"
         }
 
         override fun ask(
@@ -172,5 +179,32 @@ class SetupCliTest {
         assertEquals(0, exit, console.printed)
         assertEquals(1, servicesInstalled)
         assertEquals("pixel", paired.single().second)
+    }
+
+    @Test
+    fun an_empty_answer_writes_the_safe_default_mode_but_leaves_other_settings_alone() {
+        ConfigFile.write(file, "RAFIQ_AGENTS=claude-code=claude-agent-acp\n")
+        // Enter on every settings question, then no to tailscale serve.
+        val console = ScriptedConsole(listOf("", "", "", "n"))
+
+        setup(console, bridgeRunning = { false }).run()
+
+        val written = ConfigFile.read(file)
+        assertEquals("claude-code=default", written["RAFIQ_DEFAULT_MODES"])
+        assertEquals(null, written["RAFIQ_DATA_DIR"])
+        assertEquals(null, written["RAFIQ_ALLOWED_HOSTS"])
+    }
+
+    @Test
+    fun at_the_terminal_enter_takes_the_default_and_closed_input_is_always_no() {
+        fun answer(
+            input: String,
+            default: Boolean,
+        ) = StreamConsole(input.reader().buffered(), PrintStream(ByteArrayOutputStream())).confirm("Go?", default)
+
+        assertTrue(answer("\n", default = true))
+        assertFalse(answer("\n", default = false))
+        assertFalse(answer("n\n", default = true))
+        assertFalse(answer("", default = true))
     }
 }

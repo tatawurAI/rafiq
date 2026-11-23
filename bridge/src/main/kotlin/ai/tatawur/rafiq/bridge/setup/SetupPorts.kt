@@ -5,7 +5,10 @@ import java.io.IOException
 import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import kotlin.concurrent.thread
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -27,28 +30,51 @@ fun interface CommandRunner {
     fun run(command: List<String>): CommandResult
 }
 
-/** Runs programs for real, with their output and errors combined, and gives up on one after [timeout]. */
+/**
+ * Runs programs for real, with their output and errors combined, and gives up on one after [timeout].
+ *
+ * The output is read on its own thread. Reading it here first would wait for the program to close its output, which a
+ * hung program never does, and the timeout would never be checked.
+ */
 class ProcessCommandRunner(
     private val timeout: Duration = 30.seconds,
 ) : CommandRunner {
     override fun run(command: List<String>): CommandResult =
         try {
-            val process = ProcessBuilder(command).redirectErrorStream(true).start()
-            process.outputStream.close()
-            val output = process.inputStream.bufferedReader().use(BufferedReader::readText)
-            if (process.waitFor(timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)) {
-                CommandResult(process.exitValue(), output)
-            } else {
-                process.destroyForcibly()
-                CommandResult(TIMED_OUT, "${command.first()} did not finish within $timeout.")
-            }
+            finish(ProcessBuilder(command).redirectErrorStream(true).start(), command)
         } catch (failure: IOException) {
             CommandResult(NOT_STARTED, failure.message.orEmpty())
         }
 
+    private fun finish(
+        process: Process,
+        command: List<String>,
+    ): CommandResult {
+        process.outputStream.close()
+        val output = CompletableFuture<String>()
+        thread(isDaemon = true, name = "rafiq-command-output") {
+            val text = runCatching { process.inputStream.bufferedReader().use(BufferedReader::readText) }
+            output.complete(text.getOrDefault(""))
+        }
+        if (!process.waitFor(timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)) {
+            process.descendants().forEach(ProcessHandle::destroyForcibly)
+            process.destroyForcibly()
+            return CommandResult(TIMED_OUT, "${command.first()} did not finish within $timeout.")
+        }
+        // A child the program left behind can hold the output open after it exits, so the read is bounded too.
+        val text =
+            try {
+                output.get(OUTPUT_GRACE_MS, TimeUnit.MILLISECONDS)
+            } catch (_: TimeoutException) {
+                ""
+            }
+        return CommandResult(process.exitValue(), text)
+    }
+
     private companion object {
         const val NOT_STARTED = 127
         const val TIMED_OUT = 124
+        const val OUTPUT_GRACE_MS = 2_000L
     }
 }
 
@@ -78,8 +104,14 @@ interface SetupConsole {
     /** Where `setup` prints. */
     val out: PrintStream
 
-    /** Asks a yes or no [question]. Anything but `y` or `yes`, including the end of input, is no. */
-    fun confirm(question: String): Boolean
+    /**
+     * Asks a yes or no [question]. `y` or `yes` is yes, `n` or `no` is no, and an empty answer is [default]. Anything
+     * else, and the end of input, is no, so a closed input never agrees to a change.
+     */
+    fun confirm(
+        question: String,
+        default: Boolean = false,
+    ): Boolean
 
     /** Asks for a line of text, giving [default] when the answer is empty or input has ended. */
     fun ask(
@@ -93,10 +125,14 @@ class StreamConsole(
     private val input: BufferedReader,
     override val out: PrintStream,
 ) : SetupConsole {
-    override fun confirm(question: String): Boolean {
-        out.print("$question [y/N] ")
+    override fun confirm(
+        question: String,
+        default: Boolean,
+    ): Boolean {
+        out.print(if (default) "$question [Y/n] " else "$question [y/N] ")
         out.flush()
-        return input.readLine()?.trim()?.lowercase() in YES
+        val answer = input.readLine()?.trim()?.lowercase() ?: return false
+        return if (answer.isEmpty()) default else answer in YES
     }
 
     override fun ask(

@@ -31,7 +31,7 @@ On your server, as the user who will run the bridge:
 rafiq-bridge setup
 ```
 
-Setup asks before every change. Answer `y` to go ahead. Anything else, or just Enter, skips that step and changes nothing. It runs nothing that changes your system without a yes. It does run two things that only read: `tailscale status --json`, and a look for programs on your `PATH`.
+Setup asks before every change. Answer `y` to go ahead. Anything else, or just Enter, skips that step and changes nothing. The one exception is the permission mode question below, shown as `[Y/n]`: there Enter means yes, because no is the risky answer. It runs nothing that changes your system without a yes. It does run two things that only read: `tailscale status --json`, and a look for programs on your `PATH`.
 
 It goes through these steps:
 
@@ -40,7 +40,7 @@ It goes through these steps:
 3. It offers each setting that is missing from the settings file, one question each:
    - `RAFIQ_DATA_DIR`, where the bridge keeps its database: `~/.local/share/rafiq`, or `$XDG_DATA_HOME/rafiq` if you set that.
    - `RAFIQ_AGENTS=claude-code=claude-agent-acp`, when the adapter is installed.
-   - `RAFIQ_DEFAULT_MODES=claude-code=default`, when Claude Code is in the agent list. Sessions you start from your phone ask before edits and commands. Without it, `claude-agent-acp` starts them in a mode that edits files without asking.
+   - `RAFIQ_DEFAULT_MODES=claude-code=default`, when Claude Code is in the agent list. Sessions you start from your phone ask before edits and commands. Without it, `claude-agent-acp` starts them in a mode that edits files without asking. This question defaults to yes.
    - `RAFIQ_ALLOWED_HOSTS` with your `*.ts.net` name, added to any names already there.
 4. It prints the `tailscale serve --bg 8740` command and offers to run it. On Linux that needs `sudo`, or allow your user once with `sudo tailscale set --operator=$USER`.
 5. It prints every setting the bridge will use and where it came from:
@@ -68,10 +68,10 @@ rafiq-bridge pair --name pixel
 
 `setup` runs this for you at the end. Run it in the same environment as the bridge: it needs the same `RAFIQ_DATA_DIR`, which it reads from the settings file too. It prints a pairing code like `ABCD-EFGH`, your server's address and a QR code.
 
-- **Scan:** in the app, tap Scan the QR code and point your phone at the terminal. The app asks for the camera only then, and pairs as soon as it reads the code. The phone's own camera app can read the code too. It opens Rafiq with the address and code filled in, and you tap Connect after checking the address.
+- **Scan:** in the app, tap Scan the QR code and point your phone at the terminal. The app asks for the camera only then. It fills in the address and code and shows your server's name large. Check it is your server, then tap Connect. The phone's own camera app can read the code too, and opens Rafiq the same way. Nothing pairs until you tap Connect, because a QR code on a poster or a link on a web page could name someone else's server. If the name does not end in `.ts.net`, the app warns you, since `tailscale serve` always gives your server a `*.ts.net` name.
 - **Type:** enter your server's address (`https://box.example.ts.net`) and the code.
 
-The QR code holds a `rafiq://pair` link with your server's `https://` address and the pairing code. It never holds a device token. The app refuses a link to a plain `http://` address. If the phone is already paired, the app ignores the link and says so. Unpair in Settings first to pair it with a server again.
+The QR code holds a `rafiq://pair` link with your server's `https://` address and the pairing code. It never holds a device token. The app refuses a link to a plain `http://` address, and an address with a user name, a query or a fragment in it. If the phone is already paired, the app ignores the link and says so. Unpair in Settings first to pair it with a server again.
 
 The QR code is drawn in your terminal's text colour. On a terminal with dark text on a light background it comes out inverted. The app reads it either way, but another scanner might not. If the address line says to see this guide instead of naming your server, `RAFIQ_ALLOWED_HOSTS` was empty when the bridge started. Run setup, then restart the bridge.
 

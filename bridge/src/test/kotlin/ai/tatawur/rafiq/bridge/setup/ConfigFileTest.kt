@@ -8,6 +8,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ConfigFileTest {
@@ -110,5 +111,28 @@ class ConfigFileTest {
 
         assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)))
         assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file.parent)))
+    }
+
+    @Test
+    fun a_symbolic_link_in_place_of_the_file_is_refused_even_when_its_target_is_private() {
+        val target = home.resolve("elsewhere.conf")
+        Files.writeString(target, "RAFIQ_PORT=9000\n")
+        Files.setPosixFilePermissions(target, PosixFilePermissions.fromString("rw-------"))
+        ConfigFile.write(file, "RAFIQ_PORT=9000\n")
+        Files.delete(file)
+        Files.createSymbolicLink(file, target)
+
+        val refused = assertFailsWith<IllegalArgumentException> { ConfigFile.read(file) }
+        assertTrue("symbolic link" in refused.message.orEmpty())
+    }
+
+    @Test
+    fun a_file_owned_by_another_user_id_than_the_process_is_refused() {
+        writeFile("RAFIQ_PORT=9000\n")
+        val uid = assertNotNull(ConfigFile.processUid)
+
+        ConfigFile.checkPrivate(file, uid)
+        val refused = assertFailsWith<IllegalArgumentException> { ConfigFile.checkPrivate(file, uid + 1) }
+        assertTrue(refused.message.orEmpty().startsWith("$file belongs to user id $uid"), refused.message)
     }
 }

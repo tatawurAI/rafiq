@@ -150,9 +150,13 @@ class SetupCli(
                 if (loaded.origins[proposal.name] == SettingOrigin.ENVIRONMENT) {
                     out.println("  Your environment sets ${proposal.name}, which wins over the file while it is set.")
                 }
-                console.confirm("  Write ${proposal.name}=${proposal.value} to bridge.conf?").also { yes ->
-                    if (yes) accepted += proposal.name
-                }
+                console
+                    .confirm(
+                        "  Write ${proposal.name}=${proposal.value} to bridge.conf?",
+                        proposal.defaultYes,
+                    ).also { yes ->
+                        if (yes) accepted += proposal.name
+                    }
             }.associate { it.name to it.value }
     }
 

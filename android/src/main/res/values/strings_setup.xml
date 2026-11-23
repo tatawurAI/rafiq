@@ -7,6 +7,7 @@
   <string name="setup_scan_camera_failed">The camera could not start. Type the address and code instead.</string>
   <string name="setup_scan_type_instead">Type it instead</string>
   <string name="setup_camera_denied">Rafiq uses the camera only to scan the pairing code. You can type the address and code instead.</string>
-  <string name="setup_link_check">Check that this is your server\'s address, then tap Connect.</string>
+  <string name="setup_link_check">Check that this is your server, then tap Connect:</string>
+  <string name="setup_link_not_tailscale">This is not a Tailscale name (ending in .ts.net), which tailscale serve gives your server. Connect only if you know this server is yours.</string>
   <string name="setup_link_already_paired">This phone is already paired. To pair it with a server again, unpair it in Settings first.</string>
 </resources>

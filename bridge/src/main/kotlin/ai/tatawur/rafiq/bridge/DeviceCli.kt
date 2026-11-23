@@ -130,6 +130,8 @@ object DeviceCli {
             // The QR holds the address and this one-time code, never a device token.
             out.println("Or scan this with the app:")
             out.print(TerminalQr.render(PairingLink.build(url, code)))
+        } else {
+            out.println("No QR code: set RAFIQ_ALLOWED_HOSTS, or run rafiq-bridge setup.")
         }
     }
 

@@ -84,8 +84,10 @@ Publish the bridge over HTTPS with `tailscale serve`, then pair the app with a c
 
 Two more commands are coming from issue [#34](https://github.com/tatawurAI/rafiq/issues/34), and this page does not cover them yet:
 
-- `rafiq-bridge setup` asks for your settings, checks for the adapter and prints a pairing QR code.
+- `rafiq-bridge setup` asks for your settings, checks for the adapter and prints a pairing QR code. It saves your settings to the bridge's config file.
 - `rafiq-bridge service install` runs the bridge in the background and restarts it after a reboot.
+
+Run `rafiq-bridge setup` first. If you install through Homebrew, you can then use `brew services start rafiq-bridge` instead of `service install`. Pick one of the two, never both, because each starts a bridge and two bridges cannot share one port.
 
 Until they land, run `rafiq-bridge` in a terminal you keep open, such as a tmux window, or write your own service unit.
 

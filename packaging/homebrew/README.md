@@ -20,3 +20,7 @@ scripts/render-homebrew-formula.sh 0.1.0 SHA256SUMS > rafiq-bridge.rb
 ```
 
 The script stops with an error if `SHA256SUMS` lacks any of the four archives.
+
+## Running as a service
+
+Run `rafiq-bridge setup` first. It writes your settings, including the data folder, to the bridge's config file, and the service reads them from there. Then use either `brew services start rafiq-bridge` or `rafiq-bridge service install`, never both. Each starts a bridge, and two bridges cannot share one port.

@@ -36,12 +36,14 @@ class RafiqBridge < Formula
     bin.install_symlink libexec/"bin/rafiq-bridge"
   end
 
-  # `brew services start rafiq-bridge`. The bridge reads its settings from its environment, or from the
-  # config file that `rafiq-bridge setup` writes. Run setup first so the service has your agent settings.
+  # `brew services start rafiq-bridge`. The bridge reads its settings from the config file that
+  # `rafiq-bridge setup` writes, so run setup first. Only PATH is set here: an environment variable beats the
+  # file, and a data folder set here would differ from the one `rafiq-bridge pair` reads from the file.
+  # Use this or `rafiq-bridge service install`, never both: two bridges would fight over one port.
   service do
     run [opt_bin/"rafiq-bridge"]
     keep_alive true
-    environment_variables PATH: std_service_path_env, RAFIQ_DATA_DIR: var/"rafiq"
+    environment_variables PATH: std_service_path_env
     log_path var/"log/rafiq-bridge.log"
     error_log_path var/"log/rafiq-bridge.log"
   end

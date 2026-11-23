@@ -12,7 +12,6 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -83,9 +82,12 @@ class NewSessionViewModel(
         loadAgents()
         project.load()
         viewModelScope.launch { project.state.collect { picker -> mutableState.update { it.copy(project = picker) } } }
+        // Collected, not read once: before the first sync the cached list can be empty.
         viewModelScope.launch {
-            knownModes = modesByAgent(repository.sessions().first())
-            mutableState.update { it.copy(modeChoices = knownModes[it.agent].orEmpty()) }
+            repository.sessions().collect { sessions ->
+                knownModes = modesByAgent(sessions)
+                mutableState.update { it.copy(modeChoices = knownModes[it.agent].orEmpty()) }
+            }
         }
     }
 

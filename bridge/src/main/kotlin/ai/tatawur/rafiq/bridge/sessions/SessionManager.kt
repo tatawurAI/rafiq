@@ -14,7 +14,6 @@ import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
-import ai.tatawur.rafiq.protocol.SessionMode
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.api.SessionSummary
 import kotlinx.coroutines.CoroutineDispatcher
@@ -73,8 +72,9 @@ class SessionManager(
     private val visibility: (sessionId: String) -> Boolean = { !isTmuxSessionId(it) },
     private val tmuxChat: TmuxChat? = null,
     private val present: (Session) -> Session = { it },
-    private val defaultModes: Map<String, String> = emptyMap(),
+    defaultModes: Map<String, String> = emptyMap(),
 ) {
+    private val modeRules = ModeRules(defaultModes)
     private val adaptersById = adapters.associateBy(AgentAdapter::agentId)
     private val live = ConcurrentHashMap<String, LiveSession>()
     private val resumeLocks = ConcurrentHashMap<String, Mutex>()
@@ -125,7 +125,7 @@ class SessionManager(
         // rows below are written waits in the buffer and is logged after them.
         val liveSession = attach(sessionId, agentSession)
         guardingTheAttachedSession(sessionId, liveSession) {
-            startingMode(agent, modeId, agentSession.modes.value)?.let { mode ->
+            modeRules.startingMode(agent, modeId, agentSession.modes.value)?.let { mode ->
                 unavailableAsConflict { agentSession.setMode(mode) }
             }
             val now = clock.millis()
@@ -151,44 +151,9 @@ class SessionManager(
                     status = AgentState.DONE,
                 )
             log.createSession(session, agentSession.agentSessionRef, mainThread)
-            liveSession.job.start()
+            publish(sessionId, liveSession)
         }
         return log.session(sessionId)?.session ?: error("Session $sessionId was not stored.")
-    }
-
-    /**
-     * The mode a new session must be switched to, or null when it may stay as the agent opened it.
-     *
-     * @throws SessionException.Invalid when the agent does not offer [requested].
-     * @throws SessionException.Conflict when the agent does not offer the configured default.
-     */
-    private fun startingMode(
-        agent: String,
-        requested: String?,
-        offered: AgentModes,
-    ): String? {
-        val wanted = requested ?: defaultModes[agent]
-        return when {
-            wanted == null -> {
-                null
-            }
-
-            offered.offers(wanted) -> {
-                wanted.takeIf { it != offered.currentModeId }
-            }
-
-            requested != null -> {
-                throw unknownMode(requested)
-            }
-
-            // Failing closed: starting anyway could run the agent in a mode that never asks.
-            else -> {
-                throw SessionException.Conflict(
-                    DEFAULT_MODE_UNAVAILABLE,
-                    "RAFIQ_DEFAULT_MODES names the mode '$wanted' for $agent, which the agent does not offer.",
-                )
-            }
-        }
     }
 
     /**
@@ -205,30 +170,13 @@ class SessionManager(
         modeId: String,
     ) {
         val stored = requireSession(sessionId)
-        requireOffered(sessionId, stored.session.availableModes, modeId)
+        ModeRules.requireOffered(sessionId, stored.session.availableModes, modeId)
         val agentSession = liveSession(sessionId).agentSession
         // The modes can differ after a resume, so the live agent has the final say.
-        requireOffered(sessionId, agentSession.modes.value.available, modeId)
+        ModeRules.requireOffered(sessionId, agentSession.modes.value.available, modeId)
         unavailableAsConflict { agentSession.setMode(modeId) }
         recordModes(sessionId, agentSession.modes.value)
     }
-
-    private fun requireOffered(
-        sessionId: String,
-        offered: List<SessionMode>,
-        modeId: String,
-    ) {
-        if (isTmuxSessionId(sessionId)) {
-            throw SessionException.Conflict(
-                MODE_NOT_SUPPORTED,
-                "The mode of a tmux session is set in the agent itself. Use Terminal.",
-            )
-        }
-        if (offered.none { it.id == modeId }) throw unknownMode(modeId)
-    }
-
-    private fun unknownMode(modeId: String) =
-        SessionException.Invalid(UNKNOWN_MODE, "The agent does not offer the mode '$modeId' for this session.")
 
     /**
      * Logs each mode the agent reports until cancelled. A failure to log stops only this watcher: the session's
@@ -512,7 +460,8 @@ class SessionManager(
 
     /**
      * Starts collecting [agentSession]'s updates into a buffer straight away, and returns the live
-     * session whose [LiveSession.job] logs them. The job starts only when the caller says so.
+     * session whose [LiveSession.job] logs them. Other requests cannot see it, and the job does not start,
+     * until the caller calls [publish].
      */
     private fun attach(
         sessionId: String,
@@ -545,7 +494,6 @@ class SessionManager(
                     withContext(NonCancellable) { liveSession.stop() }
                 }
             }
-        live[sessionId] = liveSession
         return liveSession
     }
 
@@ -759,7 +707,7 @@ class SessionManager(
                 null,
                 EventPayload.StatusChanged(threadId = mainThread?.id, state = AgentState.DONE, detail = "Resumed."),
             )
-            liveSession.job.start()
+            publish(session.id, liveSession)
         }
         return liveSession
     }
@@ -775,7 +723,10 @@ class SessionManager(
         session: Session,
         agentSession: AgentSession,
     ) {
-        val wanted = session.permissionMode?.takeIf { it != agentSession.modes.value.currentModeId } ?: return
+        val wanted =
+            modeRules
+                .storedOrDefault(session)
+                ?.takeIf { it != agentSession.modes.value.currentModeId } ?: return
         val failure =
             try {
                 agentSession.setMode(wanted)
@@ -787,7 +738,19 @@ class SessionManager(
             }
         val detail = "The agent came back in another permission mode and refused '$wanted', so the session stopped."
         record(session.id, null, EventPayload.StatusChanged(threadId = null, state = AgentState.ERROR, detail = detail))
-        throw SessionException.Conflict(MODE_NOT_RESTORED, detail, failure)
+        throw SessionException.Conflict(ModeRules.MODE_NOT_RESTORED, detail, failure)
+    }
+
+    /**
+     * Makes the session reachable by other requests and starts logging it. Called only once the session is
+     * fully set up, its mode included, so a second request can never reach an agent still in its own mode.
+     */
+    private fun publish(
+        sessionId: String,
+        liveSession: LiveSession,
+    ) {
+        live[sessionId] = liveSession
+        liveSession.job.start()
     }
 
     /** Runs [block], and if it fails ends the attached session so no process or buffer is left behind. */
@@ -878,10 +841,6 @@ class SessionManager(
         val SHUTDOWN_BUDGET = 10.seconds
         const val MAX_RESOLVED_APPROVALS = 1000
         const val CHAT_UNAVAILABLE = "chat_unavailable"
-        const val UNKNOWN_MODE = "unknown_mode"
-        const val MODE_NOT_SUPPORTED = "mode_not_supported"
-        const val DEFAULT_MODE_UNAVAILABLE = "default_mode_unavailable"
-        const val MODE_NOT_RESTORED = "mode_not_restored"
         const val CHAT_UNAVAILABLE_MESSAGE = "Chat is not available for tmux sessions on this bridge. Use Terminal."
         val WORKING_ONLY = setOf(AgentState.WORKING)
         val RUNNING_STATES = setOf(AgentState.WORKING, AgentState.WAITING_ON_YOU)

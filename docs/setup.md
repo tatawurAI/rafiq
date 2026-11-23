@@ -220,6 +220,7 @@ export RAFIQ_PROJECT_ROOTS=/srv/projects,/srv/sandbox
 - The bridge refuses any path outside these folders, including one that leaves a root through `..` or a symlink.
 - Hidden folders are not listed, and a folder shows at most 500 folders.
 - Without the setting, nothing can be browsed. Recent projects and a typed path still work.
+- The roots are a browsing aid, not a boundary. A typed path to any existing folder on your server still starts a session.
 
 `RAFIQ_DEFAULT_MODES` sets the permission mode a session starts in when you do not pick one, as `agent=mode` pairs separated by commas. Set it so sessions from your phone ask before edits and commands, whatever your server's own agent settings say:
 

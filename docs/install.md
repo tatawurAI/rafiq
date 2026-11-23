@@ -23,6 +23,16 @@ claude
 
 `claude` opens Claude Code, where you sign in once. The bridge never signs in for you.
 
+## On macOS or Linux with Homebrew
+
+If you use Homebrew, it installs the same self-contained download:
+
+```sh
+brew install tatawurAI/tap/rafiq-bridge
+```
+
+Then skip to step 4. The formula is published with each release.
+
 ## 2. Download the bridge
 
 Pick the release you want from the [releases page](https://github.com/tatawurAI/rafiq/releases), then run this on your server. Set `version` to that release without the leading `v`.

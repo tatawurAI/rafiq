@@ -5,9 +5,9 @@
 The release workflow renders it with the real version and checksums and attaches the result to each release as `rafiq-bridge.rb`. To publish a version:
 
 1. Download `rafiq-bridge.rb` from the release.
-2. Put it in the tap repository as `Formula/rafiq-bridge.rb` and commit it.
+2. Put it in the tap repository, [tatawurAI/homebrew-tap](https://github.com/tatawurAI/homebrew-tap), as `Formula/rafiq-bridge.rb` and commit it.
 
-The tap repository does not exist yet. A tap named `tatawurAI/tap` lives in a GitHub repository named `homebrew-tap`. Users then run:
+Users then run:
 
 ```sh
 brew install tatawurAI/tap/rafiq-bridge

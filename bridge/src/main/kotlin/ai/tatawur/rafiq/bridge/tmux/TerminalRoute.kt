@@ -61,8 +61,11 @@ private val CLAIM_INTERVAL = 1.seconds
 /** How often an open view checks that its session may still be opened. */
 private val ACCESS_CHECK_INTERVAL = 1.seconds
 
-/** Checks in a row the session must fail before the view ends, so one bad scan never ends a live view. */
-private const val ACCESS_MISSES_TO_END = 3
+/**
+ * Checks in a row the session must fail before the view ends, so one bad scan never ends a live view. It is
+ * longer than one 3 s scan interval: a single scan where agent detection flapped holds for a whole interval.
+ */
+private const val ACCESS_MISSES_TO_END = 5
 private val FIRST_RESIZE_WAIT = 2.seconds
 private val TRY_AGAIN = CloseReason.Codes.TRY_AGAIN_LATER
 private val END_SEND_WAIT = 1.seconds

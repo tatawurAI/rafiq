@@ -75,7 +75,7 @@ class ApproveActivity : ComponentActivity() {
                             }
                         }
                     val state by viewModel.state.collectAsStateWithLifecycle()
-                    LaunchedEffect(state) {
+                    LaunchedEffect(approvalId, state) {
                         val answered = state == ApproveState.Done || state == ApproveState.AlreadyAnswered
                         if (answered) container.push.notifier.cancel(PushNotifier.approvalTag(approvalId))
                         if (state == ApproveState.Done) finish()

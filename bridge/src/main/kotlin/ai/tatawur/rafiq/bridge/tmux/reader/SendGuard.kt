@@ -119,7 +119,8 @@ internal fun boxShowsPaste(
             else -> return false
         }.let(::squash)
     if (PASTED_PLACEHOLDER.containsMatchIn(content)) return true
-    val start = squash(text.lineSequence().first()).take(PASTE_PREFIX_CHARS)
+    // A prompt can start with blank lines, for example from dictation. Claude shows its first line with text.
+    val start = squash(text.lineSequence().firstOrNull(String::isNotBlank).orEmpty()).take(PASTE_PREFIX_CHARS)
     if (start.isEmpty()) return false
     return content.startsWith(start) || (start.startsWith(SHELL_MARK) && content.startsWith(squash(start.drop(1))))
 }

@@ -121,7 +121,7 @@ Rafiq is pre-alpha and nothing is released. Today the bridge runs Claude Code se
 
 ### Configuration
 
-The bridge reads environment variables. Export them in your shell, or use `EnvironmentFile=` in a systemd unit. Nothing reads a `.env` file, so `.env.example` only lists the names and sample values.
+The bridge reads these settings from `~/.config/rafiq/bridge.conf`, which `rafiq-bridge setup` writes, and from environment variables, which win over the file. See [docs/setup.md](docs/setup.md#the-settings-file). Nothing reads a `.env` file, so `.env.example` only lists the names and sample values.
 
 | Variable | Purpose | Default |
 |---|---|---|

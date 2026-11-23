@@ -1,0 +1,1 @@
+`rafiq-bridge pair` prints a QR code, and the app can scan it to pair in one step. The code holds your server's address and the one-time pairing code, never a device token. Opening a `rafiq://pair` link fills in the pairing form for you to check. Typing the address and code still works.

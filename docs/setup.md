@@ -8,9 +8,9 @@ The examples use `box.example.ts.net` for your server's name. Use your own.
 
 - Tailscale on your server, signed in to the same tailnet as your phone. The commands here were checked against Tailscale 1.98. Older versions used a different `tailscale serve` syntax, so update first if a command below is refused.
 - Tailscale on your phone, connected.
-- The bridge built and configured as in the [README](../README.md#quickstart), with `RAFIQ_DATA_DIR` set, because pairing needs it.
+- The bridge installed on your server, as [install.md](install.md) shows, so `rafiq-bridge` is on your `PATH`. To build it from source instead, see the [README](../README.md#quickstart).
+- Claude Code installed on your server and signed in, and its ACP adapter `claude-agent-acp`, as the [README](../README.md#requirements) shows.
 - To build the app: it compiles against Android SDK Platform 37 (`platforms;android-37.0`) with Build-Tools 37.0.0, and still targets API 36.
-- `claude-agent-acp` installed on your server, as the [README](../README.md#requirements) shows, and Claude Code signed in there.
 
 ## 1. Turn on HTTPS certificates for your tailnet
 
@@ -23,51 +23,137 @@ You only do this once per tailnet. If you skip it, the first `tailscale serve` r
 
 Certificates are public: your server's `*.ts.net` name is recorded in the public Certificate Transparency logs. Pick a machine name you are happy to publish.
 
-## 2. Find your server's name
+## 2. Run rafiq-bridge setup
+
+On your server, as the user who will run the bridge:
 
 ```sh
-tailscale status --json | jq -r .Self.DNSName
+rafiq-bridge setup
 ```
 
-This prints a name such as `box.example.ts.net.`. Drop the final dot.
+Setup asks before every change. Answer `y` to go ahead. Anything else, or just Enter, skips that step and changes nothing. It runs nothing that changes your system without a yes. It does run two things that only read: `tailscale status --json`, and a look for programs on your `PATH`.
 
-## 3. Run the bridge on 127.0.0.1:8740
+It goes through these steps:
 
-Keep the default bind address and port, and add your server's name to `RAFIQ_ALLOWED_HOSTS`:
+1. It checks that `claude` and `claude-agent-acp` are on your `PATH`, and says how to install what is missing. It does not sign you in to anything. Run `claude` once yourself to sign in.
+2. It reads your server's `*.ts.net` name from `tailscale status --json`, or says that Tailscale is not connected or that MagicDNS is off.
+3. It offers each setting that is missing from the settings file, one question each:
+   - `RAFIQ_DATA_DIR`, where the bridge keeps its database: `~/.local/share/rafiq`, or `$XDG_DATA_HOME/rafiq` if you set that.
+   - `RAFIQ_AGENTS=claude-code=claude-agent-acp`, when the adapter is installed.
+   - `RAFIQ_ALLOWED_HOSTS` with your `*.ts.net` name, added to any names already there.
+4. It prints the `tailscale serve --bg 8740` command and offers to run it. On Linux that needs `sudo`, or allow your user once with `sudo tailscale set --operator=$USER`.
+5. It prints every setting the bridge will use and where it came from:
+
+   ```text
+   Where each setting comes from
+     RAFIQ_AGENTS         claude-code=claude-agent-acp (bridge.conf)
+     RAFIQ_ALLOWED_HOSTS  box.example.ts.net (bridge.conf)
+     RAFIQ_BIND_ADDRESS   127.0.0.1 (default)
+     RAFIQ_DATA_DIR       /home/you/.local/share/rafiq (bridge.conf)
+     RAFIQ_PORT           9000 (environment)
+   ```
+
+   A device token or a Tailscale login shows where it comes from, never its value. If the bridge would refuse to start with these settings, setup says why and stops here.
+6. If the bridge is not running, it offers to install it as a service that starts when you log in (see [Keep the bridge running](#keep-the-bridge-running)).
+7. It asks for a name for your phone and prints a pairing code and QR code, as `rafiq-bridge pair` does. If the bridge is still not running, it tells you to start it and run `rafiq-bridge pair` yourself.
+
+Setup never writes a device token. Each phone gets its own token when it pairs, and the bridge keeps only a hash of it. Run setup again whenever you like. It offers only what is still missing.
+
+## 3. Pair your phone
 
 ```sh
-export RAFIQ_AGENTS=claude-code=claude-agent-acp
-export RAFIQ_DATA_DIR=/var/lib/rafiq
-export RAFIQ_ALLOWED_HOSTS=box.example.ts.net
-bridge/build/install/rafiq-bridge/bin/rafiq-bridge
+rafiq-bridge pair --name pixel
 ```
 
-Do not set `RAFIQ_BIND_ADDRESS` to a Tailscale or LAN address. `tailscale serve` connects to the bridge on `127.0.0.1`.
+`setup` runs this for you at the end. Run it in the same environment as the bridge: it needs the same `RAFIQ_DATA_DIR`, which it reads from the settings file too. It prints a pairing code like `ABCD-EFGH`, your server's address and a QR code.
 
-`RAFIQ_ALLOWED_HOSTS` matters because `tailscale serve` passes on the `Host` header your phone sent. The bridge sees `Host: box.example.ts.net`, with no port because HTTPS uses the default port 443, and answers any host it does not know with `421 Misdirected Request`. A port in the header would also be accepted, since the check compares the name only.
+- **Scan:** in the app, tap Scan the QR code and point your phone at the terminal. The app asks for the camera only then, and pairs as soon as it reads the code. The phone's own camera app can read the code too. It opens Rafiq with the address and code filled in, and you tap Connect after checking the address.
+- **Type:** enter your server's address (`https://box.example.ts.net`) and the code.
 
-## 4. Publish the bridge with tailscale serve
+The QR code holds a `rafiq://pair` link with your server's `https://` address and the pairing code. It never holds a device token. The app refuses a link to a plain `http://` address. If the phone is already paired, the app ignores the link and says so. Unpair in Settings first to pair it with a server again.
 
-On your server:
+The QR code is drawn in your terminal's text colour. On a terminal with dark text on a light background it comes out inverted. The app reads it either way, but another scanner might not. If the address line says to see this guide instead of naming your server, `RAFIQ_ALLOWED_HOSTS` was empty when the bridge started. Run setup, then restart the bridge.
+
+The code works once and expires after 10 minutes. After 100 wrong codes in five minutes the bridge refuses every code until the window passes, a right one too. Anyone who can reach your server's address could cause that, so running `rafiq-bridge pair` again clears the lockout and gives you a fresh code at once. The phone gets its own token and keeps it in the Android Keystore. Nobody, including you, can read it again.
+
+## Keep the bridge running
 
 ```sh
-tailscale serve --bg 8740
+rafiq-bridge service install
 ```
 
-This serves `https://box.example.ts.net` on port 443 and forwards it to `http://127.0.0.1:8740`. `--bg` keeps it running in the background, and the setting stays in place across restarts until you turn it off. On Linux, run it with `sudo`, or allow your user once with `sudo tailscale set --operator=$USER`.
+This registers the bridge with your system so it starts when you log in and restarts if it stops:
 
-WebSocket upgrades pass through the proxy, so `wss://box.example.ts.net/events` works as well. The `Origin` and `Sec-WebSocket-Protocol` headers reach the bridge unchanged.
+- On macOS, a launchd agent in `~/Library/LaunchAgents/ai.tatawur.rafiq-bridge.plist`. Its log is `~/Library/Logs/rafiq-bridge.log`.
+- On Linux, a systemd user unit in `~/.config/systemd/user/rafiq-bridge.service`. Read its log with `journalctl --user -u rafiq-bridge.service`. A user unit stops when you log out. To keep it running and start it at boot, run `sudo loginctl enable-linger $USER` once.
 
-To see what is served, and to stop serving:
+The service reads its settings from the settings file only. It gets no `RAFIQ_` variables from your shell, and `service install` names any that are set in your shell but missing from the file. It does keep the `PATH` you install it from, so it finds `claude-agent-acp`, `node` and `tmux`, and your `JAVA_HOME` and `XDG_CONFIG_HOME` if you set them. Run `service install` again after you move the bridge or change your `PATH`. To remove the service:
 
 ```sh
-tailscale serve status
-tailscale serve --https=443 off
+rafiq-bridge service uninstall
 ```
 
-Never use `tailscale funnel` for the bridge. Funnel publishes to the whole internet, and the bridge is meant for your tailnet only.
+Your settings file and data folder stay where they are.
 
-## 5. Check from another device
+## The settings file
+
+The bridge reads `bridge.conf` in `$XDG_CONFIG_HOME/rafiq/`, which is `~/.config/rafiq/` unless you set `XDG_CONFIG_HOME`. It holds the same settings as the environment variables, under the same names, one per line:
+
+```text
+# Written by rafiq-bridge setup. Edit freely.
+RAFIQ_DATA_DIR=/home/you/.local/share/rafiq
+RAFIQ_AGENTS=claude-code=claude-agent-acp
+RAFIQ_ALLOWED_HOSTS=box.example.ts.net
+```
+
+- Blank lines and lines starting with `#` are ignored. A value is taken exactly as written. Do not put it in quotes.
+- An environment variable that is set wins over the file. One that is set but empty does not, so to change a value from the file, edit the file.
+- The bridge refuses to start if anyone but you can read or write the file, if it belongs to another user, or if others can write to its folder. Setup writes it with mode 0600 in a 0700 folder. Fix a file you wrote yourself with `chmod 600 ~/.config/rafiq/bridge.conf`.
+- A line that is not a setting, or a setting given twice, stops the bridge with the line number. The message never shows the value.
+
+## Set it up by hand
+
+Setup does nothing you cannot do yourself. To do it by hand:
+
+1. Find your server's name:
+
+   ```sh
+   tailscale status --json | jq -r .Self.DNSName
+   ```
+
+   This prints a name such as `box.example.ts.net.`. Drop the final dot.
+2. Put the settings in `bridge.conf`, or export them, keeping the default bind address and port:
+
+   ```sh
+   export RAFIQ_AGENTS=claude-code=claude-agent-acp
+   export RAFIQ_DATA_DIR=/var/lib/rafiq
+   export RAFIQ_ALLOWED_HOSTS=box.example.ts.net
+   rafiq-bridge
+   ```
+
+   Do not set `RAFIQ_BIND_ADDRESS` to a Tailscale or LAN address. `tailscale serve` connects to the bridge on `127.0.0.1`.
+
+   `RAFIQ_ALLOWED_HOSTS` matters because `tailscale serve` passes on the `Host` header your phone sent. The bridge sees `Host: box.example.ts.net`, with no port because HTTPS uses the default port 443, and answers any host it does not know with `421 Misdirected Request`. A port in the header would also be accepted, since the check compares the name only.
+3. Publish the bridge with `tailscale serve`:
+
+   ```sh
+   tailscale serve --bg 8740
+   ```
+
+   This serves `https://box.example.ts.net` on port 443 and forwards it to `http://127.0.0.1:8740`. `--bg` keeps it running in the background, and the setting stays in place across restarts until you turn it off. On Linux, run it with `sudo`, or allow your user once with `sudo tailscale set --operator=$USER`.
+
+   WebSocket upgrades pass through the proxy, so `wss://box.example.ts.net/events` works as well. The `Origin` and `Sec-WebSocket-Protocol` headers reach the bridge unchanged.
+
+   To see what is served, and to stop serving:
+
+   ```sh
+   tailscale serve status
+   tailscale serve --https=443 off
+   ```
+
+   Never use `tailscale funnel` for the bridge. Funnel publishes to the whole internet, and the bridge is meant for your tailnet only.
+
+### Check from another device
 
 From any device on your tailnet, such as your laptop:
 
@@ -78,15 +164,7 @@ curl -H "Authorization: Bearer $DEVICE_TOKEN" https://box.example.ts.net/session
 
 The first gives `{"status":"ok","version":"..."}`. The first request after you turn on HTTPS can take a few seconds while Tailscale gets the certificate.
 
-## 6. Pair your phone
-
-Run this on your server, in the same environment as the bridge (it needs the same `RAFIQ_DATA_DIR`):
-
-```sh
-rafiq-bridge pair --name pixel
-```
-
-It prints a pairing code like `ABCD-EFGH` and the address to enter. The code works once and expires after 10 minutes. After 100 wrong codes in five minutes the bridge refuses every code until the window passes, a right one too. Anyone who can reach your server's address could cause that, so running `rafiq-bridge pair` again clears the lockout and gives you a fresh code at once. In the app, enter your server address (your https `*.ts.net` name) and the code. The phone gets its own token and keeps it in the Android Keystore. Nobody, including you, can read it again.
+## After pairing
 
 ### List and revoke phones
 
@@ -258,6 +336,8 @@ The log is not the only record. Chat prompts and the agent's replies and tool ou
 | `429`, `too_many_attempts` | 100 wrong codes in five minutes. Run `rafiq-bridge pair` again for a fresh code. That also clears the lockout. |
 | The app says your server removed the phone | The phone was revoked. Run `rafiq-bridge pair` again. |
 | The app says the code is wrong | Codes work once and expire after 10 minutes. Run `rafiq-bridge pair` for a new one. |
+| The bridge will not start and names `bridge.conf` | The file or its folder can be used by other users, or a line in it is not a setting. The message says which line, and the `chmod` that fixes the permissions. |
+| `pair` prints no QR code and no address | `RAFIQ_ALLOWED_HOSTS` was empty when the bridge started. Run `rafiq-bridge setup`, then restart the bridge. |
 | `403`, `identity_mismatch` | `RAFIQ_TAILSCALE_LOGIN` is set and the request came from another Tailscale login, a tagged device, or not through `tailscale serve`. Check the login is the one Tailscale shows for your phone. |
 | The bridge will not start and names `RAFIQ_TAILSCALE_LOGIN` | The value is not one login, or `RAFIQ_BIND_ADDRESS` is not a loopback address. |
 | `403`, `forbidden_origin` | A browser page on another site called the bridge. The app sends no `Origin`, so this is not the app. |

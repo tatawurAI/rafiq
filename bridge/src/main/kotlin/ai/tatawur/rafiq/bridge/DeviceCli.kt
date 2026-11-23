@@ -54,7 +54,9 @@ object DeviceCli {
             }
 
             dataDir == null -> {
-                err.println("RAFIQ_DATA_DIR is not set. Set it to the folder your bridge runs with.")
+                err.println(
+                    "RAFIQ_DATA_DIR is not set. Run rafiq-bridge setup, or set it to the folder your bridge runs with.",
+                )
                 FAILED
             }
 

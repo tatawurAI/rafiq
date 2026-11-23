@@ -61,12 +61,19 @@ ln -sf ~/.local/opt/rafiq-bridge-$version-$platform/bin/rafiq-bridge ~/.local/bi
 
 The folder holds `bin/`, `lib/`, `hooks/` and `runtime/`, which is the Java runtime. Keep them together. The `rafiq-bridge` link works from any folder. Make sure `~/.local/bin` is on your `PATH`.
 
-## 4. Start it
+## 4. Set it up
 
 ```sh
-export RAFIQ_DATA_DIR=$HOME/.local/share/rafiq
-export RAFIQ_AGENTS=claude-code=claude-agent-acp
-mkdir -p "$RAFIQ_DATA_DIR"
+rafiq-bridge setup
+```
+
+Setup asks before each change. It saves your settings, checks that the agent adapter from step 1 is on your `PATH` and prints a pairing QR code. [docs/setup.md](setup.md) walks through each question, `tailscale serve` and pairing your phone.
+
+## 5. Run it
+
+To try it in a terminal:
+
+```sh
 rafiq-bridge
 ```
 
@@ -76,20 +83,15 @@ In a second terminal, check that it is up:
 curl http://127.0.0.1:8740/health
 ```
 
-You should get `{"status":"ok","version":"0.1.0"}`. The bridge listens on `127.0.0.1` only. [README](../README.md#configuration) lists every setting.
+You should get `{"status":"ok","version":"0.1.0"}`. The bridge listens on `127.0.0.1` only.
 
-## 5. Connect your phone
+To keep it running in the background and start it again after a reboot, install a service:
 
-Publish the bridge over HTTPS with `tailscale serve`, then pair the app with a code. [docs/setup.md](setup.md) walks through both.
+```sh
+rafiq-bridge service install
+```
 
-Two more commands are coming from issue [#34](https://github.com/tatawurAI/rafiq/issues/34), and this page does not cover them yet:
-
-- `rafiq-bridge setup` asks for your settings, checks for the adapter and prints a pairing QR code. It saves your settings to the bridge's config file.
-- `rafiq-bridge service install` runs the bridge in the background and restarts it after a reboot.
-
-Run `rafiq-bridge setup` first. If you install through Homebrew, you can then use `brew services start rafiq-bridge` instead of `service install`. Pick one of the two, never both, because each starts a bridge and two bridges cannot share one port.
-
-Until they land, run `rafiq-bridge` in a terminal you keep open, such as a tmux window, or write your own service unit.
+If you installed with Homebrew, you can run `brew services start rafiq-bridge` instead. Pick one of the two, never both, because each starts a bridge and two bridges cannot share one port. Both read the settings that `rafiq-bridge setup` saved. Details are in [docs/setup.md](setup.md).
 
 ## Install the app
 

@@ -245,7 +245,7 @@ The bridge watches for new listening ports under a session's processes. When one
 - SQLite holds sessions, threads and the event log, plus two small summary tables (the newest message preview and the open approvals per session) written in the same transaction as each event.
 - Tailscale ACLs restrict the bridge's port to your devices. Each phone has a device token of its own, checked against the device store on every request and every socket handshake. The `Host` header must be the bind address, `localhost` or a listed name (421 otherwise), and a request with a foreign `Origin` is refused, so a web page cannot reach the bridge through DNS rebinding. See [Devices and tokens](#devices-and-tokens) for pairing and revoking. See [ADR 0012](adr/0012-https-through-tailscale-serve.md), and [setup.md](setup.md) for the `tailscale serve` steps.
 - The file API refuses paths outside the session's project root.
-- Approvals require a fresh biometric check on the phone.
+- With the approval lock on, answering an approval needs a Keystore key that works only within 30 seconds of a strong biometric check, including the fingerprint that unlocked your phone. Adding a fingerprint or face destroys the key and turns the lock off until you turn it on again.
 - Push payloads carry ids and short status only.
 
 For the vulnerability policy, see [SECURITY.md](../SECURITY.md).
@@ -263,9 +263,9 @@ The app is native Kotlin and Jetpack Compose, installed directly (no Play Store)
 | Concurrency | Kotlin coroutines and Flow |
 | Offline history | Room cache |
 | Device token | Android Keystore |
-| Approval check | BiometricPrompt |
+| Approval check | BiometricPrompt and a Keystore key with a 30 s window |
 | Fold posture | Jetpack WindowManager |
-| Push | FCM or ntfy (undecided, see [ADR 0010](adr/0010-push-transport.md)) |
+| Push | UnifiedPush through ntfy, see [ADR 0010](adr/0010-push-transport.md) |
 | Content | Markdown and syntax highlighting, diff view, in-app browser |
 
 ### Screens

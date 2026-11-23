@@ -49,6 +49,7 @@
   <string name="approve_unlock_subtitle">Confirm it is you before Rafiq answers on your server</string>
 
   <!-- The approval lock's key (issue #14). -->
+  <string name="settings_approval_lock_detail">An approval lets the agent run a command on your server. With this on, approving needs a fingerprint, unless you unlocked your phone with one in the last 30 seconds. Adding a new fingerprint turns it off until you turn it on again.</string>
   <string name="approval_lock_reset">Your phone\'s fingerprints or face changed, so the approval lock turned off and nothing was sent. Turn it on again in Settings to keep it.</string>
   <string name="approval_lock_reset_short">The approval lock turned off because your phone\'s fingerprints or face changed. Turn it on again to keep it.</string>
   <string name="approval_lock_not_created">This phone could not make the approval lock\'s key, so the lock stays off.</string>

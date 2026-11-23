@@ -1,0 +1,24 @@
+#!/bin/sh
+# Starts the bridge with the Java runtime that ships inside this folder, so the machine needs no JDK.
+# The folder is laid out as bin/, lib/, hooks/ and runtime/. bin/rafiq-bridge-jvm is the Gradle start script.
+# This file may be run through a symlink, for example from a Homebrew bin folder, so find the real folder first.
+set -eu
+
+self=$0
+while [ -h "$self" ]; do
+    dir=$(cd -P "$(dirname "$self")" && pwd)
+    target=$(readlink "$self")
+    case $target in
+        /*) self=$target ;;
+        *) self=$dir/$target ;;
+    esac
+done
+home=$(cd -P "$(dirname "$self")/.." && pwd)
+
+if [ ! -x "$home/runtime/bin/java" ]; then
+    echo "rafiq-bridge: the bundled Java runtime is missing at $home/runtime." >&2
+    exit 1
+fi
+JAVA_HOME=$home/runtime
+export JAVA_HOME
+exec "$home/bin/rafiq-bridge-jvm" "$@"

@@ -49,8 +49,9 @@ class WebPushEncryptor(
     /**
      * The deterministic core, with the sender's key pair and the salt passed in. Tests feed it RFC 8291's values.
      *
-     * @param paddedBytes the size of the record before encryption: the plaintext, the 0x02 delimiter and zero
-     *   padding after it (RFC 8188 section 2). Zero means no padding.
+     * @param paddedBytes the record before encryption (the plaintext, the 0x02 delimiter and zero padding after it,
+     *   RFC 8188 section 2) is padded up to a multiple of this, and never past what one record holds. Zero means
+     *   no padding. A payload never fails for being longer than one step.
      */
     internal fun encrypt(
         plaintext: ByteArray,
@@ -61,7 +62,6 @@ class WebPushEncryptor(
         paddedBytes: Int = 0,
     ): ByteArray {
         require(plaintext.size + 1 + TAG_BYTES <= RECORD_SIZE - HEADER_BYTES) { "The push payload is too large." }
-        require(paddedBytes == 0 || plaintext.size < paddedBytes) { "The push payload is larger than the padding." }
         val asPublic = encodePoint(asKeys.public as ECPublicKey)
         val ecdhSecret =
             KeyAgreement.getInstance("ECDH").run {
@@ -81,7 +81,7 @@ class WebPushEncryptor(
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(cek, "AES"), GCMParameterSpec(TAG_BYTES * Byte.SIZE_BITS, nonce))
         // 0x02 marks the last record. Zeros after it pad every payload kind to one size, so the push service cannot
         // tell an approval from a finished turn by its length.
-        val record = (plaintext + LAST_RECORD).copyOf(maxOf(plaintext.size + 1, paddedBytes))
+        val record = (plaintext + LAST_RECORD).copyOf(paddedLength(plaintext.size + 1, paddedBytes))
         val ciphertext = cipher.doFinal(record)
         return ByteBuffer
             .allocate(HEADER_BYTES + ciphertext.size)
@@ -103,7 +103,7 @@ class WebPushEncryptor(
         private const val UNCOMPRESSED: Byte = 0x04
         private const val LAST_RECORD: Byte = 0x02
 
-        /** Every push's record before encryption is this long, whatever its kind. */
+        /** Every push's record before encryption is a multiple of this long, whatever its kind. */
         const val PADDED_BYTES = 256
 
         /** The record size written in the header. Push services accept at least 4096 bytes. */
@@ -111,6 +111,19 @@ class WebPushEncryptor(
 
         /** Salt, record size, key id length and a 65-byte key id. */
         const val HEADER_BYTES = SALT_BYTES + Int.SIZE_BYTES + 1 + 65
+
+        /** The most a record can hold before encryption: the record size less the header and the tag. */
+        private const val MAX_RECORD_BYTES = RECORD_SIZE - HEADER_BYTES - TAG_BYTES
+
+        /** [unpadded] rounded up to a multiple of [step], capped at [MAX_RECORD_BYTES] but never below [unpadded]. */
+        private fun paddedLength(
+            unpadded: Int,
+            step: Int,
+        ): Int {
+            if (step == 0) return unpadded
+            val rounded = (unpadded + step - 1) / step * step
+            return maxOf(unpadded, minOf(rounded, MAX_RECORD_BYTES))
+        }
 
         /** The P-256 curve parameters, from the JDK. */
         val P256: ECParameterSpec =

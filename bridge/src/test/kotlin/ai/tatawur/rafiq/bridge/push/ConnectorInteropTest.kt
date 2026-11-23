@@ -32,6 +32,8 @@ class ConnectorInteropTest {
                 PushPayload(kind = PushKind.APPROVAL_CLEARED, sessionId = "ses_1", approvalId = "apr_1"),
                 PushPayload(kind = PushKind.TURN_DONE, sessionId = "ses_1"),
                 PushPayload(kind = PushKind.ERROR, sessionId = "ses_1"),
+                // Longer than one padding step: padded to the next multiple, never dropped.
+                PushPayload(kind = PushKind.APPROVAL, sessionId = "s".repeat(300), approvalId = "apr_1"),
             )
 
         for (payload in payloads) {
@@ -39,6 +41,10 @@ class ConnectorInteropTest {
             val body = WebPushEncryptor().encrypt(json.toByteArray(), phone.publicBytes, phone.auth)
 
             assertEquals(json, decryptor.decrypt(body, null).decodeToString())
+            val padded = body.size - WebPushEncryptor.HEADER_BYTES - TAG_BYTES
+            assertEquals(0, padded % WebPushEncryptor.PADDED_BYTES, "padded to a whole number of steps")
         }
     }
 }
+
+private const val TAG_BYTES = 16

@@ -142,13 +142,17 @@ class SetupCli(
             return emptyMap()
         }
         out.println("Settings for bridge.conf")
+        val accepted = mutableSetOf<String>()
         return proposals
             .filter { proposal ->
+                if (proposal.needs != null && proposal.needs !in accepted) return@filter false
                 out.println("  ${proposal.reason}")
                 if (loaded.origins[proposal.name] == SettingOrigin.ENVIRONMENT) {
                     out.println("  Your environment sets ${proposal.name}, which wins over the file while it is set.")
                 }
-                console.confirm("  Write ${proposal.name}=${proposal.value} to bridge.conf?")
+                console.confirm("  Write ${proposal.name}=${proposal.value} to bridge.conf?").also { yes ->
+                    if (yes) accepted += proposal.name
+                }
             }.associate { it.name to it.value }
     }
 

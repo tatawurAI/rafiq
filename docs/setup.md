@@ -40,6 +40,7 @@ It goes through these steps:
 3. It offers each setting that is missing from the settings file, one question each:
    - `RAFIQ_DATA_DIR`, where the bridge keeps its database: `~/.local/share/rafiq`, or `$XDG_DATA_HOME/rafiq` if you set that.
    - `RAFIQ_AGENTS=claude-code=claude-agent-acp`, when the adapter is installed.
+   - `RAFIQ_DEFAULT_MODES=claude-code=default`, when Claude Code is in the agent list. Sessions you start from your phone ask before edits and commands. Without it, `claude-agent-acp` starts them in a mode that edits files without asking.
    - `RAFIQ_ALLOWED_HOSTS` with your `*.ts.net` name, added to any names already there.
 4. It prints the `tailscale serve --bg 8740` command and offers to run it. On Linux that needs `sudo`, or allow your user once with `sudo tailscale set --operator=$USER`.
 5. It prints every setting the bridge will use and where it came from:
@@ -103,6 +104,7 @@ The bridge reads `bridge.conf` in `$XDG_CONFIG_HOME/rafiq/`, which is `~/.config
 # Written by rafiq-bridge setup. Edit freely.
 RAFIQ_DATA_DIR=/home/you/.local/share/rafiq
 RAFIQ_AGENTS=claude-code=claude-agent-acp
+RAFIQ_DEFAULT_MODES=claude-code=default
 RAFIQ_ALLOWED_HOSTS=box.example.ts.net
 ```
 

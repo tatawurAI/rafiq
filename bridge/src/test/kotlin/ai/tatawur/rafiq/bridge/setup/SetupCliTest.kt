@@ -88,15 +88,16 @@ class SetupCliTest {
 
         assertFalse(Files.exists(file))
         assertEquals(listOf(listOf("tailscale", "status", "--json")), commands)
-        // One question for each of the three settings and one for tailscale serve. With no data folder there is
-        // nothing to pair with, so setup stops there.
+        // One question each for the data folder, the agent and the host, and one for tailscale serve. The agent's
+        // default mode is not asked once the agent is declined. With no data folder there is nothing to pair with.
         assertEquals(4, console.questions.size, console.printed)
         assertTrue(paired.isEmpty())
     }
 
     @Test
     fun yes_writes_the_found_settings_runs_tailscale_serve_and_ends_by_pairing_with_the_merged_settings() {
-        val console = ScriptedConsole(listOf("y", "y", "y", "y", "pixel"))
+        // Data folder, agent, its default mode, host, tailscale serve, then the phone's name.
+        val console = ScriptedConsole(listOf("y", "y", "y", "y", "y", "pixel"))
 
         val exit = setup(console).run()
 
@@ -104,6 +105,8 @@ class SetupCliTest {
         val written = ConfigFile.read(file)
         assertEquals("box.example.ts.net", written["RAFIQ_ALLOWED_HOSTS"])
         assertEquals("claude-code=claude-agent-acp", written["RAFIQ_AGENTS"])
+        // Without it claude-agent-acp starts sessions in a mode that edits without asking.
+        assertTrue("RAFIQ_DEFAULT_MODES=claude-code=default\n" in Files.readString(file))
         assertEquals(home.resolve(".local/share/rafiq").toString(), written["RAFIQ_DATA_DIR"])
         assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)))
         assertEquals(listOf("tailscale", "serve", "--bg", "8740"), commands.last())
@@ -135,8 +138,8 @@ class SetupCliTest {
         assertTrue(Regex("RAFIQ_DATA_DIR +/srv/rafiq \\(bridge.conf\\)").containsMatchIn(summary), summary)
         assertTrue(Regex("RAFIQ_BIND_ADDRESS +127.0.0.1 \\(default\\)").containsMatchIn(summary), summary)
         assertFalse(token in console.printed)
-        // Every setting was already there, so the questions left are tailscale serve and the service.
-        assertEquals(2, console.questions.size, console.printed)
+        // Only the agent's default mode is missing, then tailscale serve and the service.
+        assertEquals(3, console.questions.size, console.printed)
         assertEquals(0, servicesInstalled)
     }
 
@@ -155,8 +158,8 @@ class SetupCliTest {
     @Test
     fun a_yes_to_the_service_installs_it_and_setup_pairs_once_the_bridge_answers() {
         ConfigFile.write(file, "RAFIQ_DATA_DIR=/srv/rafiq\nRAFIQ_AGENTS=claude-code=claude-agent-acp\n")
-        // tailscale serve: no. The service: yes. Then the phone's name.
-        val console = ScriptedConsole(listOf("n", "y", "pixel"))
+        // Default mode: no. tailscale serve: no. The service: yes. Then the phone's name.
+        val console = ScriptedConsole(listOf("n", "n", "y", "pixel"))
         var checks = 0
 
         val exit =

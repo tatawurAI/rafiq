@@ -8,22 +8,31 @@ internal const val ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp"
 internal const val DATA_DIR = "RAFIQ_DATA_DIR"
 internal const val AGENTS = "RAFIQ_AGENTS"
 internal const val ALLOWED_HOSTS = "RAFIQ_ALLOWED_HOSTS"
+internal const val DEFAULT_MODES = "RAFIQ_DEFAULT_MODES"
+private const val CLAUDE_CODE = "claude-code"
 
 /**
  * A setting `setup` offers to write to `bridge.conf`.
  *
  * @property reason one sentence on what the setting does, shown before the question.
+ * @property needs another proposed setting this one only makes sense with. When you decline that one, this one is
+ *   not asked, so the file never names an agent it does not list.
  */
 internal class ProposedSetting(
     val name: String,
     val value: String,
     val reason: String,
+    val needs: String? = null,
 )
 
 /**
  * The settings `setup` offers, given what is already set: a data folder and the Claude Code agent when they are
- * missing, and this machine's `*.ts.net` name when the allowed hosts lack it. [fileHosts] is the file's own
- * `RAFIQ_ALLOWED_HOSTS`, which the new name is added to, so hosts you listed by hand stay.
+ * missing, the `default` permission mode for Claude Code when no default mode is set, and this machine's `*.ts.net`
+ * name when the allowed hosts lack it.
+ *
+ * [fileHosts] is the file's own `RAFIQ_ALLOWED_HOSTS`, which the new name is added to, so hosts you listed by hand
+ * stay. The mode matters because `claude-agent-acp` otherwise starts sessions in a mode that edits files without
+ * asking.
  */
 internal fun proposedSettings(
     environment: Map<String, String>,
@@ -39,11 +48,20 @@ internal fun proposedSettings(
             .map(String::trim)
             .filter(String::isNotEmpty)
     val dataDir = defaultDataDir(environment)
+    val proposeAgent = loaded.values[AGENTS].isNullOrBlank() && agentFound
+    val listsClaude =
+        hosts(loaded.values[AGENTS]).any { it.substringBefore('=').trim() == CLAUDE_CODE }
     return listOfNotNull(
         ProposedSetting(DATA_DIR, dataDir.toString(), "The bridge keeps its database here.")
             .takeIf { loaded.values[DATA_DIR].isNullOrBlank() && dataDir != null },
-        ProposedSetting(AGENTS, "claude-code=$ADAPTER", "Lets your phone start Claude Code sessions.")
-            .takeIf { loaded.values[AGENTS].isNullOrBlank() && agentFound },
+        ProposedSetting(AGENTS, "$CLAUDE_CODE=$ADAPTER", "Lets your phone start Claude Code sessions.")
+            .takeIf { proposeAgent },
+        ProposedSetting(
+            DEFAULT_MODES,
+            "$CLAUDE_CODE=default",
+            "Sessions you start from your phone ask before edits and commands.",
+            needs = AGENTS.takeIf { proposeAgent },
+        ).takeIf { loaded.values[DEFAULT_MODES].isNullOrBlank() && (proposeAgent || listsClaude) },
         dnsName
             ?.takeIf { name -> hosts(loaded.values[ALLOWED_HOSTS]).none { it.equals(name, ignoreCase = true) } }
             ?.let { name ->

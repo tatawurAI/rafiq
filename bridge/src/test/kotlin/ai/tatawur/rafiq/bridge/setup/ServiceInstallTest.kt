@@ -61,7 +61,10 @@ class ServiceInstallTest {
         val program = Path.of("/opt/rafiq & co/bin/rafiq-bridge")
         val shellOnly = mapOf("RAFIQ_DEVICE_TOKEN" to "replace-with-a-long-random-value")
         val install =
-            service(ServiceInstall.Platform.MACOS, shellOnly + ("PATH" to "/opt/homebrew/bin::bin:./x:/usr/bin"))
+            service(
+                ServiceInstall.Platform.MACOS,
+                shellOnly + mapOf("PATH" to "/opt/homebrew/bin::bin:./x:/usr/bin", "USER" to "you", "LOGNAME" to "you"),
+            )
 
         assertEquals(0, install.install(program))
 
@@ -72,6 +75,9 @@ class ServiceInstallTest {
         assertEquals(program.toString(), values["ProgramArguments"])
         // The empty and relative entries would be read against wherever launchd starts the bridge.
         assertEquals("/opt/homebrew/bin:/usr/bin", values["PATH"])
+        // claude-agent-acp reads Claude's login from the Keychain only with these set.
+        assertEquals("you", values["USER"])
+        assertEquals("you", values["LOGNAME"])
         assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(plist)))
         assertFalse("RAFIQ_DEVICE_TOKEN" in Files.readString(plist))
         assertEquals(listOf("launchctl", "bootstrap", "gui/501", plist.toString()), commands.last())

@@ -93,19 +93,23 @@ object ConfigFile {
     /**
      * The user id this process runs as, or null when it cannot be found out. The JDK has no call for it. On Linux it
      * is the owner of `/proc/self`, which is the process's effective user. Elsewhere it comes from `id -u`, which
-     * prints the same.
+     * prints the same: `/usr/bin/id` when it is there, so a program called `id` earlier on `PATH` cannot answer.
      */
     val processUid: Int? by lazy { effectiveUid(Path.of("/proc/self"), ProcessCommandRunner(ID_TIMEOUT)) }
 
-    /** [processUid] from [procSelf] when it exists, else from `id -u` run by [runner]. */
+    /**
+     * [processUid] from [procSelf] when it exists, else from `id -u` run by [runner], with [idProgram] when it is an
+     * executable file and plain `id` from `PATH` only when it is not.
+     */
     internal fun effectiveUid(
         procSelf: Path,
         runner: CommandRunner,
+        idProgram: Path = Path.of("/usr/bin/id"),
     ): Int? =
         // /proc/self is a link to /proc/<pid>, and the folder it points at carries the user, so this one follows it.
         runCatching { Files.getAttribute(procSelf, "unix:uid") as Int }.getOrNull()
             ?: runner
-                .run(listOf("id", "-u"))
+                .run(listOf(if (Files.isExecutable(idProgram)) idProgram.toString() else "id", "-u"))
                 .takeIf { it.ok }
                 ?.output
                 ?.trim()

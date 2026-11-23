@@ -156,20 +156,30 @@ class ConfigFileTest {
     }
 
     @Test
-    fun the_user_id_comes_from_proc_self_and_otherwise_from_id_u() {
+    fun the_user_id_comes_from_proc_self_and_otherwise_from_id_u_by_its_full_path() {
         val uid = assertNotNull(ConfigFile.processUid)
         val noProc = home.resolve("no-proc")
+        val idProgram = home.resolve("bin/id")
         val asked = mutableListOf<List<String>>()
-
-        assertEquals(
-            uid,
-            ConfigFile.effectiveUid(home) {
+        val answers501 =
+            CommandRunner {
                 asked += it
-                CommandResult(0, "")
-            },
-        )
+                CommandResult(0, "501\n")
+            }
+
+        assertEquals(uid, ConfigFile.effectiveUid(home, answers501, idProgram))
         assertTrue(asked.isEmpty())
-        assertEquals(501, ConfigFile.effectiveUid(noProc) { CommandResult(0, "501\n") })
-        assertEquals(null, ConfigFile.effectiveUid(noProc) { CommandResult(127, "id: not found") })
+
+        // No program at the full path: plain id from PATH is the fallback.
+        assertEquals(501, ConfigFile.effectiveUid(noProc, answers501, idProgram))
+        assertEquals(listOf("id", "-u"), asked.removeLast())
+
+        Files.createDirectories(idProgram.parent)
+        Files.writeString(idProgram, "#!/bin/sh\n")
+        Files.setPosixFilePermissions(idProgram, PosixFilePermissions.fromString("rwx------"))
+        assertEquals(501, ConfigFile.effectiveUid(noProc, answers501, idProgram))
+        assertEquals(listOf(idProgram.toString(), "-u"), asked.removeLast())
+
+        assertEquals(null, ConfigFile.effectiveUid(noProc, { CommandResult(127, "id: not found") }, idProgram))
     }
 }

@@ -12,6 +12,7 @@ import java.nio.file.Path
  * The service gets no `RAFIQ_` variables. It reads its settings from `bridge.conf`, the same file `setup` writes. It
  * does get the `PATH` you install it from, because launchd and systemd start services with a bare `PATH` on which
  * `claude-agent-acp`, `node` and `tmux` are usually missing, and `JAVA_HOME` and `XDG_CONFIG_HOME` when you have them.
+ * It also gets `USER` and `LOGNAME`, which `claude-agent-acp` needs to reach Claude's login.
  *
  * @param home your home folder. Tests pass a temporary one.
  * @param environment the environment the command runs in.
@@ -193,7 +194,10 @@ class ServiceInstall(
         // "Cellar", "rafiq-bridge" and the version folder: what the opt path replaces.
         private const val VERSION_AND_FILE = 3
         private const val USAGE = "Usage: rafiq-bridge service install | rafiq-bridge service uninstall"
-        private val SERVICE_VARIABLES = listOf("PATH", "JAVA_HOME", "XDG_CONFIG_HOME")
+
+        // USER and LOGNAME: claude-agent-acp needs them to find Claude's login in the macOS Keychain. launchd and
+        // systemd --user set both already. Writing them from the installing user keeps that true whatever starts it.
+        private val SERVICE_VARIABLES = listOf("PATH", "JAVA_HOME", "XDG_CONFIG_HOME", "USER", "LOGNAME")
         private const val APPLE_DTD = "http://www.apple.com/DTDs/PropertyList-1.0.dtd"
 
         /**

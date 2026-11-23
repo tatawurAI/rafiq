@@ -8,8 +8,12 @@ import ai.tatawur.rafiq.protocol.api.ApprovalAnswer
 import ai.tatawur.rafiq.protocol.api.CreateSessionRequest
 import ai.tatawur.rafiq.protocol.api.HookSetupPreview
 import ai.tatawur.rafiq.protocol.api.HookSetupRequest
+import ai.tatawur.rafiq.protocol.api.ProjectFolderListing
+import ai.tatawur.rafiq.protocol.api.ProjectsOverview
 import ai.tatawur.rafiq.protocol.api.PromptRequest
+import ai.tatawur.rafiq.protocol.api.PushRegistration
 import ai.tatawur.rafiq.protocol.api.SessionSummary
+import ai.tatawur.rafiq.protocol.api.SetModeRequest
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import ai.tatawur.rafiq.protocol.protocolJson
 import kotlinx.serialization.KSerializer
@@ -37,21 +41,51 @@ class BridgeApi(
             agents.map { it.id }
         }
 
-    /** `POST /sessions`. */
+    /** `POST /sessions`. A null [modeId] starts in the bridge's default mode for the agent. */
     suspend fun createSession(
         agent: String,
         projectPath: String,
         title: String?,
+        modeId: String? = null,
     ): CommandResult<Session> =
         call(
             HttpMethod.POST,
             "/sessions",
             protocolJson.encodeToString(
                 CreateSessionRequest.serializer(),
-                CreateSessionRequest(agent, projectPath, title),
+                CreateSessionRequest(agent, projectPath, title, modeId),
             ),
             Session.serializer(),
         )
+
+    /** `POST /sessions/{id}/mode`. The change arrives as a `session_updated` event. */
+    suspend fun setMode(
+        sessionId: String,
+        modeId: String,
+    ): CommandResult<Unit> =
+        command(
+            "/sessions/${segment(sessionId)}/mode",
+            protocolJson.encodeToString(SetModeRequest.serializer(), SetModeRequest(modeId)),
+        )
+
+    /** `GET /projects`: recent project folders and the roots you may browse. */
+    suspend fun projects(): CommandResult<ProjectsOverview> =
+        call(HttpMethod.GET, "/projects", null, ProjectsOverview.serializer())
+
+    /** `GET /projects/folders`: the folders directly inside [path], which must be under a root. */
+    suspend fun projectFolders(path: String): CommandResult<ProjectFolderListing> =
+        call(HttpMethod.GET, "/projects/folders?path=${segment(path)}", null, ProjectFolderListing.serializer())
+
+    /** `PUT /devices/me/push`: send this phone's pushes to [registration]. */
+    suspend fun registerPush(registration: PushRegistration): CommandResult<Unit> =
+        command(
+            "/devices/me/push",
+            protocolJson.encodeToString(PushRegistration.serializer(), registration),
+            HttpMethod.PUT,
+        )
+
+    /** `DELETE /devices/me/push`: stop pushes to this phone. */
+    suspend fun unregisterPush(): CommandResult<Unit> = command("/devices/me/push", "{}", HttpMethod.DELETE)
 
     /**
      * `POST /sessions/{id}/prompt`, always to the main thread. A session in tmux may refuse with 409 and one of

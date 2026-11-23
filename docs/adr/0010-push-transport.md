@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-11-20.
+Accepted, 2026-11-23. Proposed 2026-11-20.
 
 ## Context
 
@@ -27,8 +27,22 @@ Two transports are candidates.
 
 ## Decision
 
-Pending. We will measure delivery delay and battery impact for both on a real device, then record the choice by changing this ADR's status to Accepted or by superseding it. The bridge's push sender should sit behind a small interface so the transport can change without touching the rest of the bridge.
+Rafiq uses [UnifiedPush](https://unifiedpush.org), with the ntfy app as the distributor we document. There is no FCM and no push service run by the Rafiq project.
+
+The deciding fact is that everyone runs their own bridge. FCM can only be sent with the server key of the Firebase project the app is registered with. Every bridge would have to hold that key, or the project would have to run a relay that holds it for everyone. The first leaks a shared secret to every install. The second puts a service we run between your server and your phone, which this project avoids.
+
+With UnifiedPush:
+
+- The app asks the distributor on the phone for an endpoint URL and sends it to the bridge with `PUT /devices/me/push`, together with a Web Push key pair. The bridge keeps it per device and deletes it when the device is revoked.
+- The bridge posts each push to that endpoint, encrypted with Web Push message encryption ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), so the push server sees neither the ids nor the kind.
+- A payload holds ids and a kind only. The app fetches what it shows from the bridge over the tailnet.
+- You can use the public ntfy.sh server or run your own. Either works without an account.
+- The bridge's sender sits behind a small interface, so another transport can be added later without touching the rest of the bridge.
 
 ## Consequences
 
-To be completed when the decision is made. Whichever transport wins, notification actions for approve and deny must work without opening the app.
+- Push needs a UnifiedPush distributor on the phone. The app explains how to install ntfy when none is found, and Rafiq works without push.
+- On phones with aggressive battery optimisation the distributor needs a battery exemption. The app walks you through it.
+- Delivery can be later than with FCM. We accept that for not holding a shared key or running a relay.
+- The bridge now makes outbound HTTPS requests to the endpoint a paired phone registered. Only `https://` endpoints are accepted, redirects are not followed, and requests have a short timeout and a size cap.
+- Notification actions for approve and deny work without opening the app: deny straight from the notification, and approve after you unlock the phone, so command text never shows on the lock screen.

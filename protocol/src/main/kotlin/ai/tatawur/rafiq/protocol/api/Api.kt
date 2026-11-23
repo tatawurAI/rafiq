@@ -5,12 +5,28 @@ import ai.tatawur.rafiq.protocol.Session
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Body of `POST /sessions`. */
+/**
+ * Body of `POST /sessions`.
+ *
+ * @property modeId the permission mode to start in, one the agent advertises. Null lets the bridge pick its
+ *   configured default for the agent, which asks before edits and commands.
+ */
 @Serializable
 data class CreateSessionRequest(
     @SerialName("agent") val agent: String,
     @SerialName("project_path") val projectPath: String,
     @SerialName("title") val title: String? = null,
+    @SerialName("mode_id") val modeId: String? = null,
+)
+
+/**
+ * Body of `POST /sessions/{id}/mode`: switch the session's permission mode. The new mode arrives as a
+ * `session_updated` event, which is also the logged record of the change. A mode the session does not offer
+ * gets 400 with the code `unknown_mode`; a tmux session gets 409 with `mode_not_supported`.
+ */
+@Serializable
+data class SetModeRequest(
+    @SerialName("mode_id") val modeId: String,
 )
 
 /**

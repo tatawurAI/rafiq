@@ -54,6 +54,7 @@ internal fun io.ktor.server.application.Application.installErrorShape() {
                     is SessionException.Invalid -> HttpStatusCode.BadRequest
                     is SessionException.NotFound -> HttpStatusCode.NotFound
                     is SessionException.Conflict -> HttpStatusCode.Conflict
+                    is SessionException.Forbidden -> HttpStatusCode.Forbidden
                 }
             call.respond(status, ApiError(ApiErrorDetail(failure.code, failure.message.orEmpty())))
         }

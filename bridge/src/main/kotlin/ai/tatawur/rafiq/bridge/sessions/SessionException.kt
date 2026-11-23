@@ -29,4 +29,11 @@ sealed class SessionException(
         message: String,
         cause: Throwable? = null,
     ) : SessionException(code, message, cause)
+
+    /** The request names something the bridge will not show, such as a folder outside the project roots. */
+    class Forbidden(
+        code: String,
+        message: String,
+        cause: Throwable? = null,
+    ) : SessionException(code, message, cause)
 }

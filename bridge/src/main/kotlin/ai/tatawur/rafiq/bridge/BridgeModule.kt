@@ -1,6 +1,8 @@
 package ai.tatawur.rafiq.bridge
 
 import ai.tatawur.rafiq.bridge.hook.HookSetup
+import ai.tatawur.rafiq.bridge.projects.ProjectCatalog
+import ai.tatawur.rafiq.bridge.push.PushRegistry
 import ai.tatawur.rafiq.bridge.server.AuditLog
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.ConnectionRegistry
@@ -15,6 +17,8 @@ import ai.tatawur.rafiq.bridge.server.eventsRoute
 import ai.tatawur.rafiq.bridge.server.hookRoutes
 import ai.tatawur.rafiq.bridge.server.installErrorShape
 import ai.tatawur.rafiq.bridge.server.installSecurity
+import ai.tatawur.rafiq.bridge.server.projectRoutes
+import ai.tatawur.rafiq.bridge.server.pushRoutes
 import ai.tatawur.rafiq.bridge.server.sessionRoutes
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.store.EventLog
@@ -47,6 +51,8 @@ import kotlinx.coroutines.runBlocking
  * @param connections where every `/events` and `/terminal` socket registers, so revoking a device closes its
  *   sockets at once.
  * @param hooks the hook installer for tmux sessions, which adds `/sessions/{id}/hooks`. Null keeps it out.
+ * @param projects the project picker's catalog, which adds `/projects`. Null keeps it out.
+ * @param push the per-device push registrations, which add `/devices/me/push`. Null keeps them out.
  * @param audit where each Chat prompt and approval answer from a phone is recorded.
  * @param deviceOf names the device a call came from, for the connection registry and the per-device terminal
  *   limit. By default it is the device the security plugin authenticated the call as.
@@ -61,6 +67,8 @@ fun Application.bridgeModule(
     connections: ConnectionRegistry = InMemoryConnectionRegistry(),
     devices: DeviceService? = null,
     hooks: HookSetup? = null,
+    projects: ProjectCatalog? = null,
+    push: PushRegistry? = null,
     audit: AuditLog = LoggingAuditLog(),
     deviceOf: (ApplicationCall) -> String = { it.attributes.getOrNull(DevicePrincipalKey)?.deviceId ?: UNKNOWN_DEVICE },
 ) {
@@ -85,6 +93,8 @@ fun Application.bridgeModule(
         terminal?.routes(this, connections, deviceOf, audit)
         devices?.let { deviceRoutes(it) }
         hooks?.let { hookRoutes(it, sessions, deviceOf, audit) }
+        projects?.let { projectRoutes(it) }
+        push?.let { pushRoutes(it, deviceOf) }
         if (devPage) devRoutes(sessions)
         // Open to any caller on purpose, though the host and origin checks still apply: it reveals only
         // liveness and version, and it is what you check first when the phone cannot connect.

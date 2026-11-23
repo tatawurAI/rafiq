@@ -28,6 +28,9 @@ import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Timeout
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import java.sql.DriverManager
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -42,6 +45,9 @@ class PushRegistryTest {
     private val devices = DeviceFixture()
     private val registry = StorePushRegistry(devices.store, devices.clock)
     private val phone = TestPhoneKeys()
+
+    @TempDir
+    lateinit var dir: Path
 
     @AfterEach
     fun close() = devices.close()
@@ -90,20 +96,34 @@ class PushRegistryTest {
     }
 
     @Test
-    fun revoking_a_device_deletes_its_registration_and_a_late_one_is_not_stored() =
+    fun revoking_a_device_deletes_its_registration_from_the_file_and_a_late_one_is_not_stored() =
         runBlocking {
-            val (id, _) = devices.pair()
-            val (otherId, _) = devices.pair("tablet")
-            registry.register(id, phone.registration("https://push.example.ts.net/up/phone"))
-            registry.register(otherId, phone.registration("https://push.example.ts.net/up/tablet"))
+            // A file, so the test can read the table itself: the endpoint is a capability and must not linger.
+            DeviceFixture(dir).use { devices ->
+                val registry = StorePushRegistry(devices.store, devices.clock)
+                val (id, _) = devices.pair()
+                val (otherId, _) = devices.pair("tablet")
+                registry.register(id, phone.registration("https://push.example.ts.net/up/phone"))
+                registry.register(otherId, phone.registration("https://push.example.ts.net/up/tablet"))
 
-            devices.service.revoke(id)
+                devices.service.revoke(id)
 
-            assertNull(devices.store.push(id))
-            assertEquals(listOf(otherId), devices.store.pushDevices())
-            // A register that raced the revoke finds the device revoked and stores nothing.
-            registry.register(id, phone.registration("https://push.example.ts.net/up/phone"))
-            assertNull(devices.store.push(id))
+                assertEquals(listOf(otherId), storedPushDevices())
+                assertEquals(listOf(otherId), devices.store.pushDevices())
+                // A register that raced the revoke finds the device revoked and stores nothing.
+                registry.register(id, phone.registration("https://push.example.ts.net/up/phone"))
+                assertEquals(listOf(otherId), storedPushDevices())
+            }
+        }
+
+    /** The device ids in the push table, read straight from the database file. */
+    private fun storedPushDevices(): List<String> =
+        DriverManager.getConnection("jdbc:sqlite:${dir.resolve("rafiq.db")}").use { db ->
+            db.createStatement().use { statement ->
+                statement.executeQuery("SELECT device_id FROM push_registrations ORDER BY device_id").use { rows ->
+                    buildList { while (rows.next()) add(rows.getString(1)) }
+                }
+            }
         }
 
     @Test

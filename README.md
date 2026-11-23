@@ -55,11 +55,11 @@ Read [docs/architecture.md](docs/architecture.md) for the full picture.
 
 ## Status
 
-Rafiq is pre-alpha and nothing is released. Today the bridge runs Claude Code sessions over ACP and replays their events, and the app pairs with it, lists your sessions, streams a session's threads and lets you answer approvals and send prompts. Setup is still manual; see [docs/setup.md](docs/setup.md). Plans and progress are on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
+Rafiq is pre-alpha. The bridge runs Claude Code sessions over ACP and in tmux, and the app pairs with it by QR code, lists your sessions, streams their threads, and lets you answer approvals and send prompts. Pushes tell you when an agent needs you, and you can deny, approve or reply from the notification. To install the bridge without a JDK, see [docs/install.md](docs/install.md). To set it up, run `rafiq-bridge setup`; see [docs/setup.md](docs/setup.md). Plans and progress are on the [GitHub milestones page](https://github.com/tatawurAI/rafiq/milestones).
 
 ## Requirements
 
-- JDK 21
+- JDK 21, only to build from source. The release download of the bridge brings its own Java runtime; see [docs/install.md](docs/install.md).
 - The Android SDK, to build the app. The app needs Android 12 (API 31) or newer.
 - [Tailscale](https://tailscale.com) on your server and on your phone
 - An ACP adapter for your agent, installed on your server. For Claude Code that is `claude-agent-acp`, from npm, and Claude Code itself must be signed in on the server:
@@ -162,7 +162,8 @@ rafiq/
 
 | Document | What is in it |
 |---|---|
-| [docs/setup.md](docs/setup.md) | Reach the bridge from your phone over HTTPS with `tailscale serve`, and pair the app |
+| [docs/install.md](docs/install.md) | Install the bridge from a release, with no JDK |
+| [docs/setup.md](docs/setup.md) | First-run setup with `rafiq-bridge setup`, HTTPS through `tailscale serve`, and pairing the app |
 | [docs/architecture.md](docs/architecture.md) | Layers, event model, bridge server, Android app |
 | [docs/adr/](docs/adr/) | Architecture decision records: what we decided and why |
 | [STYLE.md](STYLE.md) | Code, comment, protocol, test and docs conventions |

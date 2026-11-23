@@ -49,7 +49,7 @@ The code is Kotlin on both ends, built by one Gradle build. A shared `:protocol`
 | Phone to server network | Tailscale (WireGuard) | Private, stable address from anywhere. No public ports. |
 | Phone to bridge | WebSocket, JSON events | Streams tokens and events down. Prompts and approvals go up. |
 | Bridge to agents | ACP over stdio | The bridge launches each agent's ACP adapter (for example `claude-agent-acp` or `codex-acp`) as a local process. |
-| Bridge to phone, app closed | Push (transport undecided, see [ADR 0010](adr/0010-push-transport.md)) | "Agent needs you" pings. Tapping one reopens the socket. |
+| Bridge to phone, app closed | UnifiedPush, through a distributor such as ntfy, encrypted with RFC 8291 (see [ADR 0010](adr/0010-push-transport.md)) | "Agent needs you" pings. Tapping one reopens the socket. |
 | Phone to dev servers | HTTP over Tailscale, `tailscale serve` for HTTPS | Live previews of what the agent builds. |
 | Admin fallback | SSH | Out-of-band repair when the bridge is down. |
 

@@ -119,12 +119,12 @@ tasks.register<Test>("recordEventFixtures") {
 // The modules the bridge needs at run time. Start from `jdeps --print-module-deps` over the installed
 // bridge's lib folder, then add what it cannot see: java.net.http and java.logging (push and logback),
 // java.xml (logback's configuration), jdk.crypto.ec (P-256 keys for push) and java.naming (SQLite and JNDI
-// lookups in logging). A missing module shows up as NoClassDefFoundError, so the release build starts the
+// lookups in logging). java.desktop is left out on purpose: only the bean mapping in Typesafe Config
+// (ConfigBeanImpl) uses it, and the bridge never calls that. A missing module shows up as NoClassDefFoundError, so the release build starts the
 // image and checks /health before it uploads anything.
 val bridgeImageModules =
     listOf(
         "java.base",
-        "java.desktop",
         "java.instrument",
         "java.logging",
         "java.management",
@@ -153,7 +153,8 @@ abstract class JlinkRuntime : DefaultTask() {
     @TaskAction
     fun link() {
         val out = outputDir.get().asFile
-        // jlink refuses to write into an existing folder.
+        // jlink refuses to write into an existing folder, and it makes the legal files read-only.
+        makeWritable(out)
         out.deleteRecursively()
         val jlink = File(javaHome.get(), "bin/jlink")
         exec.exec {
@@ -170,6 +171,12 @@ abstract class JlinkRuntime : DefaultTask() {
                 out.path,
             )
         }
+        // Without this, copying the runtime again over its own earlier copy fails.
+        makeWritable(out)
+    }
+
+    private fun makeWritable(dir: File) {
+        dir.walkTopDown().forEach { it.setWritable(true) }
     }
 }
 
@@ -224,6 +231,8 @@ val bridgeImage =
         group = "distribution"
         val name = bridgePlatform.map { "rafiq-bridge-${rafiqVersion.get()}-$it" }
         into(layout.buildDirectory.dir("image"))
+        // A copy from an earlier run may hold read-only files that Sync must replace.
+        doFirst { destinationDir.walkTopDown().forEach { it.setWritable(true) } }
         into(name) {
             from(tasks.installDist.map { it.destinationDir }) {
                 exclude("bin/**")

@@ -38,7 +38,7 @@ It goes through these steps:
 1. It checks that `claude` and `claude-agent-acp` are on your `PATH`, and says how to install what is missing. It does not sign you in to anything. Run `claude` once yourself to sign in.
 2. It reads your server's `*.ts.net` name from `tailscale status --json`, or says that Tailscale is not connected or that MagicDNS is off.
 3. It offers each setting that is missing from the settings file, one question each:
-   - `RAFIQ_DATA_DIR`, where the bridge keeps its database: `~/.local/share/rafiq`, or `$XDG_DATA_HOME/rafiq` if you set that.
+   - `RAFIQ_DATA_DIR`, where the bridge keeps its database. Setup offers `~/.local/share/rafiq`, or `$XDG_DATA_HOME/rafiq` if you set that. The bridge itself has no default: with no `RAFIQ_DATA_DIR` it keeps events in memory only, and pairing does not work.
    - `RAFIQ_AGENTS=claude-code=claude-agent-acp`, when the adapter is installed.
    - `RAFIQ_DEFAULT_MODES=claude-code=default`, when Claude Code is in the agent list. Sessions you start from your phone ask before edits and commands. Without it, `claude-agent-acp` starts them in a mode that edits files without asking. This question defaults to yes.
    - `RAFIQ_ALLOWED_HOSTS` with your `*.ts.net` name, added to any names already there.

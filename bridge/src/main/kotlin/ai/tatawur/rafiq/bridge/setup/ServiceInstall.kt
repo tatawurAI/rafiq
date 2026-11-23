@@ -18,6 +18,7 @@ import java.nio.file.Path
  * @param environment the environment the command runs in.
  * @param runner runs `launchctl`, `systemctl` and `id`. Tests pass a fake, so they never load a service.
  * @param pause waits before `launchctl bootstrap` is tried again, while launchd finishes unloading the old job.
+ * @param programs finds `launchctl` or `systemctl`, by default on the `PATH` in [environment].
  */
 @Suppress("LongParameterList") // The command's whole world, passed in so tests can replace each part.
 class ServiceInstall(
@@ -28,6 +29,7 @@ class ServiceInstall(
     private val out: PrintStream,
     private val err: PrintStream,
     private val pause: () -> Unit = { Thread.sleep(BOOTSTRAP_RETRY_MS) },
+    private val programs: ProgramFinder = ProgramFinder.onPath(environment["PATH"]),
 ) {
     /** The init systems the bridge can register with. */
     enum class Platform { MACOS, LINUX }
@@ -48,6 +50,11 @@ class ServiceInstall(
 
     /** Writes the service definition for [program] and starts it. Returns the exit code for the command. */
     fun install(program: Path): Int {
+        // Checked before anything is written, so a machine with no service manager is left exactly as it was.
+        serviceManagerProblem()?.let { problem ->
+            err.println(problem)
+            return FAILED
+        }
         val serviceEnvironment =
             SERVICE_VARIABLES
                 .associateWith { environment[it].orEmpty() }
@@ -106,6 +113,37 @@ class ServiceInstall(
         )
         return 0
     }
+
+    /**
+     * Why the bridge cannot be a service here, or null when it can. Linux needs `systemctl` and a systemd user session:
+     * a container or a plain SSH login often has neither. macOS needs `launchctl`.
+     */
+    private fun serviceManagerProblem(): String? =
+        when (platform) {
+            Platform.MACOS -> {
+                if (programs.find("launchctl") == null) {
+                    "launchctl is not on your PATH, so the bridge cannot run as a service. $RUN_IT_YOURSELF"
+                } else {
+                    null
+                }
+            }
+
+            Platform.LINUX -> {
+                val session =
+                    programs.find("systemctl") != null &&
+                        (!environment["XDG_RUNTIME_DIR"].isNullOrBlank() || userManagerAnswers())
+                if (session) {
+                    null
+                } else {
+                    "No systemd user session here, so the bridge cannot run as a service. $RUN_IT_YOURSELF " +
+                        "On a server you log into over SSH, `loginctl enable-linger` gives you a user session."
+                }
+            }
+        }
+
+    /** True when `systemctl --user` reaches a user manager. Degraded exits non-zero but still names a state. */
+    private fun userManagerAnswers(): Boolean =
+        runner.run(listOf("systemctl", "--user", "is-system-running")).output.trim() in USER_MANAGER_STATES
 
     /**
      * Unloads any earlier job, then loads the new file. launchd can still be unloading the old job when `bootstrap`
@@ -188,6 +226,9 @@ class ServiceInstall(
 
         private const val FAILED = 1
         private const val USAGE_ERROR = 2
+        private const val RUN_IT_YOURSELF = "Run rafiq-bridge in a terminal, tmux or screen instead."
+        private val USER_MANAGER_STATES =
+            setOf("initializing", "starting", "running", "degraded", "maintenance", "stopping")
         private const val BOOTSTRAP_TRIES = 3
         private const val BOOTSTRAP_RETRY_MS = 1_000L
 

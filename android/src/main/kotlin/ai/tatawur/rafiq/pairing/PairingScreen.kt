@@ -55,9 +55,10 @@ import kotlinx.coroutines.launch
  * On success it calls [onPaired]. On failure it shows the hint for that kind of failure and keeps what you
  * typed. After the bridge revoked this phone, or an unpair the bridge never heard about, it also says so.
  *
- * You can scan the QR code `rafiq-bridge pair` prints instead of typing. A scan pairs at once, since you just
- * pointed the camera at your own terminal. A `rafiq://pair` link opened from elsewhere only fills in the form,
- * because any app or web page can open one: you check the address and tap Connect yourself.
+ * You can scan the QR code `rafiq-bridge pair` prints instead of typing, or open a `rafiq://pair` link. Either one
+ * only fills in the form and shows the server's host name large, and you tap Connect yourself. A QR code on a poster
+ * or a link on a web page could name someone else's server, so nothing pairs without that tap. A host that is not a
+ * `*.ts.net` name gets a warning, since `tailscale serve` always gives your server one.
  *
  * The code is held only in memory while you type, never in saved instance state.
  *
@@ -79,6 +80,8 @@ fun PairingScreen(
     var notSaved by remember { mutableStateOf(false) }
     var scanning by rememberSaveable { mutableStateOf(false) }
     var info by remember { mutableStateOf<Int?>(null) }
+    // The link the form was last filled from, until you edit the address.
+    var filledFrom by remember { mutableStateOf<PairingLink.Parsed?>(null) }
     val revoked by pairing.revokedNotice.collectAsState()
     val notice = noticeText(pairing)
     val scope = rememberCoroutineScope()
@@ -88,6 +91,8 @@ fun PairingScreen(
         code = link.code.uppercase()
         failure = null
         notSaved = false
+        info = null
+        filledFrom = link
     }
 
     fun connect() {
@@ -106,7 +111,6 @@ fun PairingScreen(
     LaunchedEffect(incomingLink) {
         incomingLink?.let {
             fill(it)
-            info = R.string.setup_link_check
             onLinkUsed()
         }
     }
@@ -122,7 +126,6 @@ fun PairingScreen(
             onScanned = { link ->
                 scanning = false
                 fill(link)
-                connect()
             },
             onCancel = { scanning = false },
             modifier = modifier,
@@ -137,9 +140,11 @@ fun PairingScreen(
                     notice = notice,
                     hint = hint,
                     info = info?.let { stringResource(it) },
+                    check = filledFrom?.let { LinkCheck(it.host, tailscaleName = it.isTailscaleName) },
                 ),
             onUrlChange = {
                 url = it
+                filledFrom = null
                 failure = null
                 notSaved = false
             },
@@ -230,7 +235,8 @@ private suspend fun pairOrNull(
  *
  * @property hint why the last attempt failed, or null to show none.
  * @property notice why you are on this screen when it is not a first pairing, or null to show none.
- * @property info a neutral line about the form, such as asking you to check an address a link filled in, or null.
+ * @property info a neutral line about the form, such as why the camera is not used, or null.
+ * @property check the server a scan or a link filled in, for you to check before you tap Connect, or null.
  */
 internal data class PairingFormState(
     val url: String,
@@ -239,6 +245,7 @@ internal data class PairingFormState(
     val notice: String? = null,
     val hint: String? = null,
     val info: String? = null,
+    val check: LinkCheck? = null,
 )
 
 /** The pairing form itself, stateless so every failure hint can be previewed. */
@@ -291,6 +298,7 @@ internal fun PairingForm(
             modifier = Modifier.fillMaxWidth(),
         )
         CodeField(code = state.code, enabled = !state.busy, onCodeChange = onCodeChange)
+        state.check?.let { LinkCheckLines(it) }
         state.info?.let {
             Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground)
         }

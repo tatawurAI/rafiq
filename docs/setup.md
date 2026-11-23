@@ -68,10 +68,10 @@ rafiq-bridge pair --name pixel
 
 `setup` runs this for you at the end. Run it in the same environment as the bridge: it needs the same `RAFIQ_DATA_DIR`, which it reads from the settings file too. It prints a pairing code like `ABCD-EFGH`, your server's address and a QR code.
 
-- **Scan:** in the app, tap Scan the QR code and point your phone at the terminal. The app asks for the camera only then, and pairs as soon as it reads the code. The phone's own camera app can read the code too. It opens Rafiq with the address and code filled in, and you tap Connect after checking the address.
+- **Scan:** in the app, tap Scan the QR code and point your phone at the terminal. The app asks for the camera only then. It fills in the address and code and shows your server's name large. Check it is your server, then tap Connect. The phone's own camera app can read the code too, and opens Rafiq the same way. Nothing pairs until you tap Connect, because a QR code on a poster or a link on a web page could name someone else's server. If the name does not end in `.ts.net`, the app warns you, since `tailscale serve` always gives your server a `*.ts.net` name.
 - **Type:** enter your server's address (`https://box.example.ts.net`) and the code.
 
-The QR code holds a `rafiq://pair` link with your server's `https://` address and the pairing code. It never holds a device token. The app refuses a link to a plain `http://` address. If the phone is already paired, the app ignores the link and says so. Unpair in Settings first to pair it with a server again.
+The QR code holds a `rafiq://pair` link with your server's `https://` address and the pairing code. It never holds a device token. The app refuses a link to a plain `http://` address, and an address with a user name, a query or a fragment in it. If the phone is already paired, the app ignores the link and says so. Unpair in Settings first to pair it with a server again.
 
 The QR code is drawn in your terminal's text colour. On a terminal with dark text on a light background it comes out inverted. The app reads it either way, but another scanner might not. If the address line says to see this guide instead of naming your server, `RAFIQ_ALLOWED_HOSTS` was empty when the bridge started. Run setup, then restart the bridge.
 

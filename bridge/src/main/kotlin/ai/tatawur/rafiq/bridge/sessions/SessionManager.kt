@@ -59,6 +59,8 @@ import kotlin.time.Duration.Companion.seconds
  * @param scope owns the work that collects each live session's updates. Cancel it to stop them.
  * @param ioDispatcher runs the file system checks on project folders.
  * @param tmuxChat Chat for tmux sessions, or null when the bridge has no tmux reader.
+ * @param onStored runs after a new session is stored and before it is published. Tests use it to hold that
+ *   moment open; the bridge passes nothing.
  * @param defaultModes the permission mode, by agent id, that a session starts in when the request names none.
  *   From `RAFIQ_DEFAULT_MODES`. An agent with no entry starts in whatever mode the agent itself picks.
  */
@@ -73,10 +75,16 @@ class SessionManager(
     private val tmuxChat: TmuxChat? = null,
     private val present: (Session) -> Session = { it },
     defaultModes: Map<String, String> = emptyMap(),
+    private val onStored: suspend (sessionId: String) -> Unit = {},
 ) {
     private val modeRules = ModeRules(defaultModes)
     private val adaptersById = adapters.associateBy(AgentAdapter::agentId)
     private val live = ConcurrentHashMap<String, LiveSession>()
+
+    /** Sessions attached to their agent but not yet published to [live], so [shutdown] still stops them. */
+    private val settingUp = ConcurrentHashMap<String, LiveSession>()
+
+    @Volatile private var stopping = false
     private val resumeLocks = ConcurrentHashMap<String, Mutex>()
     private val approvals = ConcurrentHashMap<String, PendingApproval>()
 
@@ -124,6 +132,27 @@ class SessionManager(
         // Collection starts now, because the agent's updates are hot: anything it reports while the
         // rows below are written waits in the buffer and is logged after them.
         val liveSession = attach(sessionId, agentSession)
+        // Held from before the row is written until the session is published, so a request that sees the new
+        // session in the log waits here and then finds it live, instead of resuming a second agent for it.
+        val lock = resumeLocks.computeIfAbsent(sessionId) { Mutex() }
+        try {
+            lock.withLock { setUpNewSession(sessionId, liveSession, agentSession, agent, directory, title, modeId) }
+        } finally {
+            resumeLocks.remove(sessionId, lock)
+        }
+        return log.session(sessionId)?.session ?: error("Session $sessionId was not stored.")
+    }
+
+    @Suppress("LongParameterList") // The parts of create that run under the session's lock.
+    private suspend fun setUpNewSession(
+        sessionId: String,
+        liveSession: LiveSession,
+        agentSession: AgentSession,
+        agent: String,
+        directory: Path,
+        title: String?,
+        modeId: String?,
+    ) {
         guardingTheAttachedSession(sessionId, liveSession) {
             modeRules.startingMode(agent, modeId, agentSession.modes.value)?.let { mode ->
                 unavailableAsConflict { agentSession.setMode(mode) }
@@ -151,9 +180,9 @@ class SessionManager(
                     status = AgentState.DONE,
                 )
             log.createSession(session, agentSession.agentSessionRef, mainThread)
+            onStored(sessionId)
             publish(sessionId, liveSession)
         }
-        return log.session(sessionId)?.session ?: error("Session $sessionId was not stored.")
     }
 
     /**
@@ -411,7 +440,10 @@ class SessionManager(
      * Their logs stay, and they resume on the next prompt after a restart.
      */
     suspend fun shutdown() {
-        val sessions = live.entries.map { it.key to it.value }
+        stopping = true
+        // Setting-up sessions are read first: one that is published meanwhile is then in [live] below.
+        val sessions = settingUp.entries.map { it.key to it.value } + live.entries.map { it.key to it.value }
+        settingUp.clear()
         live.clear()
         approvals.clear()
         turnsInFlight.clear()
@@ -476,6 +508,7 @@ class SessionManager(
                     .collect { buffer.trySend(it) }
             }
         val liveSession = LiveSession(agentSession, collector, buffer)
+        settingUp[sessionId] = liveSession
         liveSession.job =
             scope.launch(start = CoroutineStart.LAZY) {
                 // A mode the agent switches to on its own, such as leaving a planning mode, is logged as it comes.
@@ -749,7 +782,10 @@ class SessionManager(
         sessionId: String,
         liveSession: LiveSession,
     ) {
+        if (stopping) throw SessionException.Conflict("bridge_stopping", "The bridge is shutting down.")
+        // Into [live] before out of [settingUp], so shutdown never misses it in between.
         live[sessionId] = liveSession
+        settingUp.remove(sessionId, liveSession)
         liveSession.job.start()
     }
 
@@ -764,6 +800,7 @@ class SessionManager(
             block()
         } catch (failure: Throwable) {
             withContext(NonCancellable) {
+                settingUp.remove(sessionId, liveSession)
                 live.remove(sessionId, liveSession)
                 liveSession.job.cancel()
                 liveSession.stop()

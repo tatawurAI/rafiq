@@ -1,5 +1,6 @@
 package ai.tatawur.rafiq.bridge.push
 
+import ai.tatawur.rafiq.bridge.TEST_TOKEN
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.DeviceFixture
 import ai.tatawur.rafiq.bridge.server.DevicePrincipalKey
@@ -8,6 +9,7 @@ import ai.tatawur.rafiq.bridge.server.installErrorShape
 import ai.tatawur.rafiq.bridge.server.installSecurity
 import ai.tatawur.rafiq.bridge.server.pushRoutes
 import ai.tatawur.rafiq.bridge.sessions.SessionException
+import ai.tatawur.rafiq.bridge.testSecurity
 import ai.tatawur.rafiq.protocol.api.PushRegistration
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.client.request.delete
@@ -110,8 +112,12 @@ class PushRegistryTest {
 
                 assertEquals(listOf(otherId), storedPushDevices())
                 assertEquals(listOf(otherId), devices.store.pushDevices())
-                // A register that raced the revoke finds the device revoked and stores nothing.
-                registry.register(id, phone.registration("https://push.example.ts.net/up/phone"))
+                // A register that raced the revoke finds the device revoked, stores nothing and says so.
+                val late =
+                    assertFailsWith<SessionException.Conflict> {
+                        registry.register(id, phone.registration("https://push.example.ts.net/up/phone"))
+                    }
+                assertEquals(StorePushRegistry.NOT_REGISTERED_CODE, late.code)
                 assertEquals(listOf(otherId), storedPushDevices())
             }
         }
@@ -181,6 +187,36 @@ class PushRegistryTest {
             put(phone.registration("https://push.example.ts.net/up/abc"))
             client.delete("/devices/me") { header(HttpHeaders.Authorization, "Bearer $token") }
             assertNull(devices.store.push(id))
+            assertEquals(emptyList(), devices.store.pushDevices())
+        }
+
+    @Test
+    fun the_shared_legacy_token_gets_409_and_nothing_is_stored() =
+        testApplication {
+            application {
+                install(ContentNegotiation) { json(protocolJson) }
+                installErrorShape()
+                // The shared token alone, as RAFIQ_DEVICE_TOKEN was used before per-device pairing: no device row.
+                installSecurity(testSecurity())
+                routing {
+                    pushRoutes(registry) { it.attributes.getOrNull(DevicePrincipalKey)?.deviceId ?: "unknown" }
+                }
+            }
+
+            val response =
+                client.put("/devices/me/push") {
+                    header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN")
+                    contentType(ContentType.Application.Json)
+                    setBody(
+                        protocolJson.encodeToString(
+                            PushRegistration.serializer(),
+                            phone.registration("https://push.example.ts.net/up/abc"),
+                        ),
+                    )
+                }
+
+            assertEquals(HttpStatusCode.Conflict, response.status)
+            assertTrue(response.bodyAsText().contains(StorePushRegistry.NOT_REGISTERED_CODE))
             assertEquals(emptyList(), devices.store.pushDevices())
         }
 }

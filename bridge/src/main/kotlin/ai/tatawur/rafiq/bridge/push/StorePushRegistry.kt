@@ -17,13 +17,21 @@ class StorePushRegistry(
     private val store: DeviceStore,
     private val clock: Clock = Clock.systemUTC(),
 ) : PushRegistry {
+    /**
+     * @throws SessionException.Conflict with [NOT_REGISTERED_CODE] when the caller is not an active paired device,
+     *   such as the shared `RAFIQ_DEVICE_TOKEN` with no device record, or a request that raced its device's revoke.
+     *   Nothing is stored then, and the phone must not believe it will get pushes.
+     */
     override suspend fun register(
         deviceId: String,
         registration: PushRegistration,
     ) {
-        // An unknown or revoked device stores nothing. The route already refused a revoked token, so this is only
-        // a request that raced its own device's revoke.
-        store.setPush(deviceId, validate(registration), clock.millis())
+        if (!store.setPush(deviceId, validate(registration), clock.millis())) {
+            throw SessionException.Conflict(
+                NOT_REGISTERED_CODE,
+                "Pushes need a paired device. Pair this phone with rafiq-bridge pair.",
+            )
+        }
     }
 
     override suspend fun unregister(deviceId: String) = store.deletePush(deviceId)
@@ -40,6 +48,9 @@ class StorePushRegistry(
 
         /** The error code for a registration the bridge will not store. */
         const val INVALID_CODE = "invalid_push_registration"
+
+        /** The error code when the caller is not an active paired device, so there is nothing to attach pushes to. */
+        const val NOT_REGISTERED_CODE = "device_not_registered"
 
         /**
          * Checks a registration and decodes its keys.

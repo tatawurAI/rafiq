@@ -1,11 +1,15 @@
 package ai.tatawur.rafiq.bridge.push
 
+import ai.tatawur.rafiq.protocol.api.PushKind
+import ai.tatawur.rafiq.protocol.api.PushPayload
+import ai.tatawur.rafiq.protocol.protocolJson
 import java.math.BigInteger
 import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.spec.ECPrivateKeySpec
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -44,6 +48,28 @@ class WebPushEncryptorTest {
         val body = WebPushEncryptor().encrypt(message, phone.publicBytes, phone.auth)
 
         assertContentEquals(message, phone.decrypt(body))
+    }
+
+    @Test
+    fun every_payload_kind_encrypts_to_the_same_length() {
+        val phone = TestPhoneKeys()
+        val approval =
+            PushPayload(kind = PushKind.APPROVAL, sessionId = "ses_1", approvalId = "apr_0123456789abcdef")
+        val turnDone = PushPayload(kind = PushKind.TURN_DONE, sessionId = "ses_1")
+
+        fun sealed(payload: PushPayload) =
+            WebPushEncryptor().encrypt(
+                protocolJson.encodeToString(PushPayload.serializer(), payload).toByteArray(),
+                phone.publicBytes,
+                phone.auth,
+            )
+
+        val approvalBody = sealed(approval)
+        val turnDoneBody = sealed(turnDone)
+
+        assertEquals(approvalBody.size, turnDoneBody.size)
+        val decoded = phone.decrypt(approvalBody).decodeToString()
+        assertEquals(approval, protocolJson.decodeFromString(PushPayload.serializer(), decoded))
     }
 
     @Test

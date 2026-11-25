@@ -10,7 +10,7 @@ This folder holds what ships with a release. `release.yml` in `.github/workflows
 1. Open a release pull request that sets `rafiq.version` in `gradle.properties` and updates `CHANGELOG.md` (see [CONTRIBUTING.md](../CONTRIBUTING.md)). Merge it.
 2. Tag the merged commit on `main` as `v<version>` and push the tag. The workflow refuses a tag whose commit is not on `main`, or whose version differs from `gradle.properties`.
 3. Approve the `sign-apk` job when GitHub asks (see below).
-4. Copy `rafiq-bridge.rb` from the release to the Homebrew tap.
+4. For a final version, the `update-tap` job commits the Homebrew formula to the tap by itself (see below). A prerelease, any tag with a `-` suffix such as `-rc.1`, is not sent to the tap.
 
 ## One-time setup for signing
 
@@ -41,6 +41,21 @@ keytool -genkeypair -keystore rafiq-release.jks -storetype PKCS12 -alias rafiq -
 ```
 
 Keep a backup. A phone that installed an APK signed with this key only accepts updates signed with the same key.
+
+## One-time setup for the Homebrew tap
+
+The `update-tap` job runs in the `release` environment, so a reviewer approves it too. It downloads only the rendered `rafiq-bridge.rb`, with no checkout of this repository, and has no `GITHUB_TOKEN` scopes. It writes to [tatawurAI/homebrew-tap](https://github.com/tatawurAI/homebrew-tap) over SSH with a deploy key that can write to that one repository and nothing else. GitHub's SSH host key is pinned in the workflow. The job copies the file to `Formula/rafiq-bridge.rb`, checks it with `ruby -c`, commits as `github-actions[bot]` with the message `rafiq-bridge <version>` and pushes to `main`. If the tap already has the same file, such as on a rerun, it commits nothing. It deletes the key file at the end.
+
+Set it up once, in an empty folder:
+
+```sh
+ssh-keygen -t ed25519 -N "" -C rafiq-release-tap -f tap_key
+gh repo deploy-key add tap_key.pub -R tatawurAI/homebrew-tap --allow-write --title "rafiq release workflow"
+gh secret set HOMEBREW_TAP_DEPLOY_KEY --env release -R tatawurAI/rafiq < tap_key
+rm tap_key tap_key.pub
+```
+
+If the tap's `main` branch has a protection rule that blocks direct pushes, allow the deploy key to bypass it, or the push fails.
 
 ## How the APK is signed
 

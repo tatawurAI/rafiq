@@ -7,6 +7,7 @@
 #   bridge   Builds the self-contained bridge on four native runners (macOS and Linux, arm64 and x64), and
 #            starts each one with no JDK on PATH before it counts.
 #   release  Writes SHA256SUMS and creates the GitHub Release with everything attached.
+#   update-tap  For a final version only, commits the rendered Homebrew formula to the tap repository.
 #
 # Secrets used, all in the sign-apk job only, and stored as secrets of the GitHub environment named release
 # (see packaging/README.md), not as repository secrets:
@@ -335,11 +336,19 @@ jobs:
           sha256sum -- rafiq-* > SHA256SUMS
           cat SHA256SUMS
 
-      # The Homebrew formula, with the real hashes, for the maintainer to copy into the tap.
+      # The Homebrew formula, with the real hashes. The update-tap job publishes it to the tap.
       - name: Render the Homebrew formula
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: scripts/render-homebrew-formula.sh "${VERSION}" dist/SHA256SUMS > dist/rafiq-bridge.rb
+
+      - name: Keep the formula for the tap
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tap-formula
+          path: dist/rafiq-bridge.rb
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Create the GitHub Release
         env:
@@ -359,3 +368,62 @@ jobs:
             --title "Rafiq ${VERSION}" \
             --notes-file notes/RELEASE_NOTES.md \
             "${flags[@]}"
+
+  # Publishes the formula to the Homebrew tap, for final versions only. A prerelease never reaches brew users.
+  # The deploy key can write to the tap repository and nothing else. The job has no checkout, no GITHUB_TOKEN
+  # scopes and no Rafiq code: it only handles the formula file the release job rendered.
+  update-tap:
+    name: update-tap
+    needs: [prepare, release]
+    if: needs.prepare.outputs.prerelease == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    permissions: {}
+    steps:
+      - name: Get the formula
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tap-formula
+          path: formula
+
+      # The host key below is GitHub's published ed25519 key (SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU,
+      # see https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints).
+      # It is pinned here, so nothing is fetched or trusted at run time.
+      - name: Commit the formula to the tap
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          TAP_REPO: git@github.com:tatawurAI/homebrew-tap.git
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_DEPLOY_KEY}" ]; then
+            echo "::error::The secret HOMEBREW_TAP_DEPLOY_KEY is not set in the release environment."
+            exit 1
+          fi
+          umask 077
+          key="${RUNNER_TEMP}/tap_deploy_key"
+          known_hosts="${RUNNER_TEMP}/tap_known_hosts"
+          printf '%s\n' "${TAP_DEPLOY_KEY}" > "${key}"
+          cat > "${known_hosts}" <<'HOSTS'
+          github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+          HOSTS
+          export GIT_SSH_COMMAND="ssh -i ${key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${known_hosts} -o HostKeyAlgorithms=ssh-ed25519"
+
+          git clone --quiet --depth 1 --branch main "${TAP_REPO}" "${RUNNER_TEMP}/tap"
+          cd "${RUNNER_TEMP}/tap"
+          mkdir -p Formula
+          cp "${GITHUB_WORKSPACE}/formula/rafiq-bridge.rb" Formula/rafiq-bridge.rb
+          ruby -c Formula/rafiq-bridge.rb
+          git add Formula/rafiq-bridge.rb
+          if git diff --cached --quiet; then
+            echo "The tap already has this formula. Nothing to commit."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet -m "rafiq-bridge ${VERSION}"
+          git push --quiet origin HEAD:main
+
+      - name: Delete the key
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/tap_deploy_key" "${RUNNER_TEMP}/tap_known_hosts"

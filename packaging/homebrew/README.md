@@ -2,10 +2,7 @@
 
 `rafiq-bridge.rb.in` is the template for the Rafiq bridge formula. It installs the self-contained build from a GitHub Release, which carries its own Java runtime.
 
-The release workflow renders it with the real version and checksums and attaches the result to each release as `rafiq-bridge.rb`. To publish a version:
-
-1. Download `rafiq-bridge.rb` from the release.
-2. Put it in the tap repository, [tatawurAI/homebrew-tap](https://github.com/tatawurAI/homebrew-tap), as `Formula/rafiq-bridge.rb` and commit it.
+The release workflow renders it with the real version and checksums and attaches the result to each release as `rafiq-bridge.rb`. For a final version, its `update-tap` job also commits that file to [tatawurAI/homebrew-tap](https://github.com/tatawurAI/homebrew-tap) as `Formula/rafiq-bridge.rb`. Prereleases are not sent to the tap. The one-time setup is in [../README.md](../README.md).
 
 Users then run:
 

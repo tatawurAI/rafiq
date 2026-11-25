@@ -66,7 +66,6 @@
 
   <!-- Settings. -->
   <string name="settings_approval_lock">Ask for your fingerprint or face before you answer an approval</string>
-  <string name="settings_approval_lock_detail">An approval lets the agent run a command on your server. With this on, your phone asks again after 30 seconds and whenever the app was in the background.</string>
 
   <!-- Terminal: scrollback and windows. -->
   <string name="terminal_history_loading">Loading history</string>

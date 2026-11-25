@@ -4,6 +4,7 @@
 
 package ai.tatawur.rafiq.bridge.agent.acp
 
+import ai.tatawur.rafiq.bridge.agent.AgentModes
 import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.agent.AgentUnavailableException
 import ai.tatawur.rafiq.protocol.ApprovalOutcome
@@ -30,9 +31,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -67,7 +70,10 @@ internal class AcpAgentSession(
     private val drainTimeout: Duration = 5.seconds,
 ) : AgentSession {
     private val approvals = ApprovalDesk()
-    private val actor = SessionActor(mapper, approvals, newId, scope.scheduler())
+
+    /** The session's permission modes. The adapter feeds it the agent's answer when the root session opens. */
+    val acpModes = AcpModes()
+    private val actor = SessionActor(mapper, approvals, newId, scope.scheduler(), modes = acpModes)
     private val wire = WireOrder { actor.offer(SessionActor.Item.Wire(it)) }
 
     /** The JSON-RPC connection to the agent. */
@@ -88,6 +94,8 @@ internal class AcpAgentSession(
     override val mainThreadId: String = MAIN_THREAD_ID
 
     override val updates: Flow<EventPayload> = actor.updates
+
+    override val modes: StateFlow<AgentModes> = acpModes.modes
 
     /** Registers the handlers, starts the consumer and the protocol, and watches the process. Called once. */
     fun attach() {
@@ -166,6 +174,23 @@ internal class AcpAgentSession(
         optionId: String,
     ) = approvals.choose(approvalId, optionId)
 
+    override suspend fun setMode(modeId: String) {
+        if (closeStarted.get()) throw AgentUnavailableException("The agent session is closed.")
+        val root = rootRef ?: throw AgentUnavailableException("The agent session has not opened yet.")
+        val (method, params) = acpModes.request(root, modeId)
+        val answer =
+            try {
+                protocol.sendRequestRaw(method, params)
+            } catch (e: JsonRpcException) {
+                // The agent's own error text can say anything, so it stays in the server log.
+                logger.warn("the agent refused {}: {}", method.name, e.message)
+                throw AgentUnavailableException("The agent refused to change mode.", e)
+            } catch (e: IllegalStateException) {
+                throw AgentUnavailableException("The agent closed the connection.", e)
+            }
+        acpModes.accepted(modeId, answer)
+    }
+
     /** Ends the session. A second caller waits for the first one's shutdown to finish. */
     override suspend fun close() {
         if (!closeStarted.compareAndSet(false, true)) {
@@ -194,3 +219,5 @@ internal class AcpAgentSession(
         return reply.await()
     }
 }
+
+private val logger = LoggerFactory.getLogger(AcpAgentSession::class.java)

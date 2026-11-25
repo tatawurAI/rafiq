@@ -5,6 +5,8 @@ import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import android.hardware.biometrics.BiometricPrompt
 import android.os.CancellationSignal
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 /**
  * The biometric check that guards Terminal: a strong biometric (class 3 fingerprint or face) and
@@ -62,4 +64,19 @@ internal object BiometricCheck {
         )
         return signal
     }
+
+    /**
+     * [ask], suspended until the prompt answers: true only when a strong biometric matched. Cancelling the
+     * caller dismisses the prompt.
+     */
+    suspend fun await(
+        context: Context,
+        title: String,
+        subtitle: String,
+        cancel: String,
+    ): Boolean =
+        suspendCancellableCoroutine { continuation ->
+            val signal = ask(context, title, subtitle, cancel) { passed -> continuation.resume(passed) }
+            continuation.invokeOnCancellation { signal.cancel() }
+        }
 }

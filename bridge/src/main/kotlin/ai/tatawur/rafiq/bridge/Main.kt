@@ -4,6 +4,11 @@ import ai.tatawur.rafiq.bridge.hook.HookChannel
 import ai.tatawur.rafiq.bridge.hook.HookSettings
 import ai.tatawur.rafiq.bridge.hook.HookSetup
 import ai.tatawur.rafiq.bridge.hook.NoopHookSink
+import ai.tatawur.rafiq.bridge.projects.FolderCatalog
+import ai.tatawur.rafiq.bridge.push.HttpPushSender
+import ai.tatawur.rafiq.bridge.push.PushNotifier
+import ai.tatawur.rafiq.bridge.push.PushRegistry
+import ai.tatawur.rafiq.bridge.push.StorePushRegistry
 import ai.tatawur.rafiq.bridge.server.BridgeSecurity
 import ai.tatawur.rafiq.bridge.server.DeviceAdminServer
 import ai.tatawur.rafiq.bridge.server.DeviceService
@@ -11,6 +16,8 @@ import ai.tatawur.rafiq.bridge.server.InMemoryConnectionRegistry
 import ai.tatawur.rafiq.bridge.server.installIdentityCheck
 import ai.tatawur.rafiq.bridge.sessions.SessionManager
 import ai.tatawur.rafiq.bridge.sessions.isTmuxSessionId
+import ai.tatawur.rafiq.bridge.setup.Commands
+import ai.tatawur.rafiq.bridge.setup.LoadedSettings
 import ai.tatawur.rafiq.bridge.store.DeviceStore
 import ai.tatawur.rafiq.bridge.store.EventLog
 import ai.tatawur.rafiq.bridge.tmux.AgentDetector
@@ -33,13 +40,13 @@ import java.util.Properties
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
-/** Starts the bridge with settings from the environment and serves until the process is stopped. */
+/** Starts the bridge with settings from `bridge.conf` and the environment, and serves until the process is stopped. */
+@Suppress("LongMethod") // Start-up wiring reads top to bottom, one block per feature, in the order it must run.
 fun main(args: Array<String>) {
-    // `rafiq-bridge pair`, `devices` and `revoke` talk to the running bridge and exit.
-    if (args.firstOrNull() in DeviceCli.COMMANDS) {
-        exitProcess(DeviceCli.run(args.toList(), System.getenv(), System.out, System.err))
-    }
-    val config = BridgeConfig.fromEnvironment(System.getenv())
+    // `setup`, `service`, and `pair`, `devices` and `revoke` (which talk to the running bridge) run and exit.
+    Commands.run(args.toList(), System.getenv())?.let(::exitProcess)
+    // The environment wins over bridge.conf (ADR 0014).
+    val config = LoadedSettings.load(System.getenv()).config()
     val version = bridgeVersion()
     warnAboutMissingSettings(config)
     val eventLog = EventLog.open(config.dataDir, Dispatchers.IO.limitedParallelism(1))
@@ -73,18 +80,35 @@ fun main(args: Array<String>) {
                 terminal?.source?.let { source -> { id: String -> source.isVisible(id) } } ?: { !isTmuxSessionId(it) },
             tmuxChat = claude,
             present = terminal?.source?.let { source -> source::present } ?: { it },
+            defaultModes = config.defaultModes,
         )
+    // Project picker (#35): recent folders come from the sessions you can see, browsing from RAFIQ_PROJECT_ROOTS.
+    val projects = FolderCatalog(config.projectRoots, recentPaths = { sessions.sessions().map { it.projectPath } })
     runBlocking {
         sessions.recoverAfterRestart()
         terminal?.prepare()
     }
+    // After recovery, so the events recovery writes about the past are never pushed.
+    val push = startPush(config, deviceStore, eventLog, sessions, scope)
     terminal?.source?.start(scope)
     terminal?.let { warnAboutInheritedSecrets(it) }
     val hookChannel = hookDir?.let { dir -> HookChannel(dir, claude ?: NoopHookSink, scope).start() }
     try {
         embeddedServer(CIO, host = config.bindAddress, port = config.port) {
             log.info("Rafiq bridge {} starting with {}", version, config)
-            bridgeModule(version, eventLog, sessions, security, config.devPage, terminal, connections, devices, hooks)
+            bridgeModule(
+                version,
+                eventLog,
+                sessions,
+                security,
+                config.devPage,
+                terminal,
+                connections,
+                devices,
+                hooks,
+                projects = projects,
+                push = push,
+            )
             // After the token check, so a request with no token still gets 401 first.
             installIdentityCheck(config.tailscaleLogin)
         }.start(wait = true)
@@ -92,10 +116,36 @@ fun main(args: Array<String>) {
         hookChannel?.close()
         runBlocking { claude?.close() }
         adminServer?.close()
-        deviceStore.close()
+        // Before the stores close, so no push worker or reader touches a closed connection.
         scope.cancel()
+        deviceStore.close()
         eventLog.close()
     }
+}
+
+/**
+ * Push (ADR 0010): the registrations for `/devices/me/push`, and the notifier, started. With `RAFIQ_PUSH=0` there is
+ * neither, and the route is left out.
+ */
+internal fun startPush(
+    config: BridgeConfig,
+    deviceStore: DeviceStore,
+    eventLog: EventLog,
+    sessions: SessionManager,
+    scope: CoroutineScope,
+): PushRegistry? {
+    if (!config.push) return null
+    val notifier =
+        PushNotifier(
+            subscribe = eventLog::subscribeAll,
+            threadsOf = eventLog::threads,
+            store = deviceStore,
+            visible = sessions::isVisible,
+            transport = HttpPushSender(),
+            scope = scope,
+        )
+    runBlocking { notifier.start() }
+    return StorePushRegistry(deviceStore)
 }
 
 /** With tmux sessions off none of this exists, so no tmux command runs and no tmux session is listed. */
@@ -174,4 +224,15 @@ private fun warnAboutMissingSettings(config: BridgeConfig) {
     if (config.deviceToken == null) {
         log.warn("RAFIQ_DEVICE_TOKEN is not set. Pair a phone with: rafiq-bridge pair --name <device>")
     }
+    defaultModeWarnings(config).forEach(log::warn)
 }
+
+/**
+ * One warning per agent with no `RAFIQ_DEFAULT_MODES` entry. Its sessions start in whatever mode the agent picks,
+ * which may never ask before edits.
+ */
+internal fun defaultModeWarnings(config: BridgeConfig): List<String> =
+    config.agents.map(AgentSpec::id).filterNot(config.defaultModes::containsKey).map { agent ->
+        "RAFIQ_DEFAULT_MODES has no entry for $agent, so its sessions start in the agent's own default mode, " +
+            "which may never ask before edits. See docs/setup.md, Project folders and permission modes."
+    }

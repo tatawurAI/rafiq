@@ -31,6 +31,15 @@ The Terminal view draws a tmux pane with the following library and the native li
 | ConnectBot termlib | The Terminal view | Apache-2.0 | https://github.com/connectbot/termlib |
 | libvterm, bundled in termlib | Parsing terminal output | MIT | https://www.leonerd.org.uk/code/libvterm/ |
 
+## QR pairing
+
+The bridge draws the pairing QR code, and the app reads it, with the following libraries. They are Gradle dependencies, listed here because the bridge's MIT licensed one asks for its notice to travel with it.
+
+| Library | Used for | Licence | Source |
+|---|---|---|---|
+| QR Code generator library, by Project Nayuki | Drawing the QR code in the terminal | MIT | https://github.com/nayuki/QR-Code-generator |
+| ZXing core | Reading the QR code in the app | Apache-2.0 | https://github.com/zxing/zxing |
+
 ## Gradle dependencies
 
 Licences for Gradle dependencies are listed by a report task added in a later change. This file does not carry a hand-maintained dependency list, because it would drift from `gradle/libs.versions.toml`.

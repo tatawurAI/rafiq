@@ -2,8 +2,13 @@ package ai.tatawur.rafiq.pairing
 
 import ai.tatawur.rafiq.R
 import ai.tatawur.rafiq.client.pairing.CodePairResult
+import ai.tatawur.rafiq.protocol.api.PairingLink
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
+import android.Manifest
+import android.content.pm.PackageManager
 import android.view.View
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,12 +21,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentDataType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDataType
@@ -47,60 +55,133 @@ import kotlinx.coroutines.launch
  * On success it calls [onPaired]. On failure it shows the hint for that kind of failure and keeps what you
  * typed. After the bridge revoked this phone, or an unpair the bridge never heard about, it also says so.
  *
+ * You can scan the QR code `rafiq-bridge pair` prints instead of typing, or open a `rafiq://pair` link. Either one
+ * only fills in the form and shows the server's host name large, and you tap Connect yourself. A QR code on a poster
+ * or a link on a web page could name someone else's server, so nothing pairs without that tap. A host that is not a
+ * `*.ts.net` name gets a warning, since `tailscale serve` always gives your server one.
+ *
  * The code is held only in memory while you type, never in saved instance state.
+ *
+ * @param incomingLink a pairing link the app was opened with, or null. [onLinkUsed] is called once it is in the form.
  */
+@Suppress("LongMethod") // One screen's state, and the scanner or the form that shows it.
 @Composable
 fun PairingScreen(
     pairing: DevicePairing,
     onPaired: () -> Unit,
     modifier: Modifier = Modifier,
+    incomingLink: PairingLink.Parsed? = null,
+    onLinkUsed: () -> Unit = {},
 ) {
     var url by rememberSaveable { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<CodePairResult?>(null) }
     var notSaved by remember { mutableStateOf(false) }
+    var scanning by rememberSaveable { mutableStateOf(false) }
+    var info by remember { mutableStateOf<Int?>(null) }
+    // The link the form was last filled from, until you edit the address.
+    var filledFrom by remember { mutableStateOf<PairingLink.Parsed?>(null) }
     val revoked by pairing.revokedNotice.collectAsState()
     val notice = noticeText(pairing)
     val scope = rememberCoroutineScope()
-    KeepOutOfAutofill()
-    PairingForm(
-        state =
-            PairingFormState(
-                url = url,
-                code = code,
-                busy = busy,
-                notice = notice,
-                hint = if (notSaved) stringResource(R.string.pairing_hint_not_saved) else failure?.let { hintFor(it) },
-            ),
-        onUrlChange = {
-            url = it
-            failure = null
-            notSaved = false
-        },
-        onCodeChange = {
-            code = it
-            failure = null
-            notSaved = false
-        },
-        onDismissNotice = {
-            pairing.dismissRevokedNotice()
-            pairing.dismissUnpairNotice()
-        },
-        onConnect = {
-            busy = true
-            scope.launch {
-                val result = pairOrNull(pairing, url, code)
-                busy = false
-                when {
-                    result is CodePairResult.Paired -> onPaired()
-                    result == null -> notSaved = true
-                    else -> failure = result
-                }
+
+    fun fill(link: PairingLink.Parsed) {
+        url = link.baseUrl
+        code = link.code.uppercase()
+        failure = null
+        notSaved = false
+        info = null
+        filledFrom = link
+    }
+
+    fun connect() {
+        busy = true
+        info = null
+        scope.launch {
+            val result = pairOrNull(pairing, url, code)
+            busy = false
+            when {
+                result is CodePairResult.Paired -> onPaired()
+                result == null -> notSaved = true
+                else -> failure = result
             }
-        },
-        modifier = modifier,
-    )
+        }
+    }
+    LaunchedEffect(incomingLink) {
+        incomingLink?.let {
+            fill(it)
+            onLinkUsed()
+        }
+    }
+    val requestCamera =
+        rememberCameraRequest { granted ->
+            scanning = granted
+            info = if (granted) null else R.string.setup_camera_denied
+        }
+    val hint = if (notSaved) stringResource(R.string.pairing_hint_not_saved) else failure?.let { hintFor(it) }
+    KeepOutOfAutofill()
+    if (scanning) {
+        QrScanner(
+            onScanned = { link ->
+                scanning = false
+                fill(link)
+            },
+            onCancel = { scanning = false },
+            modifier = modifier,
+        )
+    } else {
+        PairingForm(
+            state =
+                PairingFormState(
+                    url = url,
+                    code = code,
+                    busy = busy,
+                    notice = notice,
+                    hint = hint,
+                    info = info?.let { stringResource(it) },
+                    check = filledFrom?.let { LinkCheck(it.host, tailscaleName = it.isTailscaleName) },
+                ),
+            onUrlChange = {
+                url = it
+                filledFrom = null
+                failure = null
+                notSaved = false
+            },
+            onCodeChange = {
+                code = it
+                failure = null
+                notSaved = false
+            },
+            onDismissNotice = {
+                pairing.dismissRevokedNotice()
+                pairing.dismissUnpairNotice()
+            },
+            onConnect = ::connect,
+            onScan = {
+                info = null
+                requestCamera()
+            },
+            modifier = modifier,
+        )
+    }
+}
+
+/**
+ * Returns a function that checks for the camera permission and asks for it when missing, then calls [onResult]. It
+ * is asked only on the tap, so the app never holds the camera for anything but scanning.
+ */
+@Composable
+private fun rememberCameraRequest(onResult: (granted: Boolean) -> Unit): () -> Unit {
+    val context = LocalContext.current
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission(), onResult)
+    return {
+        if (context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            onResult(true)
+        } else {
+            launcher.launch(Manifest.permission.CAMERA)
+        }
+    }
 }
 
 /** Why you are on this screen when it is not a first pairing, or null. */
@@ -154,6 +235,8 @@ private suspend fun pairOrNull(
  *
  * @property hint why the last attempt failed, or null to show none.
  * @property notice why you are on this screen when it is not a first pairing, or null to show none.
+ * @property info a neutral line about the form, such as why the camera is not used, or null.
+ * @property check the server a scan or a link filled in, for you to check before you tap Connect, or null.
  */
 internal data class PairingFormState(
     val url: String,
@@ -161,6 +244,8 @@ internal data class PairingFormState(
     val busy: Boolean = false,
     val notice: String? = null,
     val hint: String? = null,
+    val info: String? = null,
+    val check: LinkCheck? = null,
 )
 
 /** The pairing form itself, stateless so every failure hint can be previewed. */
@@ -172,6 +257,7 @@ internal fun PairingForm(
     onDismissNotice: () -> Unit,
     onConnect: () -> Unit,
     modifier: Modifier = Modifier,
+    onScan: () -> Unit = {},
 ) {
     val spacing = RafiqTheme.spacing
     Column(
@@ -194,6 +280,7 @@ internal fun PairingForm(
             style = MaterialTheme.typography.bodyLarge,
             color = RafiqTheme.colors.textMuted,
         )
+        ScanButton(enabled = !state.busy, onScan = onScan)
         OutlinedTextField(
             value = state.url,
             onValueChange = onUrlChange,
@@ -211,6 +298,10 @@ internal fun PairingForm(
             modifier = Modifier.fillMaxWidth(),
         )
         CodeField(code = state.code, enabled = !state.busy, onCodeChange = onCodeChange)
+        state.check?.let { LinkCheckLines(it) }
+        state.info?.let {
+            Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground)
+        }
         state.hint?.let {
             Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
@@ -221,6 +312,21 @@ internal fun PairingForm(
         ) {
             Text(stringResource(if (state.busy) R.string.pairing_connecting else R.string.pairing_connect))
         }
+    }
+}
+
+/** Opens the QR scanner, the quickest way to pair. */
+@Composable
+private fun ScanButton(
+    enabled: Boolean,
+    onScan: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onScan,
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth().heightIn(min = RafiqTheme.spacing.minTouchTarget),
+    ) {
+        Text(stringResource(R.string.setup_scan_button))
     }
 }
 

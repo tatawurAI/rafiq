@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.io.IOException
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /** The Terminal and approval locks fail closed. */
@@ -46,5 +47,29 @@ class SecuritySettingsTest {
 
             assertTrue(SecuritySettings(unreadable).terminalLock.first())
             assertTrue(SecuritySettings(unreadable).approvalLock.first())
+        }
+
+    @Test
+    fun a_destroyed_approval_key_turns_the_lock_off_and_says_why_until_you_change_it() =
+        runTest {
+            val store =
+                PreferenceDataStoreFactory.create(
+                    scope = backgroundScope,
+                    produceFile = { File(dir, "s.preferences_pb") },
+                )
+            val settings = SecuritySettings(store)
+            settings.setApprovalLock(true)
+
+            settings.approvalLockKeyInvalidated()
+            assertFalse(settings.approvalLock.first())
+            assertTrue(settings.approvalLockReset.first())
+
+            settings.setApprovalLock(true)
+            assertFalse(settings.approvalLockReset.first())
+
+            settings.approvalLockKeyInvalidated()
+            settings.dismissApprovalLockReset()
+            assertFalse(settings.approvalLockReset.first())
+            assertFalse(settings.approvalLock.first(), "dismissing the notice must not turn the lock back on")
         }
 }

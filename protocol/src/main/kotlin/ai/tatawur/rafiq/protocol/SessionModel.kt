@@ -14,7 +14,11 @@ import kotlinx.serialization.Serializable
  * @property terminalAllowed false when the session is listed but the bridge will not open it in Terminal, so the
  *   app hides the Terminal toggle. Only meaningful when [terminal] is true.
  * @property permissionMode the agent's own permission mode, as the agent names it, or null when not known.
- *   The app shows it as a label.
+ *   The app shows it as a label. For a session the bridge started over ACP it is the id of the current mode,
+ *   one of [availableModes].
+ * @property availableModes the modes the agent offers for this session, as the agent advertised them. Empty when
+ *   the agent offers none or the mode cannot be changed from the app, for example in a tmux session. The app
+ *   shows only these, so nothing is hard-coded per agent.
  */
 @Serializable
 data class Session(
@@ -28,6 +32,21 @@ data class Session(
     @SerialName("terminal") val terminal: Boolean = false,
     @SerialName("terminal_allowed") val terminalAllowed: Boolean = true,
     @SerialName("permission_mode") val permissionMode: String? = null,
+    @SerialName("available_modes") val availableModes: List<SessionMode> = emptyList(),
+)
+
+/**
+ * One permission mode an agent offers, for example one that asks before every edit.
+ *
+ * @property id what the app sends back to choose it.
+ * @property name the agent's own short name for it.
+ * @property description the agent's own explanation, or null.
+ */
+@Serializable
+data class SessionMode(
+    @SerialName("id") val id: String,
+    @SerialName("name") val name: String,
+    @SerialName("description") val description: String? = null,
 )
 
 /**

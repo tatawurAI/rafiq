@@ -28,7 +28,8 @@ Each file here records one decision that shapes Rafiq: what prompted it, what we
 | [0007](0007-native-compose-for-fold-and-cover-screen-apis.md) | Native Compose for fold and cover-screen APIs | Accepted |
 | [0008](0008-formatting-by-ktlint-and-detekt.md) | Formatting by ktlint and detekt | Accepted |
 | [0009](0009-tests-earn-their-place.md) | Tests earn their place | Accepted |
-| [0010](0010-push-transport.md) | Push transport | Proposed |
+| [0010](0010-push-transport.md) | Push transport | Accepted |
 | [0011](0011-a-pure-kotlin-client-module-for-app-logic.md) | A pure Kotlin client module for app logic | Accepted |
 | [0012](0012-https-through-tailscale-serve.md) | HTTPS through tailscale serve, with a per-device token | Accepted |
 | [0013](0013-agents-in-tmux.md) | Agents in tmux | Proposed |
+| [0014](0014-a-bridge-config-file-and-first-run-setup.md) | A bridge config file and first-run setup | Accepted |

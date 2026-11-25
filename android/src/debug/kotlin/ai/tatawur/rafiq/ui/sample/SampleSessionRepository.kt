@@ -14,10 +14,13 @@ import ai.tatawur.rafiq.protocol.ApprovalOptionKind
 import ai.tatawur.rafiq.protocol.ContentBlock
 import ai.tatawur.rafiq.protocol.MessageRole
 import ai.tatawur.rafiq.protocol.Session
+import ai.tatawur.rafiq.protocol.SessionMode
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.ToolCallKind
 import ai.tatawur.rafiq.protocol.ToolCallStatus
 import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.ProjectFolderListing
+import ai.tatawur.rafiq.protocol.api.ProjectsOverview
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +89,7 @@ class SampleSessionRepository(
         agent: String,
         projectPath: String,
         title: String?,
+        modeId: String?,
     ): CommandResult<Session> {
         val id = "s-${UUID.randomUUID()}"
         val now = nowMs()
@@ -98,12 +102,48 @@ class SampleSessionRepository(
                 status = AgentState.DONE,
                 createdAtMs = now,
                 updatedAtMs = now,
+                permissionMode = modeId ?: SAMPLE_MODES.first().id,
+                availableModes = SAMPLE_MODES,
             )
         val main = ThreadTab("$id-main", null, ThreadKind.MAIN, "Main", AgentState.DONE, 0)
         val state = SessionScreenState(id, session, listOf(main), mapOf(main.id to emptyList()))
         states.update { it + (id to state) }
         return CommandResult.Ok(session)
     }
+
+    override suspend fun setMode(
+        sessionId: String,
+        modeId: String,
+    ): CommandResult<Unit> {
+        val state = states.value[sessionId]
+        val session = state?.session
+        return when {
+            state == null || session == null -> {
+                CommandResult.NotFound
+            }
+
+            session.availableModes.none { it.id == modeId } -> {
+                CommandResult.Failed("unknown_mode", "The agent does not offer that mode.")
+            }
+
+            else -> {
+                states.update { it + (sessionId to state.copy(session = session.copy(permissionMode = modeId))) }
+                CommandResult.Ok(Unit)
+            }
+        }
+    }
+
+    override suspend fun projects(): CommandResult<ProjectsOverview> =
+        CommandResult.Ok(
+            ProjectsOverview(recent = listOf("/srv/weather-app", "/srv/docs-site"), roots = listOf("/srv")),
+        )
+
+    override suspend fun projectFolders(path: String): CommandResult<ProjectFolderListing> =
+        when (path) {
+            "/srv" -> CommandResult.Ok(ProjectFolderListing(path, listOf("api-server", "docs-site", "weather-app")))
+            "/srv/api-server", "/srv/docs-site", "/srv/weather-app" -> CommandResult.Ok(ProjectFolderListing(path))
+            else -> CommandResult.Failed("outside_project_roots", "That folder is not under a project root.")
+        }
 
     override suspend fun prompt(
         sessionId: String,
@@ -379,3 +419,11 @@ internal object SampleIds {
 val sampleSessionRepository: SampleSessionRepository by lazy {
     SampleSessionRepository(CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
 }
+
+/** Permission modes as an agent might advertise them, for the sample sessions. */
+private val SAMPLE_MODES =
+    listOf(
+        SessionMode("default", "Manual", "Always ask before making changes"),
+        SessionMode("acceptEdits", "Accept edits", "Automatically accept all file edits"),
+        SessionMode("plan", "Plan", "Create a plan before making changes"),
+    )

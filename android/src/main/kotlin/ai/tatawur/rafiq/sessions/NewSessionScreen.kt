@@ -1,9 +1,11 @@
 package ai.tatawur.rafiq.sessions
 
 import ai.tatawur.rafiq.R
+import ai.tatawur.rafiq.client.PathCheck
+import ai.tatawur.rafiq.client.ProjectPickerState
+import ai.tatawur.rafiq.protocol.SessionMode
 import ai.tatawur.rafiq.ui.components.FeedbackBar
 import ai.tatawur.rafiq.ui.theme.RafiqTheme
-import ai.tatawur.rafiq.ui.theme.plexMono
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -49,7 +51,6 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,7 +74,16 @@ fun NewSessionRoute(
                 onBack = onBack,
                 onRetryAgents = viewModel::loadAgents,
                 onSelectAgent = viewModel::selectAgent,
-                onProjectPathChange = viewModel::updateProjectPath,
+                onSelectMode = viewModel::selectMode,
+                project =
+                    ProjectPickerActions(
+                        onChoose = viewModel.project::choose,
+                        onOpen = viewModel.project::open,
+                        onOpenChild = viewModel.project::openChild,
+                        onUp = viewModel.project::up,
+                        onChooseBrowsed = viewModel.project::chooseBrowsed,
+                        onType = viewModel.project::type,
+                    ),
                 onTitleChange = viewModel::updateTitle,
                 onCreate = viewModel::create,
                 onDismissFeedback = viewModel::dismissFeedback,
@@ -83,7 +93,7 @@ fun NewSessionRoute(
 }
 
 /**
- * Pick an agent, give the project folder on your server and an optional title, then start. The
+ * Pick an agent, a project folder on your server, the mode to start in and an optional title, then start. The
  * form scrolls while "Start session" stays at the bottom, above the keyboard when it is up, with
  * the reason it is disabled underneath.
  */
@@ -109,6 +119,8 @@ fun NewSessionScreen(
         ) {
             FormHeader(actions.onBack)
             AgentPicker(state, actions)
+            ProjectPicker(state.project, actions.project, newSessionFieldColors())
+            StartingModePicker(state.modeChoices, state.modeId, actions.onSelectMode)
             FormFields(state, actions)
             FeedbackBar(state.feedback, actions.onDismissFeedback)
         }
@@ -135,30 +147,13 @@ fun NewSessionScreen(
     }
 }
 
-/** The project folder and title fields, each with a label that stays and a line of help. */
+/** The title field, with a label that stays and a line of help. */
 @Composable
 private fun FormFields(
     state: NewSessionUiState,
     actions: NewSessionActions,
 ) {
-    val fieldColors = formFieldColors()
-    OutlinedTextField(
-        value = state.projectPath,
-        onValueChange = actions.onProjectPathChange,
-        modifier = Modifier.fillMaxWidth(),
-        label = { Text(stringResource(R.string.new_session_project)) },
-        placeholder = { Text(stringResource(R.string.new_session_project_hint)) },
-        supportingText = { Text(stringResource(R.string.new_session_project_help)) },
-        textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = plexMono),
-        singleLine = true,
-        keyboardOptions =
-            KeyboardOptions(
-                autoCorrectEnabled = false,
-                keyboardType = KeyboardType.Uri,
-                imeAction = ImeAction.Next,
-            ),
-        colors = fieldColors,
-    )
+    val fieldColors = newSessionFieldColors()
     OutlinedTextField(
         value = state.title,
         onValueChange = actions.onTitleChange,
@@ -177,10 +172,12 @@ private fun blockerText(blocker: StartBlocker): Int =
         StartBlocker.STARTING -> R.string.new_session_starting
         StartBlocker.NO_AGENT -> R.string.new_session_needs_agent
         StartBlocker.NO_PROJECT -> R.string.new_session_needs_project
+        StartBlocker.CHECKING_PROJECT -> R.string.new_session_checking_project
+        StartBlocker.BAD_PROJECT -> R.string.new_session_bad_project
     }
 
 @Composable
-private fun formFieldColors(): TextFieldColors {
+internal fun newSessionFieldColors(): TextFieldColors {
     val colors = RafiqTheme.colors
     return OutlinedTextFieldDefaults.colors(
         focusedBorderColor = colors.accent,
@@ -299,9 +296,17 @@ private fun NewSessionTallPreview() {
         Surface(color = MaterialTheme.colorScheme.background) {
             NewSessionScreen(
                 NewSessionUiState(
-                    agents = listOf("claude-code", "codex"),
+                    agents = listOf("claude-code"),
                     agent = "claude-code",
-                    projectPath = "/srv/weather-app",
+                    project =
+                        ProjectPickerState(
+                            recent = listOf("/srv/weather-app", "/srv/docs-site"),
+                            roots = listOf("/srv"),
+                            path = "/srv/weather-app",
+                            check = PathCheck.Folder,
+                        ),
+                    modeChoices = listOf(SessionMode("default", "Manual", "Always ask before making changes")),
+                    modeId = "default",
                 ),
                 NewSessionActions(),
             )
@@ -315,7 +320,7 @@ private fun NewSessionCoverPreview() {
     RafiqTheme {
         Surface(color = MaterialTheme.colorScheme.background) {
             NewSessionScreen(
-                NewSessionUiState(agents = listOf("claude-code", "codex"), agent = "claude-code"),
+                NewSessionUiState(agents = listOf("claude-code"), agent = "claude-code"),
                 NewSessionActions(),
             )
         }

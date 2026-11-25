@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Push notifications, their actions, the Approve screen and the approval lock key. The push lane owns them. -->
+<resources>
+  <!-- Notification channels, as Android's notification settings list them. -->
+  <string name="push_channel_approvals">Approvals</string>
+  <string name="push_channel_approvals_detail">An agent asks before it runs a command or edits a file.</string>
+  <string name="push_channel_turns">Finished turns</string>
+  <string name="push_channel_turns_detail">An agent finished and waits for your next message.</string>
+  <string name="push_channel_errors">Errors</string>
+  <string name="push_channel_errors_detail">A session stopped with an error.</string>
+  <string name="push_channel_status">Answers from notifications</string>
+  <string name="push_channel_status_detail">Whether an answer you sent from a notification reached your server.</string>
+
+  <!-- The notifications. The lock screen shows only push_public_text. -->
+  <string name="push_public_text">An agent needs you</string>
+  <string name="push_approval_title">%1$s needs you</string>
+  <plurals name="push_approval_more">
+    <item quantity="one">%1$d line. Tap Approve to read all of it.</item>
+    <item quantity="other">%1$d lines. Tap Approve to read all of it.</item>
+  </plurals>
+  <string name="push_turn_title">%1$s finished</string>
+  <string name="push_turn_text">Waiting for your next message.</string>
+  <string name="push_error_title">%1$s stopped with an error</string>
+  <string name="push_error_text">Open the session to see what happened.</string>
+  <string name="push_generic_approval">An agent needs you. Open Rafiq to answer.</string>
+  <string name="push_generic_turn">An agent finished its turn.</string>
+  <string name="push_generic_error">A session stopped with an error.</string>
+
+  <!-- Notification actions and what they report back. -->
+  <string name="push_action_approve">Approve</string>
+  <string name="push_action_deny">Deny</string>
+  <string name="push_action_reply">Reply</string>
+  <string name="push_reply_hint">Message to the agent</string>
+  <string name="push_result_already_answered">Already answered</string>
+  <string name="push_result_unreachable">Your server could not be reached. Open Rafiq to try again.</string>
+  <string name="push_result_busy">The agent is busy. Open Rafiq to send it when it is free.</string>
+  <string name="push_result_failed">Your server did not take it: %1$s</string>
+  <string name="push_result_sent">Sent</string>
+
+  <!-- The Approve screen, opened from a notification after you unlock your phone. -->
+  <string name="approve_loading">Asking your server for the approval</string>
+  <string name="approve_session">In %1$s</string>
+  <string name="approve_full_command">The full request</string>
+  <string name="approve_already_answered">Already answered. Nothing was sent.</string>
+  <string name="approve_unreachable">Your server could not be reached. Nothing was sent.</string>
+  <string name="approve_retry">Try again</string>
+  <string name="approve_close">Close</string>
+  <string name="approve_unlock_title">Answer the approval</string>
+  <string name="approve_unlock_subtitle">Confirm it is you before Rafiq answers on your server</string>
+
+  <!-- The approval lock's key (issue #14). -->
+  <string name="settings_approval_lock_detail">An approval lets the agent run a command on your server. With this on, approving needs a fingerprint, unless you unlocked your phone with one in the last 30 seconds. Adding a new fingerprint turns it off until you turn it on again.</string>
+  <string name="approval_lock_reset">Your phone\'s fingerprints or face changed, so the approval lock turned off and nothing was sent. Turn it on again in Settings to keep it.</string>
+  <string name="approval_lock_reset_short">The approval lock turned off because your phone\'s fingerprints or face changed. Turn it on again to keep it.</string>
+  <string name="approval_lock_not_created">This phone could not make the approval lock\'s key, so the lock stays off.</string>
+
+  <!-- Settings: notifications and the push distributor. -->
+  <string name="push_settings_title">Notifications</string>
+  <string name="push_distributor_unknown">Your push app</string>
+  <string name="push_status_not_paired">Pair with your server first.</string>
+  <string name="push_status_no_distributor">Notifications need a UnifiedPush app on your phone. Install ntfy, then come back and tap Set up.</string>
+  <string name="push_status_choose">More than one push app is installed. Choose the one Rafiq should use.</string>
+  <string name="push_status_waiting">Setting up with %1$s.</string>
+  <string name="push_status_waiting_unknown">Setting up.</string>
+  <string name="push_status_ready">On, through %1$s.</string>
+  <string name="push_status_action_required">%1$s needs you to do something in its own app first.</string>
+  <string name="push_status_vapid">%1$s asks for a key Rafiq does not send. Use ntfy instead.</string>
+  <string name="push_status_failed">%1$s did not set up push. Tap Set up to try again.</string>
+  <string name="push_status_refused">Your server refused this phone\'s push address: %1$s</string>
+  <string name="push_status_offline">Your server could not be reached. Rafiq tries again when the network is back.</string>
+  <string name="push_notifications_blocked">Notifications are off for Rafiq.</string>
+  <string name="push_allow_notifications">Allow notifications</string>
+  <string name="push_get_ntfy">Get ntfy</string>
+  <string name="push_set_up">Set up</string>
+  <string name="push_choose">Choose a push app</string>
+  <string name="push_battery_rafiq">Let Rafiq fetch details in the background</string>
+  <string name="push_battery_rafiq_detail">Without this, a sleeping phone may show only \"An agent needs you\" instead of the request.</string>
+  <string name="push_battery_distributor">Let %1$s run in the background</string>
+  <string name="push_battery_distributor_detail">Pushes arrive through %1$s. Open its settings and set battery use to Unrestricted, so pushes are not held back while your phone sleeps.</string>
+  <string name="push_battery_open">Open settings</string>
+</resources>

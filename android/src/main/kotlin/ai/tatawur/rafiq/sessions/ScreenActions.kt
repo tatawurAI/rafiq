@@ -97,6 +97,7 @@ import kotlinx.coroutines.launch
  *
  * @property viewToggle the Chat and Terminal toggle, or null when Terminal is not offered here.
  * @property onOpenHooks opens the hook setup for a session in tmux, or null for any other session.
+ * @property onSetMode switches the permission mode, to one of the session's available modes.
  */
 @Immutable
 data class SessionActions(
@@ -115,6 +116,7 @@ data class SessionActions(
     val onOpenHooks: (() -> Unit)? = null,
     val onDismissHooksOffer: () -> Unit = {},
     val onDismissRefusal: () -> Unit = {},
+    val onSetMode: (modeId: String) -> Unit = {},
 )
 
 /**
@@ -141,13 +143,25 @@ data class SessionListActions(
     val onPairAgain: () -> Unit = {},
 )
 
+/** What the project folder part of "New session" can ask for. Previews pass the no-op defaults. */
+@Immutable
+data class ProjectPickerActions(
+    val onChoose: (path: String) -> Unit = {},
+    val onOpen: (path: String) -> Unit = {},
+    val onOpenChild: (name: String) -> Unit = {},
+    val onUp: () -> Unit = {},
+    val onChooseBrowsed: () -> Unit = {},
+    val onType: (String) -> Unit = {},
+)
+
 /** What the "New session" form can ask its state holder or the navigation to do. */
 @Immutable
 data class NewSessionActions(
     val onBack: () -> Unit = {},
     val onRetryAgents: () -> Unit = {},
     val onSelectAgent: (String) -> Unit = {},
-    val onProjectPathChange: (String) -> Unit = {},
+    val onSelectMode: (modeId: String?) -> Unit = {},
+    val project: ProjectPickerActions = ProjectPickerActions(),
     val onTitleChange: (String) -> Unit = {},
     val onCreate: () -> Unit = {},
     val onDismissFeedback: () -> Unit = {},

@@ -212,7 +212,7 @@ internal fun SessionHeader(
                 tint = RafiqTheme.colors.text,
             )
         }
-        HeaderTitle(state, windowLabel, Modifier.weight(1f), onWindowLabelClick)
+        HeaderTitle(state, windowLabel, Modifier.weight(1f), onWindowLabelClick, actions.onSetMode)
         actions.viewToggle?.let { ChatTerminalToggle(it) }
         if (actions.viewToggle?.terminal != true && thread != null && thread.status == AgentState.WORKING) {
             IconButton(onClick = { actions.onCancel(thread.id) }) {
@@ -263,6 +263,7 @@ private fun HeaderTitle(
     windowLabel: String?,
     modifier: Modifier = Modifier,
     onWindowLabelClick: (() -> Unit)? = null,
+    onSetMode: (String) -> Unit = {},
 ) {
     val spacing = RafiqTheme.spacing
     val session = state.screen.session
@@ -294,9 +295,11 @@ private fun HeaderTitle(
                         session.agent,
                         stringResource(sessionStatusLabel(session.status, state.mainHasMessages)),
                     )
+                // A session the bridge runs over ACP offers its modes, so the label becomes a switcher.
+                val switchable = session.availableModes.isNotEmpty()
                 Text(
                     text =
-                        session.permissionMode?.let { mode ->
+                        session.permissionMode?.takeUnless { switchable }?.let { mode ->
                             stringResource(
                                 R.string.session_subtitle,
                                 subtitle,
@@ -307,7 +310,9 @@ private fun HeaderTitle(
                     color = RafiqTheme.colors.textMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                if (switchable) ModeSwitcher(session.permissionMode, session.availableModes, onSetMode)
             }
         }
     }

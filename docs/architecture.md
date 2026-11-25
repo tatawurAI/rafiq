@@ -49,7 +49,7 @@ The code is Kotlin on both ends, built by one Gradle build. A shared `:protocol`
 | Phone to server network | Tailscale (WireGuard) | Private, stable address from anywhere. No public ports. |
 | Phone to bridge | WebSocket, JSON events | Streams tokens and events down. Prompts and approvals go up. |
 | Bridge to agents | ACP over stdio | The bridge launches each agent's ACP adapter (for example `claude-agent-acp` or `codex-acp`) as a local process. |
-| Bridge to phone, app closed | Push (transport undecided, see [ADR 0010](adr/0010-push-transport.md)) | "Agent needs you" pings. Tapping one reopens the socket. |
+| Bridge to phone, app closed | UnifiedPush, through a distributor such as ntfy, encrypted with RFC 8291 (see [ADR 0010](adr/0010-push-transport.md)) | "Agent needs you" pings. Tapping one reopens the socket. |
 | Phone to dev servers | HTTP over Tailscale, `tailscale serve` for HTTPS | Live previews of what the agent builds. |
 | Admin fallback | SSH | Out-of-band repair when the bridge is down. |
 
@@ -111,12 +111,17 @@ The health, session, summary, agent, thread, prompt, cancel, approval and event 
 | `WS /events?session=&after=` | Stream a session's events, replaying from sequence `after` |
 | `WS /terminal?session=` | Mirror a tmux session's pane and take your keys. Exists only when Terminal is on. See [Terminal](#terminal). |
 | `GET /terminal/history?session=&window=&lines=` | Read-only scrollback of a pane of an allowed tmux session. Exists only when Terminal is on. See [Terminal](#terminal). |
-| `POST /sessions` | Start a session (agent, project) |
+| `POST /sessions` | Start a session (agent, project, and optionally `mode_id`, one of the permission modes the agent advertises). Without `mode_id` the session starts in the agent's entry of `RAFIQ_DEFAULT_MODES`. A mode the agent does not offer is 400 `unknown_mode`. A configured default it does not offer is 409 `default_mode_unavailable`, and the session is not started. |
+| `POST /sessions/{id}/mode` | Switch a session's permission mode. Logged as `session_updated`, which carries `permission_mode` and `available_modes`. An unknown mode is 400 `unknown_mode`. A tmux session is 409 `mode_not_supported`. A resumed session gets its mode back before the next prompt. If the agent refuses it, the session is errored and stopped, and the prompt gets 409 `mode_not_restored`. |
+| `GET /projects` | Recent project folders, newest first and only those that still exist, and the roots from `RAFIQ_PROJECT_ROOTS` |
+| `GET /projects/folders?path=` | The folders directly inside a folder under a root, sorted, without hidden ones, capped at 500. A path outside every root, by `..` or a symlink too, is 403 `outside_project_roots`. A missing folder or a file is 404 `not_a_folder`. Names only, never file contents. |
 | `GET /sessions` | List sessions. With Terminal on, this includes the allowed tmux sessions. |
 | `GET /sessions/summaries` | List sessions with what the session list shows: the newest event `seq`, a one-line preview of the newest agent or user message on the main thread, and the approvals still open, oldest first. Read from small summary tables kept with the log, so polling it is cheap. |
 | `GET /agents` | The agents you can start a session with, as `{"id": ...}` objects |
 | `POST /pair` | Trade a pairing code for this phone's device token. Needs no token, because it is where a phone gets one. Host and origin checks still apply. A wrong, expired or used code is 401 `invalid_pairing_code`. After 100 wrong codes in five minutes, every attempt is 429 `too_many_attempts` with `Retry-After`. |
 | `DELETE /devices/me` | Revoke the calling device and close its open sockets. Answers 204. Used when you unpair in the app. It cannot affect another device. |
+| `PUT /devices/me/push` | Register where the calling device's pushes go: its UnifiedPush endpoint and Web Push keys (`endpoint`, `p256dh`, `auth`). Replaces an earlier one. Answers 204. A bad endpoint or key is 400 `invalid_push_registration`. Exists unless `RAFIQ_PUSH=0`. See [Push](#push). |
+| `DELETE /devices/me/push` | Stop pushes to the calling device. Answers 204. Exists unless `RAFIQ_PUSH=0`. |
 | `GET /sessions/{id}/threads` | List a session's threads |
 | `POST /sessions/{id}/prompt` | Send a prompt. Prompts go to the main thread, and a helper thread is refused. For a tmux session the send guard decides first: a refusal is `409` with a `SendRefusal` code, and what happens next comes as `prompt_delivery` events matched by `client_id`. See [Chat for tmux sessions](#chat-for-tmux-sessions). |
 | `POST /sessions/{id}/threads/{threadId}/cancel` | Stop the current turn on a thread |
@@ -216,6 +221,18 @@ Each phone is a device with its own token. The bridge keeps devices and one-time
 
 This does not cover anyone with a shell as the bridge's user. See [SECURITY.md](../SECURITY.md) and ADR 0012.
 
+### Push
+
+When an agent needs you and the app is closed, the bridge sends a push through UnifiedPush. See [ADR 0010](adr/0010-push-transport.md).
+
+- **Registration.** The app sends its distributor's endpoint and a Web Push key pair with `PUT /devices/me/push`. The bridge accepts only an `https` endpoint with a host and no user name or password, up to 1024 characters, a P-256 public key that lies on the curve, and a 16-byte auth secret. It keeps one registration per device in `rafiq.db`. Revoking the device deletes it in the same transaction.
+- **What pushes.** The notifier reads every session's live events. An approval opening pushes `approval`, and its answer pushes `approval_cleared`. The main thread stopping after a turn it was seen working on pushes `turn_done`, once it has stayed stopped for 3 seconds. A session or thread that fails pushes `error` when the notifier saw it in some other state first, once per turn. Only changes the notifier saw happen count, so the events a restart writes about the past never push. One result: an approval opened before a bridge restart and answered after it gets no `approval_cleared`, so its notification stays on your phone until you open it.
+- **Who gets it.** Every active device with a registration, for a session the bridge lists.
+- **The payload.** A `PushPayload` with ids and a kind only, encrypted for the phone with RFC 8291 (`aes128gcm`), so the push service sees neither. The app fetches what it shows from the bridge.
+- **Sending.** `https` only, no redirects, 5 second timeouts, a bound on the whole exchange, and the response body is never read. Every payload is padded to a multiple of 256 bytes before encryption, so its length does not give away its kind. A longer payload takes the next multiple and is never dropped. `TTL` is one hour, and approvals go with `Urgency: high`. A 404 or 410 deletes the registration. Other failures are tried up to three times with backoff. Each device gets at most 30 turn and error pushes a minute, and separately at most 120 approvals and clearings a minute. The endpoint is never logged.
+- **Registering without a device.** A caller that is not an active paired device, such as the shared `RAFIQ_DEVICE_TOKEN` on its own, gets 409 `device_not_registered`, and nothing is stored.
+- **Off switch.** `RAFIQ_PUSH=0` leaves out the routes and the notifier.
+
 ### Auth relay
 
 Agents sometimes need you to sign in to a provider. The bridge handles two kinds of flow:
@@ -232,7 +249,7 @@ The bridge watches for new listening ports under a session's processes. When one
 - SQLite holds sessions, threads and the event log, plus two small summary tables (the newest message preview and the open approvals per session) written in the same transaction as each event.
 - Tailscale ACLs restrict the bridge's port to your devices. Each phone has a device token of its own, checked against the device store on every request and every socket handshake. The `Host` header must be the bind address, `localhost` or a listed name (421 otherwise), and a request with a foreign `Origin` is refused, so a web page cannot reach the bridge through DNS rebinding. See [Devices and tokens](#devices-and-tokens) for pairing and revoking. See [ADR 0012](adr/0012-https-through-tailscale-serve.md), and [setup.md](setup.md) for the `tailscale serve` steps.
 - The file API refuses paths outside the session's project root.
-- Approvals require a fresh biometric check on the phone.
+- With the approval lock on, answering an approval needs a Keystore key that works only within 30 seconds of a strong biometric check, including the fingerprint that unlocked your phone. Adding a fingerprint or face destroys the key and turns the lock off until you turn it on again.
 - Push payloads carry ids and short status only.
 
 For the vulnerability policy, see [SECURITY.md](../SECURITY.md).
@@ -250,9 +267,9 @@ The app is native Kotlin and Jetpack Compose, installed directly (no Play Store)
 | Concurrency | Kotlin coroutines and Flow |
 | Offline history | Room cache |
 | Device token | Android Keystore |
-| Approval check | BiometricPrompt |
+| Approval check | BiometricPrompt and a Keystore key with a 30 s window |
 | Fold posture | Jetpack WindowManager |
-| Push | FCM or ntfy (undecided, see [ADR 0010](adr/0010-push-transport.md)) |
+| Push | UnifiedPush through ntfy, see [ADR 0010](adr/0010-push-transport.md) |
 | Content | Markdown and syntax highlighting, diff view, in-app browser |
 
 ### Screens

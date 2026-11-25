@@ -1,6 +1,7 @@
 package ai.tatawur.rafiq.bridge.sessions
 
 import ai.tatawur.rafiq.bridge.agent.AgentAdapter
+import ai.tatawur.rafiq.bridge.agent.AgentModes
 import ai.tatawur.rafiq.bridge.agent.AgentSession
 import ai.tatawur.rafiq.bridge.agent.AgentUnavailableException
 import ai.tatawur.rafiq.bridge.agent.TurnInProgressException
@@ -58,6 +59,10 @@ import kotlin.time.Duration.Companion.seconds
  * @param scope owns the work that collects each live session's updates. Cancel it to stop them.
  * @param ioDispatcher runs the file system checks on project folders.
  * @param tmuxChat Chat for tmux sessions, or null when the bridge has no tmux reader.
+ * @param onStored runs after a new session is stored and before it is published. Tests use it to hold that
+ *   moment open; the bridge passes nothing.
+ * @param defaultModes the permission mode, by agent id, that a session starts in when the request names none.
+ *   From `RAFIQ_DEFAULT_MODES`. An agent with no entry starts in whatever mode the agent itself picks.
  */
 @Suppress("TooManyFunctions") // One operation per route plus the helpers they share; splitting would scatter one flow.
 class SessionManager(
@@ -69,9 +74,17 @@ class SessionManager(
     private val visibility: (sessionId: String) -> Boolean = { !isTmuxSessionId(it) },
     private val tmuxChat: TmuxChat? = null,
     private val present: (Session) -> Session = { it },
+    defaultModes: Map<String, String> = emptyMap(),
+    private val onStored: suspend (sessionId: String) -> Unit = {},
 ) {
+    private val modeRules = ModeRules(defaultModes)
     private val adaptersById = adapters.associateBy(AgentAdapter::agentId)
     private val live = ConcurrentHashMap<String, LiveSession>()
+
+    /** Sessions attached to their agent but not yet published to [live], so [shutdown] still stops them. */
+    private val settingUp = ConcurrentHashMap<String, LiveSession>()
+
+    @Volatile private var stopping = false
     private val resumeLocks = ConcurrentHashMap<String, Mutex>()
     private val approvals = ConcurrentHashMap<String, PendingApproval>()
 
@@ -96,47 +109,132 @@ class SessionManager(
     /**
      * Starts a session for [agent] in [projectPath] and returns it.
      *
-     * @throws SessionException.Invalid when the agent is not configured or the folder does not exist.
-     * @throws SessionException.Conflict when the agent cannot start.
+     * The session starts in [modeId], or with none named in the agent's entry of [defaultModes]. The mode is
+     * set before the session is logged, so the agent never runs a turn in the mode it picked itself.
+     *
+     * @throws SessionException.Invalid when the agent is not configured, the folder does not exist, or the
+     *   agent does not offer [modeId] (`unknown_mode`).
+     * @throws SessionException.Conflict when the agent cannot start, or does not offer the configured default
+     *   mode (`default_mode_unavailable`). The agent is stopped again in both cases.
      */
     suspend fun create(
         agent: String,
         projectPath: String,
         title: String?,
+        modeId: String? = null,
     ): Session {
         val adapter =
             adaptersById[agent]
                 ?: throw SessionException.Invalid("unknown_agent", "No agent named '$agent' is configured.")
-        val directory = existingDirectory(projectPath)
+        val directory = existingDirectory(projectPath, ioDispatcher)
         val sessionId = "ses_" + UUID.randomUUID().toString().replace("-", "")
         val agentSession = unavailableAsConflict { adapter.start(sessionId, directory) }
         // Collection starts now, because the agent's updates are hot: anything it reports while the
         // rows below are written waits in the buffer and is logged after them.
         val liveSession = attach(sessionId, agentSession)
-        val now = clock.millis()
-        val session =
-            Session(
-                id = sessionId,
-                agent = agent,
-                projectPath = directory.toString(),
-                title = title?.takeIf { it.isNotBlank() } ?: directory.fileName?.toString() ?: "Session",
-                status = AgentState.DONE,
-                createdAtMs = now,
-                updatedAtMs = now,
-            )
-        val mainThread =
-            AgentThread(
-                id = agentSession.mainThreadId,
-                sessionId = sessionId,
-                kind = ThreadKind.MAIN,
-                title = session.title,
-                status = AgentState.DONE,
-            )
-        guardingTheAttachedSession(sessionId, liveSession) {
-            log.createSession(session, agentSession.agentSessionRef, mainThread)
-            liveSession.job.start()
+        // Held from before the row is written until the session is published, so a request that sees the new
+        // session in the log waits here and then finds it live, instead of resuming a second agent for it.
+        val lock = resumeLocks.computeIfAbsent(sessionId) { Mutex() }
+        try {
+            lock.withLock { setUpNewSession(sessionId, liveSession, agentSession, agent, directory, title, modeId) }
+        } finally {
+            resumeLocks.remove(sessionId, lock)
         }
-        return session
+        return log.session(sessionId)?.session ?: error("Session $sessionId was not stored.")
+    }
+
+    @Suppress("LongParameterList") // The parts of create that run under the session's lock.
+    private suspend fun setUpNewSession(
+        sessionId: String,
+        liveSession: LiveSession,
+        agentSession: AgentSession,
+        agent: String,
+        directory: Path,
+        title: String?,
+        modeId: String?,
+    ) {
+        guardingTheAttachedSession(sessionId, liveSession) {
+            modeRules.startingMode(agent, modeId, agentSession.modes.value)?.let { mode ->
+                unavailableAsConflict { agentSession.setMode(mode) }
+            }
+            val now = clock.millis()
+            val modes = agentSession.modes.value
+            val session =
+                Session(
+                    id = sessionId,
+                    agent = agent,
+                    projectPath = directory.toString(),
+                    title = title?.takeIf { it.isNotBlank() } ?: directory.fileName?.toString() ?: "Session",
+                    status = AgentState.DONE,
+                    createdAtMs = now,
+                    updatedAtMs = now,
+                    permissionMode = modes.currentModeId,
+                    availableModes = modes.available,
+                )
+            val mainThread =
+                AgentThread(
+                    id = agentSession.mainThreadId,
+                    sessionId = sessionId,
+                    kind = ThreadKind.MAIN,
+                    title = session.title,
+                    status = AgentState.DONE,
+                )
+            // No row for a session that cannot go live, so a refused create leaves nothing to resume.
+            if (stopping) throw bridgeStopping()
+            log.createSession(session, agentSession.agentSessionRef, mainThread)
+            onStored(sessionId)
+            publish(sessionId, liveSession)
+        }
+    }
+
+    /**
+     * Switches the session's permission mode to [modeId]. A session that is not live is resumed first. The
+     * change is logged as a [EventPayload.SessionUpdated] before this returns.
+     *
+     * @throws SessionException.NotFound when there is no such session.
+     * @throws SessionException.Invalid when the session does not offer [modeId] (`unknown_mode`).
+     * @throws SessionException.Conflict for a tmux session (`mode_not_supported`), or when the agent cannot
+     *   resume or refuses the change.
+     */
+    suspend fun setMode(
+        sessionId: String,
+        modeId: String,
+    ) {
+        val stored = requireSession(sessionId)
+        ModeRules.requireOffered(sessionId, stored.session.availableModes, modeId)
+        val agentSession = liveSession(sessionId).agentSession
+        // The modes can differ after a resume, so the live agent has the final say.
+        ModeRules.requireOffered(sessionId, agentSession.modes.value.available, modeId)
+        unavailableAsConflict { agentSession.setMode(modeId) }
+        recordModes(sessionId, agentSession.modes.value)
+    }
+
+    /**
+     * Logs each mode the agent reports until cancelled. A failure to log stops only this watcher: the session's
+     * own logging reports a broken log, and an uncaught failure here would end the session for it.
+     */
+    @Suppress("TooGenericExceptionCaught") // Logged and dropped; cancellation is rethrown.
+    private suspend fun watchModes(
+        sessionId: String,
+        agentSession: AgentSession,
+    ) {
+        try {
+            agentSession.modes.collect { recordModes(sessionId, it) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            logger.error("Could not log a mode change for session {}.", sessionId, failure)
+        }
+    }
+
+    /** Logs a mode change, once: the stored session is compared first, so a repeat of the same modes logs nothing. */
+    private suspend fun recordModes(
+        sessionId: String,
+        modes: AgentModes,
+    ) {
+        log.updateSession(sessionId) {
+            it.copy(permissionMode = modes.currentModeId, availableModes = modes.available)
+        }
     }
 
     /**
@@ -344,7 +442,13 @@ class SessionManager(
      * Their logs stay, and they resume on the next prompt after a restart.
      */
     suspend fun shutdown() {
-        val sessions = live.entries.map { it.key to it.value }
+        stopping = true
+        // Setting-up sessions are read first: one that is published meanwhile is then in [live] below.
+        val sessions =
+            (settingUp.entries.map { it.key to it.value } + live.entries.map { it.key to it.value })
+                // A session being published can be in both for a moment. It is stopped and reported once.
+                .distinctBy { it.first }
+        settingUp.clear()
         live.clear()
         approvals.clear()
         turnsInFlight.clear()
@@ -393,7 +497,8 @@ class SessionManager(
 
     /**
      * Starts collecting [agentSession]'s updates into a buffer straight away, and returns the live
-     * session whose [LiveSession.job] logs them. The job starts only when the caller says so.
+     * session whose [LiveSession.job] logs them. Other requests cannot see it, and the job does not start,
+     * until the caller calls [publish].
      */
     private fun attach(
         sessionId: String,
@@ -408,10 +513,14 @@ class SessionManager(
                     .collect { buffer.trySend(it) }
             }
         val liveSession = LiveSession(agentSession, collector, buffer)
+        settingUp[sessionId] = liveSession
         liveSession.job =
             scope.launch(start = CoroutineStart.LAZY) {
+                // A mode the agent switches to on its own, such as leaving a planning mode, is logged as it comes.
+                val modeWatcher = launch { watchModes(sessionId, agentSession) }
                 try {
                     val failure = drain(sessionId, liveSession, buffer)
+                    modeWatcher.cancel()
                     if (live.remove(sessionId, liveSession)) {
                         forget(sessionId)
                         // The adapter reports the exit itself, with the code. The bridge only has to
@@ -423,7 +532,6 @@ class SessionManager(
                     withContext(NonCancellable) { liveSession.stop() }
                 }
             }
-        live[sessionId] = liveSession
         return liveSession
     }
 
@@ -630,16 +738,69 @@ class SessionManager(
             if (agentSession.agentSessionRef != agentSessionRef) {
                 log.updateAgentSessionRef(session.id, agentSession.agentSessionRef)
             }
+            restoreMode(session, agentSession)
             val mainThread = log.threads(session.id).firstOrNull { it.kind == ThreadKind.MAIN }
             record(
                 session.id,
                 null,
                 EventPayload.StatusChanged(threadId = mainThread?.id, state = AgentState.DONE, detail = "Resumed."),
             )
-            liveSession.job.start()
+            publish(session.id, liveSession)
         }
         return liveSession
     }
+
+    /**
+     * A resumed agent can come back in the mode it picks itself, which may never ask. The mode the session had
+     * is set again before any prompt reaches the agent. When that cannot be done, the session is errored and
+     * stopped rather than left running in a mode you did not choose.
+     *
+     * @throws SessionException.Conflict with `mode_not_restored` when the mode could not be set again.
+     */
+    private suspend fun restoreMode(
+        session: Session,
+        agentSession: AgentSession,
+    ) {
+        val wanted =
+            modeRules
+                .storedOrDefault(session)
+                ?.takeIf { it != agentSession.modes.value.currentModeId } ?: return
+        val failure =
+            try {
+                agentSession.setMode(wanted)
+                return
+            } catch (refused: AgentUnavailableException) {
+                refused
+            } catch (notOffered: IllegalArgumentException) {
+                notOffered
+            }
+        val detail = "The agent came back in another permission mode and refused '$wanted', so the session stopped."
+        record(session.id, null, EventPayload.StatusChanged(threadId = null, state = AgentState.ERROR, detail = detail))
+        throw SessionException.Conflict(ModeRules.MODE_NOT_RESTORED, detail, failure)
+    }
+
+    /**
+     * Makes the session reachable by other requests and starts logging it. Called only once the session is
+     * fully set up, its mode included, so a second request can never reach an agent still in its own mode.
+     */
+    private suspend fun publish(
+        sessionId: String,
+        liveSession: LiveSession,
+    ) {
+        if (stopping) {
+            // The row is already written. It says it was interrupted, so it is not left as a clean session.
+            log.session(sessionId)?.let {
+                record(sessionId, null, EventPayload.StatusChanged(null, AgentState.ERROR, SHUTDOWN_WHILE_STARTING))
+            }
+            throw bridgeStopping()
+        }
+        // Into [live] before out of [settingUp], so shutdown never misses it in between.
+        live[sessionId] = liveSession
+        settingUp.remove(sessionId, liveSession)
+        liveSession.job.start()
+    }
+
+    private fun bridgeStopping() = SessionException.Conflict("bridge_stopping", "The bridge is shutting down.")
 
     /** Runs [block], and if it fails ends the attached session so no process or buffer is left behind. */
     @Suppress("TooGenericExceptionCaught") // Rethrown after the half-started session is cleaned up.
@@ -652,6 +813,7 @@ class SessionManager(
             block()
         } catch (failure: Throwable) {
             withContext(NonCancellable) {
+                settingUp.remove(sessionId, liveSession)
                 live.remove(sessionId, liveSession)
                 liveSession.job.cancel()
                 liveSession.stop()
@@ -701,32 +863,9 @@ class SessionManager(
             )
         }
 
-    private suspend fun existingDirectory(raw: String): Path {
-        val path =
-            try {
-                Path.of(raw)
-            } catch (invalid: InvalidPathException) {
-                throw SessionException.Invalid("invalid_project_path", "project_path is not a valid path.", invalid)
-            }
-        val real =
-            withContext(ioDispatcher) {
-                if (path.isAbsolute &&
-                    Files.isDirectory(path)
-                ) {
-                    path.toRealPath()
-                } else {
-                    null
-                }
-            }
-        return real
-            ?: throw SessionException.Invalid(
-                "invalid_project_path",
-                "project_path must be an absolute path to an existing folder.",
-            )
-    }
-
     private companion object {
         val SHUTDOWN_BUDGET = 10.seconds
+        const val SHUTDOWN_WHILE_STARTING = "Interrupted by a bridge shutdown while it was starting."
         const val MAX_RESOLVED_APPROVALS = 1000
         const val CHAT_UNAVAILABLE = "chat_unavailable"
         const val CHAT_UNAVAILABLE_MESSAGE = "Chat is not available for tmux sessions on this bridge. Use Terminal."
@@ -743,3 +882,31 @@ const val TMUX_SESSION_PREFIX = "tmux-"
 
 /** True when [sessionId] names a tmux session, which the bridge shows but does not run an agent for. */
 fun isTmuxSessionId(sessionId: String): Boolean = sessionId.startsWith(TMUX_SESSION_PREFIX)
+
+/** The real path of [raw], an absolute path to an existing folder, checked on [ioDispatcher]. */
+private suspend fun existingDirectory(
+    raw: String,
+    ioDispatcher: CoroutineDispatcher,
+): Path {
+    val path =
+        try {
+            Path.of(raw)
+        } catch (invalid: InvalidPathException) {
+            throw SessionException.Invalid("invalid_project_path", "project_path is not a valid path.", invalid)
+        }
+    val real =
+        withContext(ioDispatcher) {
+            if (path.isAbsolute &&
+                Files.isDirectory(path)
+            ) {
+                path.toRealPath()
+            } else {
+                null
+            }
+        }
+    return real
+        ?: throw SessionException.Invalid(
+            "invalid_project_path",
+            "project_path must be an absolute path to an existing folder.",
+        )
+}

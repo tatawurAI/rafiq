@@ -3,6 +3,8 @@ package ai.tatawur.rafiq.client
 import ai.tatawur.rafiq.client.sync.BridgeApi
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.ProjectFolderListing
+import ai.tatawur.rafiq.protocol.api.ProjectsOverview
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -114,7 +116,17 @@ class HookSetupModelTest {
             agent: String,
             projectPath: String,
             title: String?,
+            modeId: String?,
         ): CommandResult<Session> = CommandResult.NotFound
+
+        override suspend fun setMode(
+            sessionId: String,
+            modeId: String,
+        ): CommandResult<Unit> = CommandResult.NotFound
+
+        override suspend fun projects(): CommandResult<ProjectsOverview> = CommandResult.NotFound
+
+        override suspend fun projectFolders(path: String): CommandResult<ProjectFolderListing> = CommandResult.NotFound
 
         override suspend fun prompt(
             sessionId: String,

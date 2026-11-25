@@ -36,6 +36,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The app's screens and how you move between them. Screens get [sessions] through their view
@@ -52,6 +54,8 @@ import androidx.navigation.navArgument
  * @param terminal offers Terminal on sessions your server serves as a terminal, or null for none.
  * @param settings the settings screen. It calls `onBack` to leave.
  * @param approvals the optional biometric check before answering an approval, or null for none.
+ * @param openRequest a session a notification asked to open, or null. [onOpened] says it was opened.
+ * @param onSessionShown the session now on screen, or null when none is, so push does not notify twice.
  */
 @Suppress("LongMethod") // One destination per screen; splitting them would hide the graph.
 @Composable
@@ -64,6 +68,9 @@ fun RafiqNavHost(
     settings: @Composable (onBack: () -> Unit) -> Unit = {},
     navController: NavHostController = rememberNavController(),
     approvals: ApprovalGate? = null,
+    openRequest: StateFlow<String?> = MutableStateFlow(null),
+    onOpened: (String) -> Unit = {},
+    onSessionShown: (String?) -> Unit = {},
 ) {
     val connection by sessions.connection.collectAsStateWithLifecycle()
     val start = remember { if (connection == ConnectionState.NotPaired) Routes.PAIRING else Routes.SESSIONS }
@@ -75,6 +82,24 @@ fun RafiqNavHost(
             popUpTo(navController.graph.id) { inclusive = true }
             launchSingleTop = true
         }
+    }
+
+    // Push: open the session a notification names, once paired, and report the session on screen.
+    val pendingOpen by openRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingOpen, connection) {
+        val id = pendingOpen ?: return@LaunchedEffect
+        if (connection == ConnectionState.NotPaired) return@LaunchedEffect
+        navController.navigate(Routes.session(id)) { launchSingleTop = true }
+        onOpened(id)
+    }
+    LaunchedEffect(current) {
+        val entry = current
+        onSessionShown(
+            entry?.arguments?.getString(Routes.SESSION_ID)?.takeIf {
+                entry.destination.route ==
+                    Routes.SESSION
+            },
+        )
     }
 
     NavHost(navController = navController, startDestination = start, modifier = modifier) {

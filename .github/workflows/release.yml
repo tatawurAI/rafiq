@@ -1,0 +1,429 @@
+# Release for Rafiq. Runs only when a tag named v<version> is pushed, never on a branch or a pull request.
+#
+# Four stages:
+#   prepare  Checks that the tag matches rafiq.version in gradle.properties and writes the release notes.
+#   apk      Builds the unsigned release APK. No secrets and no environment.
+#   sign-apk Signs that APK with apksigner alone. The only job with the signing secrets. No checkout, no Gradle.
+#   bridge   Builds the self-contained bridge on four native runners (macOS and Linux, arm64 and x64), and
+#            starts each one with no JDK on PATH before it counts.
+#   release  Writes SHA256SUMS and creates the GitHub Release with everything attached.
+#   update-tap  For a final version only, commits the rendered Homebrew formula to the tap repository.
+#
+# Secrets used, all in the sign-apk job only, and stored as secrets of the GitHub environment named release
+# (see packaging/README.md), not as repository secrets:
+#   RAFIQ_RELEASE_KEYSTORE_BASE64    the keystore file, base64 encoded
+#   RAFIQ_RELEASE_KEYSTORE_PASSWORD  its store password
+#   RAFIQ_RELEASE_KEY_ALIAS          the key's alias
+#   RAFIQ_RELEASE_KEY_PASSWORD       the key's password
+# Gradle builds the APK unsigned, on a runner that never sees a secret. A separate job on a fresh runner
+# signs it, so nothing the build started can reach the key. The keystore is decoded into that runner's temp
+# folder and deleted when the job ends, pass or fail.
+# Nothing here prints a secret. No Docker image is built.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Read-only by default. Only the release job asks for more.
+permissions:
+  contents: read
+
+# One release run per tag. A second run for the same tag waits instead of racing it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_code: ${{ steps.version.outputs.version_code }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      # Full history, so the check below can tell whether the tagged commit is on main.
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # A release comes from a commit that is on main. A tag on a side branch stops here, before any job
+      # that holds a secret runs. This is a safeguard against mistakes. The environment's protection rules
+      # are the control against someone who can push tags (see packaging/README.md).
+      - name: Require the tagged commit to be on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
+            echo "::error::The tagged commit is not on main. Merge it first, then tag main."
+            exit 1
+          fi
+
+      # The tag goes through an environment variable, never straight into the script.
+      - name: Check the tag against gradle.properties
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          pattern='^v([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z.]+))?$'
+          if ! [[ "${TAG}" =~ ${pattern} ]]; then
+            echo "::error::The tag '${TAG}' is not v<major>.<minor>.<patch> with an optional -<prerelease>."
+            exit 1
+          fi
+          version="${TAG#v}"
+          declared=$(sed -n 's/^rafiq\.version=//p' gradle.properties)
+          if [ "${version}" != "${declared}" ]; then
+            echo "::error::The tag is ${TAG}, but gradle.properties says rafiq.version=${declared}. Fix one and tag again."
+            exit 1
+          fi
+          # Android only installs an update whose versionCode is higher. The last two digits rank
+          # prereleases below the release: -rc.1 is 01, -rc.2 is 02, no suffix is 99.
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          pre="${BASH_REMATCH[5]}"
+          rank=99
+          prerelease=false
+          if [ -n "${pre}" ]; then
+            prerelease=true
+            number="${pre##*.}"
+            if [[ "${number}" =~ ^[0-9]+$ ]] && [ "${number}" -ge 1 ] && [ "${number}" -le 98 ]; then
+              rank="${number}"
+            else
+              rank=1
+            fi
+          fi
+          code=$(( ((10#${major} * 1000 + 10#${minor}) * 1000 + 10#${patch}) * 100 + 10#${rank} ))
+          {
+            echo "version=${version}"
+            echo "version_code=${code}"
+            echo "prerelease=${prerelease}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Test the changelog script
+        run: scripts/assemble-changelog.test.sh
+
+      - name: Write the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir notes
+          scripts/assemble-changelog.sh "${VERSION}" . > notes/RELEASE_NOTES.md
+
+      - name: Keep the release notes
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: notes/RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 7
+
+  apk:
+    name: apk
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # Runs the Gradle build, so it runs code this repository does not control. It has no secrets and no
+    # environment. It only produces the unsigned APK.
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # The cache is off: a release that handles a signing key should not restore build output that an
+      # earlier run left behind.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          validate-wrappers: true
+          cache-disabled: true
+
+      - name: Install Android SDK platform 37
+        run: |
+          set -euo pipefail
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0"
+
+      # Gradle runs with no secrets in its environment, so nothing in the build, a plugin or a dependency
+      # can read the signing key. The output is the unsigned APK.
+      - name: Build the unsigned release APK
+        env:
+          RAFIQ_VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
+        run: ./gradlew --console=plain --no-daemon :android:assembleRelease
+
+      - name: Keep the unsigned APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-apk
+          path: android/build/outputs/apk/release/*-unsigned.apk
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-apk:
+    name: sign-apk
+    needs: [prepare, apk]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Holds the signing secrets. Create this environment with required reviewers before the first tag, so
+    # a person approves every release that signs. It does nothing harmful until then. No checkout and no
+    # Gradle here: this job runs only the steps below, on a runner no build has touched.
+    environment: release
+    steps:
+      - name: Get the unsigned APK
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-apk
+          path: unsigned
+
+      - name: Install the Android build tools
+        run: |
+          set -euo pipefail
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "build-tools;37.0.0"
+
+      # No `set -x` and no echo of a value. Each secret is masked in logs. The passwords go to apksigner by
+      # environment variable name, so they never appear in a process listing. apksigner takes the key alias
+      # only as an argument, so the alias is visible in the process list. It is a name, not a secret.
+      - name: Sign the APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RAFIQ_RELEASE_KEYSTORE_BASE64 }}
+          RAFIQ_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RAFIQ_RELEASE_KEYSTORE_PASSWORD }}
+          RAFIQ_RELEASE_KEY_ALIAS: ${{ secrets.RAFIQ_RELEASE_KEY_ALIAS }}
+          RAFIQ_RELEASE_KEY_PASSWORD: ${{ secrets.RAFIQ_RELEASE_KEY_PASSWORD }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 RAFIQ_RELEASE_KEYSTORE_PASSWORD RAFIQ_RELEASE_KEY_ALIAS RAFIQ_RELEASE_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::The secret for ${name} is not set in the release environment."
+              exit 1
+            fi
+          done
+          umask 077
+          keystore="${RUNNER_TEMP}/rafiq-release.jks"
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
+          tools="${ANDROID_HOME}/build-tools/37.0.0"
+          mkdir dist
+          "${tools}/apksigner" sign \
+            --ks "${keystore}" \
+            --ks-key-alias "${RAFIQ_RELEASE_KEY_ALIAS}" \
+            --ks-pass env:RAFIQ_RELEASE_KEYSTORE_PASSWORD \
+            --key-pass env:RAFIQ_RELEASE_KEY_PASSWORD \
+            --out "dist/rafiq-${VERSION}.apk" \
+            unsigned/*-unsigned.apk
+          # A step that skipped signing would still leave an APK, so check this one is signed.
+          "${tools}/apksigner" verify "dist/rafiq-${VERSION}.apk"
+
+      - name: Delete the keystore
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/rafiq-release.jks"
+
+      - name: Keep the signed APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-apk
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  bridge:
+    name: bridge ${{ matrix.platform }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            runner: macos-15
+          - platform: macos-x64
+            runner: macos-15-intel
+          - platform: linux-x64
+            runner: ubuntu-24.04
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          validate-wrappers: true
+          cache-disabled: true
+
+      # jlink builds a runtime for the machine it runs on, so the name of the archive comes from the
+      # runner. If a runner label ever points at another architecture, the next step fails.
+      - name: Build the self-contained bridge
+        run: ./gradlew --console=plain --no-daemon :bridge:bridgeArchive
+
+      - name: Start it with no JDK and check /health
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          archive="bridge/build/distributions/rafiq-bridge-${VERSION}-${PLATFORM}.tar.gz"
+          if [ ! -f "${archive}" ]; then
+            echo "::error::Expected ${archive}. The runner for ${PLATFORM} built something else:"
+            ls bridge/build/distributions
+            exit 1
+          fi
+          scripts/smoke-bridge-archive.sh "${archive}"
+          mkdir dist
+          cp "${archive}" dist/
+
+      - name: Keep the archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-bridge-${{ matrix.platform }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: release
+    needs: [prepare, sign-apk, bridge]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The only job that can write to the repository. It holds no signing secrets, and its checkout does not
+    # keep the token.
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Get the release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: notes
+
+      - name: Get the APK and the bridge archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- rafiq-* > SHA256SUMS
+          cat SHA256SUMS
+
+      # The Homebrew formula, with the real hashes. The update-tap job publishes it to the tap.
+      - name: Render the Homebrew formula
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: scripts/render-homebrew-formula.sh "${VERSION}" dist/SHA256SUMS > dist/rafiq-bridge.rb
+
+      - name: Keep the formula for the tap
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tap-formula
+          path: dist/rafiq-bridge.rb
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "${PRERELEASE}" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "${TAG}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "Rafiq ${VERSION}" \
+            --notes-file notes/RELEASE_NOTES.md \
+            "${flags[@]}"
+
+  # Publishes the formula to the Homebrew tap, for final versions only. A prerelease never reaches brew users.
+  # The deploy key can write to the tap repository and nothing else. The job has no checkout, no GITHUB_TOKEN
+  # scopes and no Rafiq code: it only handles the formula file the release job rendered.
+  update-tap:
+    name: update-tap
+    needs: [prepare, release]
+    if: needs.prepare.outputs.prerelease == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    permissions: {}
+    steps:
+      - name: Get the formula
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tap-formula
+          path: formula
+
+      # The host key below is GitHub's published ed25519 key (SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU,
+      # see https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints).
+      # It is pinned here, so nothing is fetched or trusted at run time.
+      - name: Commit the formula to the tap
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          TAP_REPO: git@github.com:tatawurAI/homebrew-tap.git
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_DEPLOY_KEY}" ]; then
+            echo "::error::The secret HOMEBREW_TAP_DEPLOY_KEY is not set in the release environment."
+            exit 1
+          fi
+          umask 077
+          key="${RUNNER_TEMP}/tap_deploy_key"
+          known_hosts="${RUNNER_TEMP}/tap_known_hosts"
+          printf '%s\n' "${TAP_DEPLOY_KEY}" > "${key}"
+          cat > "${known_hosts}" <<'HOSTS'
+          github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+          HOSTS
+          export GIT_SSH_COMMAND="ssh -i ${key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${known_hosts} -o HostKeyAlgorithms=ssh-ed25519"
+
+          git clone --quiet --depth 1 --branch main "${TAP_REPO}" "${RUNNER_TEMP}/tap"
+          cd "${RUNNER_TEMP}/tap"
+          mkdir -p Formula
+          cp "${GITHUB_WORKSPACE}/formula/rafiq-bridge.rb" Formula/rafiq-bridge.rb
+          ruby -c Formula/rafiq-bridge.rb
+          git add Formula/rafiq-bridge.rb
+          if git diff --cached --quiet; then
+            echo "The tap already has this formula. Nothing to commit."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet -m "rafiq-bridge ${VERSION}"
+          git push --quiet origin HEAD:main
+
+      - name: Delete the key
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/tap_deploy_key" "${RUNNER_TEMP}/tap_known_hosts"

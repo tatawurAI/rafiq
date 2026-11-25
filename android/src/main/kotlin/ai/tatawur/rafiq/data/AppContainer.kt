@@ -1,8 +1,10 @@
 package ai.tatawur.rafiq.data
 
+import ai.tatawur.rafiq.approve.KeystoreApprovalKey
+import ai.tatawur.rafiq.client.ApprovalUnlock
 import ai.tatawur.rafiq.client.SessionRepository
-import ai.tatawur.rafiq.client.UnlockWindow
 import ai.tatawur.rafiq.client.pairing.DevicePairingApi
+import ai.tatawur.rafiq.client.sync.BridgeApi
 import ai.tatawur.rafiq.client.sync.PairingProbe
 import ai.tatawur.rafiq.client.sync.SyncingSessionRepository
 import ai.tatawur.rafiq.pairing.DevicePairing
@@ -10,6 +12,7 @@ import ai.tatawur.rafiq.pairing.OkHttpDeviceRevoker
 import ai.tatawur.rafiq.pairing.StoredPairingRepository
 import ai.tatawur.rafiq.pairing.TokenCipher
 import ai.tatawur.rafiq.protocol.Event
+import ai.tatawur.rafiq.push.PushModule
 import ai.tatawur.rafiq.sessions.ApprovalGate
 import ai.tatawur.rafiq.settings.SecuritySettings
 import ai.tatawur.rafiq.terminal.OkHttpTerminalPort
@@ -82,8 +85,27 @@ class AppContainer(
 
     private val conditions = AndroidAppConditions(application)
 
-    /** The optional biometric check before answering an approval. Its window closes in the background. */
-    val approvals = ApprovalGate(security.approvalLock, UnlockWindow())
+    /**
+     * The optional biometric check before answering an approval, backed by the approval lock's Keystore key
+     * (issue #14). A key destroyed by a biometric change turns the lock off and says why.
+     */
+    val approvals =
+        ApprovalGate(
+            security.approvalLock,
+            ApprovalUnlock(KeystoreApprovalKey()) { security.approvalLockKeyInvalidated() },
+            reset = security.approvalLockReset,
+            dismissReset = security::dismissApprovalLockReset,
+        )
+
+    /** Push through a UnifiedPush distributor, and the notifications it brings (ADR 0010). */
+    val push =
+        PushModule(
+            context = application,
+            api = BridgeApi(transport) { storedPairing.credentials.value },
+            credentials = storedPairing.credentials,
+            conditions = conditions,
+            scope = scope,
+        )
 
     /** Opens `WS /terminal` with the same host and token as `WS /events`, behind the Terminal lock. */
     val terminal =
@@ -105,10 +127,6 @@ class AppContainer(
             onApplied = if (application.isDebuggable()) { event -> logApplied(event) } else { _ -> },
             onRejected = if (application.isDebuggable()) { status -> logRejected(status) } else { _ -> },
         )
-
-    init {
-        scope.launch { conditions.foreground.collect { visible -> if (!visible) approvals.window.close() } }
-    }
 
     private companion object {
         // The airplane-mode check compares this log with the bridge's: `adb logcat -s RafiqSeq`.

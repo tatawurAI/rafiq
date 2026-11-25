@@ -35,6 +35,7 @@ import kotlin.time.Duration.Companion.seconds
  * when the agent sends one. As a fallback, the consumer ends it after [quietPeriod] with no new chunk.
  *
  * @param scheduler runs the quiet-period timer. Tests pass one driven by a virtual clock.
+ * @param modes receives the root session's mode updates, in wire order with everything else.
  */
 internal class SessionActor(
     private val mapper: AcpEventMapper,
@@ -42,6 +43,7 @@ internal class SessionActor(
     private val newId: () -> String,
     private val scheduler: Scheduler,
     private val quietPeriod: Duration = DEFAULT_QUIET_PERIOD,
+    private val modes: AcpModes = AcpModes(),
 ) {
     /** A change to the session, queued for the consumer. */
     sealed interface Item {
@@ -292,6 +294,7 @@ internal class SessionActor(
             }
 
             update != null -> {
+                if (acpSessionId == mapper.threads.rootAcpSessionId) modes.update(update)
                 val mapped = mapper.sessionUpdate(acpSessionId, update, params["_meta"])
                 events.sendAll(mapped)
                 if (mapped.any(::streamsOnMain)) {

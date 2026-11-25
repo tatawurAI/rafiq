@@ -1,0 +1,1 @@
+New session offers your recent project folders and lets you browse folders under the roots your server allows with `RAFIQ_PROJECT_ROOTS`, one level at a time. A typed path is checked as you type, and the reason shows next to the field before you tap Start.

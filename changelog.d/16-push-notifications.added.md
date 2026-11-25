@@ -1,0 +1,1 @@
+Your phone now gets a notification when an agent needs you, finishes, or stops with an error, through a UnifiedPush app such as ntfy. You can deny an approval from the notification, approve it after unlocking your phone, and reply to a finished agent.

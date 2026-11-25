@@ -15,6 +15,7 @@ import ai.tatawur.rafiq.protocol.api.ApprovalAnswer
 import ai.tatawur.rafiq.protocol.api.CreateSessionRequest
 import ai.tatawur.rafiq.protocol.api.HookSetupRequest
 import ai.tatawur.rafiq.protocol.api.PromptRequest
+import ai.tatawur.rafiq.protocol.api.SetModeRequest
 import ai.tatawur.rafiq.protocol.protocolJson
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -54,6 +55,7 @@ internal fun io.ktor.server.application.Application.installErrorShape() {
                     is SessionException.Invalid -> HttpStatusCode.BadRequest
                     is SessionException.NotFound -> HttpStatusCode.NotFound
                     is SessionException.Conflict -> HttpStatusCode.Conflict
+                    is SessionException.Forbidden -> HttpStatusCode.Forbidden
                 }
             call.respond(status, ApiError(ApiErrorDetail(failure.code, failure.message.orEmpty())))
         }
@@ -132,8 +134,14 @@ internal fun Route.sessionRoutes(
         val request = call.receive<CreateSessionRequest>()
         call.respond(
             HttpStatusCode.Created,
-            sessions.create(request.agent, request.projectPath, request.title),
+            sessions.create(request.agent, request.projectPath, request.title, request.modeId),
         )
+    }
+    // The new mode is logged as session_updated before the answer, so the stream already carries it.
+    post("/sessions/{id}/mode") {
+        val request = call.receive<SetModeRequest>()
+        sessions.setMode(call.parameters.getOrFail("id"), request.modeId)
+        call.respond(HttpStatusCode.Accepted, Accepted())
     }
     get("/sessions") {
         call.respond(sessions.sessions())

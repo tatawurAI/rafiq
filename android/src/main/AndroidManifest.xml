@@ -13,6 +13,17 @@
        asking Android whether the phone can do that throws, and Settings closes the app. -->
   <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+  <!-- Push (ADR 0010). Notifications need your yes on Android 13 and later; Settings asks for it.
+       The battery exemption lets Rafiq reach your server the moment a push wakes it; Settings
+       asks for it and explains why. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+  <!-- Scanning the pairing QR code, on the phone with ZXing. Asked for the first time you tap Scan.
+       Not required, so a phone without a camera can still install the app and type the code. -->
+  <uses-permission android:name="android.permission.CAMERA" />
+  <uses-feature android:name="android.hardware.camera" android:required="false" />
+
   <!-- Lets the app see the speech recognition service, which Android 11 and later hide. -->
   <queries>
     <intent>
@@ -50,7 +61,40 @@
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
+      <!-- rafiq://pair links, from the QR code rafiq-bridge pair prints, scanned with the camera app.
+           A link only fills in the pairing form. You still check the address and tap Connect. -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="rafiq" android:host="pair" />
+      </intent-filter>
     </activity>
+
+    <!-- Push (ADR 0010). The UnifiedPush connector delivers endpoints and pushes to this service.
+         Not exported: only the connector, inside the app, binds to it. -->
+    <service
+      android:name=".push.RafiqPushService"
+      android:exported="false">
+      <intent-filter>
+        <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+      </intent-filter>
+    </service>
+
+    <!-- Deny and Reply from a notification. Reached only through the app's own PendingIntents. -->
+    <receiver
+      android:name=".push.NotificationActionReceiver"
+      android:exported="false" />
+
+    <!-- Approve from a notification: the full command and a confirm. The action needs the phone
+         unlocked first, and this activity never shows over the lock screen. -->
+    <activity
+      android:name=".approve.ApproveActivity"
+      android:exported="false"
+      android:excludeFromRecents="true"
+      android:launchMode="singleTop"
+      android:taskAffinity=""
+      android:theme="@style/Theme.Rafiq" />
   </application>
 
 </manifest>

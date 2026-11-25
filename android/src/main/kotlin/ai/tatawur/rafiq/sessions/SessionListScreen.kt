@@ -98,7 +98,16 @@ fun SessionListRoute(
                 onPairAgain = onPairAgain,
             )
         }
-    SessionListScreen(state, actions, modifier, hinge = LocalHinge.current)
+    // The approval lock turned itself off (issue #14): shown over the top of the list until dismissed.
+    Box(modifier) {
+        SessionListScreen(state, actions, hinge = LocalHinge.current)
+        ApprovalLockResetNotice(
+            approvals,
+            Modifier
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(RafiqTheme.spacing.medium),
+        )
+    }
 }
 
 /**

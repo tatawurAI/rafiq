@@ -17,6 +17,8 @@ import ai.tatawur.rafiq.protocol.EventPayload
 import ai.tatawur.rafiq.protocol.Session
 import ai.tatawur.rafiq.protocol.ThreadKind
 import ai.tatawur.rafiq.protocol.api.HookSetupPreview
+import ai.tatawur.rafiq.protocol.api.ProjectFolderListing
+import ai.tatawur.rafiq.protocol.api.ProjectsOverview
 import ai.tatawur.rafiq.protocol.api.SendRefusal
 import ai.tatawur.rafiq.protocol.api.TerminalHistory
 import kotlinx.coroutines.Dispatchers
@@ -81,7 +83,17 @@ class SessionViewModelTest {
             agent: String,
             projectPath: String,
             title: String?,
+            modeId: String?,
         ): CommandResult<Session> = CommandResult.NotFound
+
+        override suspend fun setMode(
+            sessionId: String,
+            modeId: String,
+        ): CommandResult<Unit> = CommandResult.NotFound
+
+        override suspend fun projects(): CommandResult<ProjectsOverview> = CommandResult.NotFound
+
+        override suspend fun projectFolders(path: String): CommandResult<ProjectFolderListing> = CommandResult.NotFound
 
         override suspend fun prompt(
             sessionId: String,

@@ -1,0 +1,1 @@
+With the approval lock on, approvals now need a key that only works within 30 seconds of a fingerprint or face check. Adding a fingerprint or face turns the lock off and Settings tells you to turn it on again.

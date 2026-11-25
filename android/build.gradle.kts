@@ -40,6 +40,12 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // The release APK is built unsigned and signed afterwards by the release workflow, so no signing key is
+    // ever in the Gradle process. RAFIQ_VERSION_CODE lets the release raise versionCode above 1.
+    providers.environmentVariable("RAFIQ_VERSION_CODE").orNull?.let { code ->
+        defaultConfig.versionCode = code.toInt()
+    }
 }
 
 kotlin {
@@ -77,6 +83,14 @@ dependencies {
 
     // The Terminal view's emulator.
     implementation(libs.termlib)
+
+    // Push through a UnifiedPush distributor such as ntfy (ADR 0010).
+    implementation(libs.unifiedpush.connector)
+    // Scanning the pairing QR code: CameraX for the camera, ZXing core to decode. No Google Play services.
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
+    implementation(libs.zxing.core)
 
     // JVM unit tests for the screens' state holders.
     testImplementation(libs.kotlin.test)

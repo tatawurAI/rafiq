@@ -2,6 +2,8 @@ package ai.tatawur.rafiq.bridge
 
 import ai.tatawur.rafiq.bridge.server.DeviceAdminServer
 import ai.tatawur.rafiq.bridge.server.DeviceFixture
+import ai.tatawur.rafiq.bridge.setup.decodeTerminalQr
+import ai.tatawur.rafiq.protocol.api.PairingLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -91,6 +93,16 @@ class DeviceAdminTest {
         assertTrue("revoked" in cli("devices").out)
         assertEquals(1, cli("revoke", "dev_nope").code)
         assertEquals(2, cli("revoke").code)
+    }
+
+    @Test
+    fun pair_prints_a_qr_code_holding_the_address_and_the_one_time_code() {
+        val pair = cli("pair", "--name", "Pixel")
+        val code = Regex("Pairing code for Pixel: ([A-Z2-9]{4}-[A-Z2-9]{4})").find(pair.out)!!.groupValues[1]
+
+        val scanned = PairingLink.parse(decodeTerminalQr(pair.out))
+
+        assertEquals(PairingLink.Parsed("https://box.example.ts.net", code), scanned)
     }
 
     @Test

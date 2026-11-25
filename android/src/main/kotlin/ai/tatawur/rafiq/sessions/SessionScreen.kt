@@ -125,6 +125,7 @@ fun SessionRoute(
                 onOpenHooks = if (inTmux) onOpenHooks else null,
                 onDismissHooksOffer = viewModel::dismissHooksOffer,
                 onDismissRefusal = viewModel::dismissRefusal,
+                onSetMode = viewModel::setMode,
             )
         }
     val hinge = LocalHinge.current

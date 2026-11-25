@@ -34,13 +34,40 @@ class SecuritySettings(
             .catch { failure -> if (failure is IOException) emit(LOCKED) else throw failure }
             .map { it[APPROVAL_LOCK] ?: false }
 
+    /** Turning the lock on or off by hand also clears [approvalLockReset]. */
     suspend fun setApprovalLock(on: Boolean) {
-        prefs.edit { it[APPROVAL_LOCK] = on }
+        prefs.edit {
+            it[APPROVAL_LOCK] = on
+            it[APPROVAL_LOCK_RESET] = false
+        }
+    }
+
+    /**
+     * True after the approval lock turned itself off because the phone's biometrics changed (issue #14), until
+     * you dismiss the notice or turn the lock on or off again. Settings and the session list say why.
+     */
+    val approvalLockReset: Flow<Boolean> =
+        prefs.data
+            .catch { failure -> if (failure is IOException) emit(LOCKED) else throw failure }
+            .map { it[APPROVAL_LOCK_RESET] ?: false }
+
+    /** You read the notice that the approval lock turned itself off. */
+    suspend fun dismissApprovalLockReset() {
+        prefs.edit { it[APPROVAL_LOCK_RESET] = false }
+    }
+
+    /** The approval lock's key was destroyed by a biometric change: the lock turns off, and says why. */
+    suspend fun approvalLockKeyInvalidated() {
+        prefs.edit {
+            it[APPROVAL_LOCK] = false
+            it[APPROVAL_LOCK_RESET] = true
+        }
     }
 
     companion object {
         private val TERMINAL_LOCK = booleanPreferencesKey("terminal_biometric")
         private val APPROVAL_LOCK = booleanPreferencesKey("approval_biometric")
+        private val APPROVAL_LOCK_RESET = booleanPreferencesKey("approval_biometric_reset")
         private val LOCKED = preferencesOf(TERMINAL_LOCK to true, APPROVAL_LOCK to true)
 
         /**

@@ -51,7 +51,7 @@ Reconnecting after a dropped signal no longer skips events from the gap.
 
 If the change has no effect on users (CI, refactors, docs, tests), add the `skip-changelog` label to the pull request instead. The `changelog` CI check enforces one or the other.
 
-To cut a release, maintainers run `./gradlew assembleChangelog -Pversion=X.Y.Z` (optionally `-PreleaseDate=YYYY-MM-DD`). It moves the fragments into a new `## [X.Y.Z]` section of `CHANGELOG.md`, grouped by category, and deletes them. Because the release pull request deletes fragments instead of adding one, it carries the `skip-changelog` label.
+To cut a release, preview the notes with `scripts/assemble-changelog.sh X.Y.Z`. It prints the fragments in `changelog.d/` grouped by category, and changes nothing. In a release pull request, paste that output under a new `## [X.Y.Z] - YYYY-MM-DD` heading in `CHANGELOG.md`, delete the fragments, and add the `skip-changelog` label, because the pull request deletes fragments instead of adding one. Then set `rafiq.version` in `gradle.properties` to X.Y.Z and push the tag `vX.Y.Z`. The release workflow builds the notes with the same script. It reads the fragments if they are still there, or the `## [X.Y.Z]` section of `CHANGELOG.md` if they are gone.
 
 ## Architecture decisions
 

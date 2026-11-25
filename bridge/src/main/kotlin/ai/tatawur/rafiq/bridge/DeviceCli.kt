@@ -3,6 +3,8 @@ package ai.tatawur.rafiq.bridge
 import ai.tatawur.rafiq.bridge.server.AdminRequest
 import ai.tatawur.rafiq.bridge.server.AdminResponse
 import ai.tatawur.rafiq.bridge.server.DeviceAdminServer
+import ai.tatawur.rafiq.bridge.setup.TerminalQr
+import ai.tatawur.rafiq.protocol.api.PairingLink
 import ai.tatawur.rafiq.protocol.protocolJson
 import java.io.IOException
 import java.io.PrintStream
@@ -20,7 +22,8 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The `rafiq-bridge pair`, `devices` and `revoke` commands. They talk to the running bridge over the
- * Unix socket in its data folder, so they need the same `RAFIQ_DATA_DIR` the bridge runs with.
+ * Unix socket in its data folder, so they need the same `RAFIQ_DATA_DIR` the bridge runs with. `pair` also prints
+ * the code as a QR code the app can scan.
  */
 object DeviceCli {
     /** The first arguments that mean "run a device command" instead of "start the bridge". */
@@ -51,7 +54,9 @@ object DeviceCli {
             }
 
             dataDir == null -> {
-                err.println("RAFIQ_DATA_DIR is not set. Set it to the folder your bridge runs with.")
+                err.println(
+                    "RAFIQ_DATA_DIR is not set. Run rafiq-bridge setup, or set it to the folder your bridge runs with.",
+                )
                 FAILED
             }
 
@@ -119,6 +124,15 @@ object DeviceCli {
                 ?: "In the app, enter your server's https address (see docs/setup.md).",
         )
         out.println("The code works once and expires in about $minutes minutes.")
+        val url = response.url
+        val code = response.code
+        if (url != null && code != null) {
+            // The QR holds the address and this one-time code, never a device token.
+            out.println("Or scan this with the app:")
+            out.print(TerminalQr.render(PairingLink.build(url, code)))
+        } else {
+            out.println("No QR code: set RAFIQ_ALLOWED_HOSTS, or run rafiq-bridge setup.")
+        }
     }
 
     private fun printDevices(

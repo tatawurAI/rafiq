@@ -21,6 +21,13 @@ import java.nio.file.Path
  *   `RAFIQ_TERMINAL_SHELLS` and `RAFIQ_TMUX_SOCKET`. Off unless you turn it on.
  * @property tailscaleLogin from `RAFIQ_TAILSCALE_LOGIN`: the Tailscale login every request must come from, as
  *   `tailscale serve` names it, or null to skip that check. See `TailscaleIdentityCheck`.
+ * @property projectRoots from `RAFIQ_PROJECT_ROOTS`: the folders the phone may browse for a project, as absolute
+ *   paths separated by commas. Empty means no browsing; recent projects and a typed path still work.
+ * @property push from `RAFIQ_PUSH`: whether the bridge sends pushes to phones that registered for them. On by
+ *   default; `0` turns it off.
+ * @property defaultModes from `RAFIQ_DEFAULT_MODES`, as `agent=mode` pairs separated by commas: the permission mode
+ *   a session of that agent starts in when the phone does not choose one. An agent with no entry starts in
+ *   whatever mode the agent itself defaults to.
  */
 class BridgeConfig(
     val bindAddress: String,
@@ -32,13 +39,17 @@ class BridgeConfig(
     val allowedHosts: List<String> = emptyList(),
     val terminal: TerminalSettings = TerminalSettings.OFF,
     val tailscaleLogin: String? = null,
+    val projectRoots: List<Path> = emptyList(),
+    val push: Boolean = true,
+    val defaultModes: Map<String, String> = emptyMap(),
 ) {
     // Configuration objects end up in logs. The token must never be one of the things printed.
     override fun toString(): String =
         "BridgeConfig(bindAddress=$bindAddress, port=$port, dataDir=$dataDir, " +
             "deviceToken=${if (deviceToken == null) "unset" else "set"}, agents=${agents.map(AgentSpec::id)}, " +
             "devPage=$devPage, allowedHosts=$allowedHosts, tmux=${terminal.enabled}, terminal=${terminal.terminal}, " +
-            "tailscaleLogin=${if (tailscaleLogin == null) "unset" else "set"})"
+            "tailscaleLogin=${if (tailscaleLogin == null) "unset" else "set"}, projectRoots=$projectRoots, " +
+            "push=$push, defaultModes=$defaultModes)"
 
     companion object {
         const val DEFAULT_BIND_ADDRESS = "127.0.0.1"
@@ -101,8 +112,34 @@ class BridgeConfig(
                         .filter(String::isNotEmpty),
                 terminal = TerminalSettings.fromEnvironment(::read, bindAddress),
                 tailscaleLogin = tailscaleLogin,
+                projectRoots = read(PROJECT_ROOTS)?.let(::parseRoots).orEmpty(),
+                push = read("RAFIQ_PUSH")?.let { parseFlag("RAFIQ_PUSH", it) } ?: true,
+                defaultModes = read(DEFAULT_MODES)?.let { parseDefaultModes(it, agents) }.orEmpty(),
             )
         }
+
+        private fun parseRoots(raw: String): List<Path> =
+            raw.split(',').map(String::trim).filter(String::isNotEmpty).map { entry ->
+                val path = Path.of(entry)
+                require(path.isAbsolute) { "$PROJECT_ROOTS entries must be absolute paths, got '$entry'." }
+                path.normalize()
+            }
+
+        private fun parseDefaultModes(
+            raw: String,
+            agents: List<AgentSpec>,
+        ): Map<String, String> =
+            raw.split(',').map(String::trim).filter(String::isNotEmpty).associate { entry ->
+                val agent = entry.substringBefore('=').trim()
+                val mode = entry.substringAfter('=', "").trim()
+                require(AGENT_ID.matches(agent) && mode.isNotEmpty()) {
+                    "$DEFAULT_MODES entries must look like agent=mode, for example claude-code=default, got '$entry'."
+                }
+                require(agents.any { it.id == agent }) {
+                    "$DEFAULT_MODES names '$agent', which RAFIQ_AGENTS does not list."
+                }
+                agent to mode
+            }
 
         private fun parseFlag(
             name: String,
@@ -136,6 +173,9 @@ class BridgeConfig(
         }
 
         private val AGENT_ID = Regex("[a-z0-9][a-z0-9-]*")
+
+        private const val PROJECT_ROOTS = "RAFIQ_PROJECT_ROOTS"
+        private const val DEFAULT_MODES = "RAFIQ_DEFAULT_MODES"
 
         /** The variable that turns on the Tailscale identity check. */
         const val TAILSCALE_LOGIN = "RAFIQ_TAILSCALE_LOGIN"

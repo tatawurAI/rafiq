@@ -1,0 +1,7 @@
+{"dir":"out","msg":{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}}
+{"dir":"out","msg":{"jsonrpc":"2.0","id":1,"method":"session/new","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":1,"result":{"sessionId":"sess_modes","modes":{"currentModeId":"auto","availableModes":[{"id":"default","name":"Manual","description":"Always ask before making changes"},{"id":"acceptEdits","name":"Accept edits","description":"Automatically accept all file edits"},{"id":"plan","name":"Plan","description":"Create a plan before making changes"},{"id":"auto","name":"Auto","description":"Claude handles permission decisions"}]},"configOptions":[{"id":"mode","name":"Mode","description":"Session permission mode","category":"mode","type":"select","currentValue":"auto","options":[{"value":"default","name":"Manual"},{"value":"acceptEdits","name":"Accept edits"},{"value":"plan","name":"Plan"},{"value":"auto","name":"Auto"}]}]}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_modes","update":{"sessionUpdate":"current_mode_update","currentModeId":"plan"}}}}
+{"dir":"out","msg":{"jsonrpc":"2.0","id":2,"method":"session/set_mode","params":{}}}
+{"dir":"in","msg":{"jsonrpc":"2.0","id":2,"result":{}}}
